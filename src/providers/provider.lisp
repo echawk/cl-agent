@@ -1,0 +1,85 @@
+;;;; providers/provider.lisp -- the LLM-PROVIDER base class and the
+;;;; generic function protocol every backend implements.
+;;;;
+;;;; WHY THIS FILE EXISTS (read this before adding a provider): the
+;;;; task this project started from explicitly warns against
+;;;; hard-wiring the agent to one LLM vendor. Every provider --
+;;;; REALLMS, OpenAI, xAI/Grok, Ollama, Anthropic, and whatever you add
+;;;; next -- implements exactly the same five generic functions below.
+;;;; repl.lisp, main.lisp, and every tool only ever call these five
+;;;; functions; none of them know or care which concrete class they're
+;;;; talking to. That is what makes `--provider ollama` vs `--provider
+;;;; anthropic` a one-line config change instead of an if/else chain
+;;;; threaded through the whole codebase.
+;;;;
+;;;; TO ADD A NEW PROVIDER (including as a self-written extension, see
+;;;; extensions.lisp): subclass LLM-PROVIDER (or OPENAI-COMPATIBLE-
+;;;; PROVIDER in openai-compatible.lisp, if your backend speaks the
+;;;; OpenAI chat/completions wire format -- most do), implement CHAT
+;;;; (and PROVIDER-API-KEY-ENV-VAR / PROVIDER-DEFAULT-MODEL if
+;;;; relevant), and call REGISTER-PROVIDER-CLASS with a keyword name.
+;;;; See providers/ollama.lisp for the shortest real example.
+
+(in-package :cl-agent)
+
+(defclass llm-provider ()
+  ((model :initarg :model :accessor provider-model :initform nil
+          :documentation "Model identifier string to request. NIL
+means \"use (provider-default-model this)\"; MAKE-PROVIDER resolves
+this at construction time, so by the time CHAT runs, MODEL is always
+a concrete string."))
+  (:documentation "Abstract base class for every LLM backend. Never
+instantiate this directly; instantiate a concrete subclass (usually
+via MAKE-PROVIDER, not MAKE-INSTANCE, so API keys and defaults get
+resolved consistently)."))
+
+(defgeneric chat (provider messages tools)
+  (:documentation
+   "Send one chat-completion request to PROVIDER and return the
+model's reply as a single normalized ASSISTANT-MESSAGE plist:
+
+  (:role \"assistant\" :content STRING-OR-NIL :tool-calls TOOL-CALLS)
+
+where TOOL-CALLS is a (possibly empty) list of
+
+  (:id STRING :name STRING :arguments HASH-TABLE)
+
+MESSAGES is a list of normalized message plists in the same shape
+this function returns, plus:
+  user:   (:role \"user\" :content STRING)
+  system: (:role \"system\" :content STRING)
+  tool:   (:role \"tool\" :tool-call-id STRING :content STRING)
+
+TOOLS is a list of TOOL instances (see tools.lisp); pass NIL for a
+turn where the model shouldn't be offered any tools at all.
+
+This is the ONLY generic function every provider is required to
+implement from scratch; openai-compatible.lisp's :AROUND-free default
+method factors CHAT into BUILD-REQUEST-BODY + an HTTP POST +
+PARSE-CHAT-RESPONSE specifically so that request/response shaping can
+be unit-tested (see t/test-providers.lisp) without a network call --
+new OpenAI-compatible providers should specialize those two instead of
+CHAT itself. A provider with a genuinely different wire protocol
+(Anthropic's Messages API is the example in this codebase) implements
+CHAT directly."))
+
+(defgeneric provider-default-model (provider)
+  (:documentation "The model string to use when the user/config didn't
+specify one. Each concrete provider class should specialize this
+rather than hard-coding a default model string into its CHAT method,
+so MAKE-PROVIDER can report the resolved model name back to the user.")
+  (:method ((provider llm-provider))
+    (error "~a does not define a default model; pass :model explicitly."
+           (type-of provider))))
+
+(defgeneric provider-display-name (provider)
+  (:documentation "Short human-readable name for banners/errors, e.g.
+\"ollama\" or \"Anthropic\". Defaults to the class name.")
+  (:method ((provider llm-provider))
+    (string-downcase (class-name (class-of provider)))))
+
+(defgeneric provider-api-key-env-var (provider)
+  (:documentation "Name of the environment variable MAKE-PROVIDER
+should read an API key from if none was supplied explicitly, or NIL
+if this provider doesn't need one (e.g. a local Ollama server).")
+  (:method ((provider llm-provider)) nil))

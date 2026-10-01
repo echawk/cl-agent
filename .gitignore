@@ -1,0 +1,15 @@
+# ocicl's local package cache -- ocicl.csv is the lockfile and IS
+# committed; this directory is re-derived from it by `ocicl install`
+# (see README.md / Makefile).
+/ocicl/
+
+# Standalone executable produced by `make build`.
+/bin/
+
+# SBCL/ASDF fasl cache, if ever created inside the tree.
+*.fasl
+
+# Vendored checkout scripts/build-clspec-data.sh uses to (re)generate
+# data/cl-spec.sdoc (the committed artifact) -- not a runtime
+# dependency, see that script's header comment.
+/vendor/

@@ -1,0 +1,8 @@
+First, get a REALLMS API key. Follow the instructions on this page: https://servicenow.iu.edu/kb?id=kb_article_view&sysparm_article=KB0027272
+
+
+
+Then build a simple command line coding agent, in whatever language you prefer. It should (a) have a tool for executing commands (b) allow you to ask questions and get responses and (c) use the REALLMS API with a key you pick.
+
+Add at least one interesting (to you) feature to your agent. Then create a github.iu.edu repository for your agent code, and submit a screencast of yourself using your agent.
+

@@ -1,0 +1,19 @@
+;;;; config.lisp.example -- copy this to ~/.config/cl-agent/config.lisp
+;;;; (or run cl-agent once, which creates ~/.config/cl-agent/ for you,
+;;;; and drop this there) and edit to taste. See src/config.lisp for
+;;;; the full list of recognized keys and how they're resolved against
+;;;; CLI flags and environment variables.
+;;;;
+;;;; This file is read with READ, never LOADed or EVALed -- it's data,
+;;;; not code. If you want code to run automatically, write an
+;;;; extension instead: see config/example-extension.lisp.lisp and
+;;;; src/extensions.lisp.
+
+(:provider :reallms          ; :reallms, :openai, :anthropic, :xai, :ollama, :apple,
+                              ; or the name of a provider you registered yourself
+ ;; :model "Qwen3-Coder-Next" ; optional; defaults to the provider's own default model
+ ;; :api-key-env "REALLMS_API_KEY" ; optional; override which env var the key comes from
+ ;; :base-url "https://reallms.rescloud.iu.edu/direct/v1" ; optional; OpenAI-compatible providers only
+ ;; :system-prompt "..." ; optional; overrides cl-agent::*default-system-prompt*
+ :extensions :all             ; :all, or a list like ("word-count.lisp")
+ :max-tool-iterations 25)
