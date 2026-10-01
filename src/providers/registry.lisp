@@ -42,7 +42,7 @@ key is still resident in this Lisp image's memory for the session."
    (progn (require :sb-posix) (funcall (find-symbol "UNSETENV" :sb-posix) name)))
   (values))
 
-(defun make-provider (keyword &key model api-key api-key-env base-url)
+(defun make-provider (keyword &key model api-key api-key-env base-url ensure-ready)
   "Instantiate the provider registered under KEYWORD. MODEL and
 API-KEY override the config/environment-derived defaults if supplied.
 BASE-URL is only meaningful for OPENAI-COMPATIBLE-PROVIDER subclasses
@@ -58,6 +58,15 @@ API key resolution order, when API-KEY is not supplied explicitly:
      environment via FORGET-ENV.
   4. If the provider needs a key (the env var name from step 1 or 2 is
      non-NIL) and none was found, signal MISSING-API-KEY.
+
+If ENSURE-READY is true, PROVIDER-ENSURE-READY is called on the new
+instance before it's returned -- for OLLAMA-PROVIDER, this is what
+starts `ollama serve` if it isn't already running (see
+providers/ollama.lisp). Defaults to NIL (skipped) so that constructing
+a provider for introspection or offline testing (see t/test-
+providers.lisp, which builds dozens of these) never has a side effect
+or a network dependency; main.lisp passes ENSURE-READY T when building
+the provider an actual session will use.
 
 Signals PROVIDER-NOT-FOUND for an unregistered KEYWORD."
   (let ((class-name (or (gethash keyword *provider-registry*)
@@ -75,4 +84,5 @@ Signals PROVIDER-NOT-FOUND for an unregistered KEYWORD."
       (when (slot-exists-p instance 'api-key)
         (setf (slot-value instance 'api-key) resolved-key))
       (setf (provider-model instance) (or model (provider-default-model instance)))
+      (when ensure-ready (provider-ensure-ready instance))
       instance)))

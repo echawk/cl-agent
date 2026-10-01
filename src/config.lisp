@@ -44,8 +44,9 @@ don't exist yet. Safe to call repeatedly."
 or NIL if the file doesn't exist. Recognized keys, all optional:
 
   :PROVIDER       keyword naming a registered provider, e.g. :reallms,
-                   :openai, :anthropic, :xai, :ollama, :apple, or the
-                   name of a provider an extension registered.
+                   :openai, :anthropic, :xai, :ollama, :apple (same as
+                   :apfel), or the name of a provider an extension
+                   registered.
   :MODEL          string, overrides the provider's default model.
   :API-KEY-ENV    string, overrides the environment variable name the
                    provider reads its API key from.

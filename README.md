@@ -70,12 +70,23 @@ Type /help for commands, Ctrl-D to exit.
 | `anthropic` | Anthropic Claude | `ANTHROPIC_API_KEY` |
 | `xai` | xAI / Grok | `XAI_API_KEY` |
 | `ollama` | a local Ollama server | nothing (local, no key) |
-| `apple` | Apple on-device models | a bridge executable, see `src/providers/apple.lisp` |
+| `apple` (same as `apfel`) | Apple Intelligence on-device, via [apfel](https://apfel.franzai.com) (`brew install apfel`) | nothing (local, no key; macOS 26+, Apple Silicon, Apple Intelligence enabled) |
 
 Pick one with `--provider NAME`, the `CL_AGENT_PROVIDER` environment
 variable, or `:provider` in `~/.config/cl-agent/config.lisp` (CLI >
 env > config > default `reallms`; see `src/main.lisp`). `--model NAME`
 overrides the provider's default model the same way.
+
+`ollama` and `apple`/`apfel` both start their own backing local server
+automatically if it isn't already running (`ollama serve` / `apfel
+--serve`, respectively -- see PROVIDER-ENSURE-READY in
+`src/providers/provider.lisp` and the two providers' own files) --
+picking either of those as your provider is meant to just work, not
+require a separate manual step first. apfel's context window is small
+(4096-8192 tokens, input+output combined, depending on macOS version)
+and its tool-calling is occasionally flaky, the same caveats Ollama's
+own tiny local models have -- see `src/providers/apfel.lisp`'s header
+comment.
 
 None of this is hard-wired: `src/providers/provider.lisp` defines the
 five-function protocol every provider implements, `src/providers/

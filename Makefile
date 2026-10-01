@@ -26,10 +26,14 @@ run: install-deps
 test: install-deps
 	$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:test-system "cl-agent/tests")'
 
-# Requires a running `ollama serve` on localhost:11434 (see README.md);
-# pulls a small model first so the test has something to talk to.
+# Starts `ollama serve` if it isn't already running (same
+# PROVIDER-ENSURE-READY logic cl-agent itself uses, see
+# providers/ollama.lisp), then pulls a small model so the test has
+# something to talk to.
 test-ollama: install-deps
 	command -v ollama >/dev/null 2>&1 || { echo "ollama not found; install it from https://ollama.com"; exit 1; }
+	$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:load-system "cl-agent")' \
+		--eval '(cl-agent::provider-ensure-ready (make-instance (quote cl-agent::ollama-provider)))'
 	ollama pull $(OLLAMA_TEST_MODEL)
 	CL_AGENT_OLLAMA_TEST_MODEL=$(OLLAMA_TEST_MODEL) \
 		$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:load-system "cl-agent/tests/ollama")'

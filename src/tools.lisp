@@ -22,12 +22,21 @@ Must match [a-zA-Z0-9_-]+ -- most providers are picky about this.")
                 :documentation "Shown to the model. Be specific about
 when to use (and not use) the tool; this is effectively prompt text.")
    (parameters :initarg :parameters :reader tool-parameters
-               :initform (jobj "type" "object" "properties" (jobj) "required" nil)
+               :initform (jobj "type" "object" "properties" (jobj) "required" :empty-array)
                :documentation "A JSON-Schema object (built with JOBJ,
 or any hash table) describing the tool's arguments, in the same shape
 OpenAI's function-calling `parameters` field expects. Every provider
 in this project is responsible for translating this into its own
-wire shape if it differs (see providers/anthropic.lisp).")
+wire shape if it differs (see providers/anthropic.lisp).
+
+The default's \"required\": :EMPTY-ARRAY (not NIL) is deliberate: a
+tool with no required properties needs \"required\": [] in its JSON-
+Schema, but NIL encodes as JSON false (see json-util.lisp's JOBJ
+docstring) -- a bare boolean where JSON-Schema (and some providers'
+strict parsers, e.g. Ollama's) expect an array, and reject outright.
+This bit a tool defined without an explicit :PARAMETERS (see
+tools/mcp-tool.lisp's list-mcp-servers, and
+t/test-tools.lisp's regression test for it).")
    (handler :initarg :handler :reader tool-handler :type function
             :documentation "A function of one argument -- a hash table
 of parsed call arguments, as returned by JSON-DECODE -- that performs

@@ -73,7 +73,8 @@ message and a non-zero exit, not a Lisp backtrace."
                (provider (make-provider provider-keyword
                                          :model (or (clingon:getopt cmd :model) (config-value config :model))
                                          :base-url (config-value config :base-url)
-                                         :api-key-env (config-value config :api-key-env))))
+                                         :api-key-env (config-value config :api-key-env)
+                                         :ensure-ready t)))
           (multiple-value-bind (loaded failed) (load-enabled-extensions)
             (declare (ignore loaded))
             (when failed

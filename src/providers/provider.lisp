@@ -83,3 +83,16 @@ so MAKE-PROVIDER can report the resolved model name back to the user.")
 should read an API key from if none was supplied explicitly, or NIL
 if this provider doesn't need one (e.g. a local Ollama server).")
   (:method ((provider llm-provider)) nil))
+
+(defgeneric provider-ensure-ready (provider)
+  (:documentation "Called once by MAKE-PROVIDER, after PROVIDER is
+fully constructed (model/key resolved), before it's handed back to the
+caller. Default: no-op -- most providers are just an HTTP client
+against someone else's already-running server, nothing to prepare.
+A provider backed by something cl-agent can itself start overrides
+this to do so: OLLAMA-PROVIDER's method (providers/ollama.lisp) checks
+whether a local Ollama server is reachable and, if not, launches
+`ollama serve` and waits for it, so \"use ollama\" doesn't require a
+separate manual step. Signal PROVIDER-ERROR if PROVIDER truly can't be
+made ready (e.g. the backing executable isn't installed at all).")
+  (:method ((provider llm-provider)) (values)))

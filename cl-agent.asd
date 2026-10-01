@@ -60,7 +60,7 @@
        (:file "xai")
        (:file "ollama")
        (:file "anthropic")
-       (:file "apple")))
+       (:file "apfel")))
      (:file "clspec")
      (:file "extensions")
      (:module "ui"
@@ -94,6 +94,8 @@
    (:file "test-hooks")
    (:file "test-tools")
    (:file "test-providers")
+   (:file "test-ollama-ensure-ready")
+   (:file "test-apfel-ensure-ready")
    (:file "test-config")
    (:file "test-extensions")
    (:file "test-clspec")

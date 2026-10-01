@@ -1,7 +1,7 @@
 (in-package :cl-agent)
 
 (deftest registry-knows-all-built-in-providers ()
-  (dolist (name '(:reallms :openai :xai :ollama :anthropic :apple))
+  (dolist (name '(:reallms :openai :xai :ollama :anthropic :apple :apfel))
     (check (assoc name (list-providers)) (format nil "~a is registered" name))))
 
 (deftest make-provider-unknown-name-signals ()

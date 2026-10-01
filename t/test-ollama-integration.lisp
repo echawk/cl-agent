@@ -14,6 +14,11 @@
 ;;;; `make test-ollama` pulls it with the ollama CLI before this file
 ;;;; is loaded; see the Makefile.
 ;;;;
+;;;; MAKE-PROVIDER is called here with :ENSURE-READY T, so if `ollama
+;;;; serve` isn't already running, PROVIDER-ENSURE-READY (providers/
+;;;; ollama.lisp) starts it automatically -- this test doesn't need
+;;;; its own "is it running" pre-check/instructions any more.
+;;;;
 ;;;; This is intentionally NOT wired into `(asdf:test-op :cl-agent)` --
 ;;;; it lives in the separate cl-agent/tests/ollama system (see
 ;;;; cl-agent.asd) so that running it is always an explicit choice.
@@ -23,24 +28,13 @@
 (defparameter *ollama-test-model*
   (or (uiop:getenv "CL_AGENT_OLLAMA_TEST_MODEL") "qwen2.5:0.5b"))
 
-(defun ollama-reachable-p ()
-  (handler-case
-      (multiple-value-bind (body status)
-          (drakma:http-request "http://localhost:11434/api/tags" :connection-timeout 3)
-        (declare (ignore body))
-        (= status 200))
-    (error () nil)))
-
 (defun run-ollama-integration-tests ()
-  (unless (ollama-reachable-p)
-    (format t "~&~%cl-agent: ollama does not appear to be running on localhost:11434.~%~
-                 Start it with `ollama serve` (and `make test-ollama` will have already~%~
-                 run `ollama pull ~a` for you) and try again.~%~%" *ollama-test-model*)
-    (uiop:quit 1))
-
   (format t "~&Using model ~a~%" *ollama-test-model*)
   (setf *current-test* 'ollama-integration)
-  (let ((provider (make-provider :ollama :model *ollama-test-model*)))
+  (let ((provider (handler-case (make-provider :ollama :model *ollama-test-model* :ensure-ready t)
+                     (provider-error (c)
+                       (format t "~&~%cl-agent: ~a~%~%" c)
+                       (uiop:quit 1)))))
 
     (format t "~&* plain completion, no tools~%")
     (let ((reply (chat provider

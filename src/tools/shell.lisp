@@ -15,6 +15,15 @@
                         "required" (list "command")))
   (let ((command (jget args "command")))
     (unless command (error "shell tool called with no \"command\" argument"))
+    (unless (stringp command)
+      ;; A small/weak model will occasionally send a nested object or
+      ;; a number instead of a plain string here; without this check
+      ;; UIOP:RUN-PROGRAM's own ETYPECASE failure reaches the model as
+      ;; an opaque implementation-detail message ("fell through
+      ;; ETYPECASE... wanted one of (STRING LIST)") it has no way to
+      ;; act on -- this gives it something it can actually fix and retry.
+      (error "shell tool's \"command\" argument must be a plain string, e.g. \"ls -la\" -- got ~a: ~s"
+             (string-downcase (type-of command)) command))
     (multiple-value-bind (output error-output exit-code)
         (uiop:run-program command :force-shell t
                                    :output :string
