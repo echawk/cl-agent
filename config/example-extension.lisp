@@ -30,8 +30,9 @@
     ctx))
 
 ;; 3. /wc as a shorthand: count words in the rest of the line, without
-;; going through the model at all.
+;; going through the model at all. Output goes through UI-SYSTEM
+;; (session-frontend session), not FORMAT T directly, so /wc works the
+;; same under any frontend (CLI, TUI, web) -- see ui/frontend.lisp.
 (define-slash-command wc (session arg)
-  (declare (ignore session))
-  (format t "~&~d words~%" (length (uiop:split-string arg)))
+  (ui-system (session-frontend session) (format nil "~d words" (length (uiop:split-string arg))))
   t)

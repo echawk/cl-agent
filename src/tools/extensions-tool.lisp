@@ -29,14 +29,27 @@
                         "properties" (jobj "form" (jobj "type" "string"
                                                          "description" "A single Lisp form, as text, e.g. \"(list-tools)\"."))
                         "required" (list "form")))
-  (let ((text (jget args "form")))
-    (handler-case
-        (let* ((*package* (find-package :cl-agent))
-               (*read-eval* nil)
-               (form (read-from-string text)))
-          (format nil "~{~a~^~%~}"
-                  (mapcar #'prin1-to-string (multiple-value-list (eval form)))))
-      (error (c) (format nil "Error: ~a" c)))))
+  (let* ((text (jget args "form"))
+         (imbalance (check-paren-balance text)))
+    (if imbalance
+        (paren-imbalance-message imbalance)
+        (handler-case
+            (let* ((*package* (find-package :cl-agent))
+                   (*read-eval* nil)
+                   (form (read-from-string text)))
+              (format nil "~{~a~^~%~}"
+                      (mapcar #'prin1-to-string (multiple-value-list (eval form)))))
+          (error (c) (format nil "Error: ~a" c))))))
+
+(defun paren-imbalance-message (imbalance)
+  "Turn a CHECK-PAREN-BALANCE result into a message telling the model
+specifically what to fix, rather than a bare reader end-of-file error."
+  (let ((n (getf imbalance :open-count)) (line (getf imbalance :line)))
+    (if (plusp n)
+        (format nil "Unbalanced parentheses: ~d unclosed \"(\" (last opened/closed around line ~d). Add ~:*~d more \")\" and try again."
+                n line)
+        (format nil "Unbalanced parentheses: ~d extra \")\" with no matching \"(\" (around line ~d). Remove ~:*~d \")\" and try again."
+                (- n) line))))
 
 (define-tool write-extension (args)
     (:description "Write a named file of Common Lisp source code to the agent's own extensions directory (~/.config/cl-agent/extensions/), load it into the running image, and (unless told not to) enable it so it is automatically loaded on every future start -- this is how you permanently add a tool, a hook callback, a provider, or change the agent's own behavior. The file MUST start with (in-package :cl-agent). Prefer ADDING things (new DEFINE-TOOL forms, new ADD-HOOK calls, new DEFMETHODs on existing generic functions) over redefining existing functions from scratch, since a mistake in a wholesale redefinition can break the running agent until the file is fixed or disabled. If `load` is true and loading fails, the file is still written to disk (so it isn't lost) but NOT enabled, and the error is returned so it can be fixed and retried."
@@ -56,16 +69,19 @@
          ;; DEFAULT (T here) -- so a bare (not (null v)) is the right test.
          (do-load (not (null (jget args "load" t))))
          (do-enable (not (null (jget args "enable" t))))
-         (path (write-extension-file filename source)))
-    (if do-load
-        (handler-case
-            (progn
-              (load-extension-file path)
-              (when do-enable (set-extension-enabled bare t))
-              (format nil "Wrote and loaded ~a~:[ (not enabled for future sessions)~;, enabled for future sessions~]."
-                      path do-enable))
-          (extension-error (c)
-            (format nil "Wrote ~a but it failed to load, so it was NOT enabled:~%~a~%~
-                          Fix the error and call write-extension again with the same filename to retry."
-                     path c)))
-        (format nil "Wrote ~a (not loaded or enabled; pass load=true to activate it)." path))))
+         (imbalance (check-paren-balance source)))
+    (if imbalance
+        (format nil "Not written -- ~a" (paren-imbalance-message imbalance))
+        (let ((path (write-extension-file filename source)))
+          (if do-load
+              (handler-case
+                  (progn
+                    (load-extension-file path)
+                    (when do-enable (set-extension-enabled bare t))
+                    (format nil "Wrote and loaded ~a~:[ (not enabled for future sessions)~;, enabled for future sessions~]."
+                            path do-enable))
+                (extension-error (c)
+                  (format nil "Wrote ~a but it failed to load, so it was NOT enabled:~%~a~%~
+                                Fix the error and call write-extension again with the same filename to retry."
+                           path c)))
+              (format nil "Wrote ~a (not loaded or enabled; pass load=true to activate it)." path))))))

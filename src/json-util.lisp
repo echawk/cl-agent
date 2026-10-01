@@ -66,3 +66,45 @@ NIL as soon as any step is missing instead of signalling."
           (cond ((null object) (return nil))
                 ((integerp k) (nth k object))
                 (t (jget object k))))))
+
+;;; --- bridging to libraries that represent JSON as alists ---
+;;;
+;;; Some of our dependencies (notably cl-mcp, see src/mcp/*.lisp) parse
+;;; JSON into alists of (STRING . value) pairs rather than hash tables
+;;; -- a perfectly normal, equally valid choice, just a different one
+;;; than JSON-DECODE's (see this file's header comment for why we
+;;; picked hash tables). Rather than let that difference leak into
+;;; src/mcp/*.lisp as ad-hoc conversions, JALIST->HASH and JHASH->ALIST
+;;; are the one place that translation happens, symmetric with JOBJ/
+;;; JGET being the one place our own convention is defined.
+
+(defun jalist-p (x)
+  "True if X looks like an alist of (STRING . value) pairs, as
+produced by a JSON parser configured for :object-as :alist. NIL itself
+is ambiguous (an empty alist vs. an empty list vs. JSON false) and is
+therefore NOT considered an alist here -- callers that know they have
+an empty JSON object should just use (JOBJ)."
+  (and (consp x) (every (lambda (pair) (and (consp pair) (stringp (car pair)))) x)))
+
+(defun jalist->hash (x)
+  "Recursively convert X -- as returned by a JSON parser configured
+for :object-as :alist -- into the hash-table/list representation
+JSON-DECODE produces, so the rest of cl-agent (JGET, JOBJ, JSON-ENCODE,
+tool parameter schemas, ...) never needs to know the difference. Lists
+that aren't alists are assumed to be JSON arrays and are mapped
+element-wise; anything else (strings, numbers, T, NIL) passes through."
+  (cond
+    ((jalist-p x) (let ((h (make-hash-table :test 'equal)))
+                    (dolist (pair x h) (setf (gethash (car pair) h) (jalist->hash (cdr pair))))))
+    ((consp x) (mapcar #'jalist->hash x))
+    (t x)))
+
+(defun jhash->alist (x)
+  "Inverse of JALIST->HASH: recursively convert hash tables (and the
+plain lists JSON-ENCODE already treats as arrays) in X into the
+alist-of-strings representation a library like cl-mcp expects."
+  (cond
+    ((hash-table-p x) (loop for k being the hash-keys of x using (hash-value v)
+                             collect (cons k (jhash->alist v))))
+    ((consp x) (mapcar #'jhash->alist x))
+    (t x)))

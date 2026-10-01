@@ -64,6 +64,29 @@ function. CALL-TOOL catches tool handler errors and turns them into
 this condition (and, in the normal agent loop, into a tool-result
 message the model can see and recover from -- see repl.lisp)."))
 
+(define-condition frontend-not-found (cl-agent-error)
+  ((name :initarg :name :reader frontend-not-found-name))
+  (:report (lambda (c stream)
+             (format stream "No UI frontend registered under the name ~s.~%~
+                              Known frontends: ~{~a~^, ~}"
+                     (frontend-not-found-name c)
+                     (mapcar #'car (and (fboundp 'list-frontends) (funcall 'list-frontends))))))
+  (:documentation "Signalled by MAKE-FRONTEND for an unknown UI
+keyword (see src/ui/frontend.lisp). Not fatal to the extensibility
+story: REGISTER-FRONTEND-CLASS makes a new name valid, the same
+pattern as PROVIDER-NOT-FOUND/REGISTER-PROVIDER-CLASS."))
+
+(define-condition mcp-error (cl-agent-error)
+  ((server-name :initarg :server-name :reader mcp-error-server-name)
+   (message :initarg :message :initform "" :reader mcp-error-message))
+  (:report (lambda (c stream) (format stream "MCP server ~s: ~a" (mcp-error-server-name c) (mcp-error-message c))))
+  (:documentation "Signalled when connecting to, or calling a tool on,
+an external MCP server fails (src/mcp/client.lisp), or when starting
+cl-agent's own MCP server fails (src/mcp/server.lisp). Wraps whatever
+condition cl-mcp/client or cl-mcp itself signalled, tagged with the
+server NAME from config/the connect-mcp-server call, so callers can
+catch one condition type without depending on cl-mcp's own package."))
+
 (define-condition extension-error (cl-agent-error)
   ((path :initarg :path :reader extension-error-path)
    (original-condition :initarg :original-condition :initform nil

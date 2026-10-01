@@ -5,8 +5,13 @@ unusual feature: because Common Lisp is image-based, **the agent can
 extend and modify its own running process**, and persist those changes
 across restarts, from inside a normal conversation. See
 [Self-modification](#self-modification) below. It can also check its
-own Lisp against the actual ANSI standard rather than guessing -- see
-[Looking up the Common Lisp standard](#looking-up-the-common-lisp-standard).
+own Lisp against the actual ANSI standard rather than guessing (see
+[Looking up the Common Lisp standard](#looking-up-the-common-lisp-standard)),
+reach out to (and be reached by) other tools over
+[MCP](#mcp-model-context-protocol), and run as a plain terminal
+session, a full-screen TUI, or a browser chat page -- see
+[User interfaces](#user-interfaces) -- all three driving the exact
+same agent core.
 
 It satisfies the brief it grew out of (see `task.txt`): a tool for
 running shell commands, a chat REPL, and an LLM backend -- but it is
@@ -43,9 +48,15 @@ Type /help for commands, Ctrl-D to exit.
 ## Requirements
 
 - [SBCL](https://www.sbcl.org/) and [ocicl](https://github.com/ocicl/ocicl)
-  (`./check-env.sh` checks for both). Dependencies (`drakma` for HTTP,
-  `shasht` for JSON) are pinned in the committed `ocicl.csv`; `make
-  install-deps` (or plain `ocicl install`) fetches them.
+  (`./check-env.sh` checks for both). Dependencies -- `drakma` (HTTP),
+  `shasht` (JSON), `clingon` (CLI parsing), `cl-mcp`/`cl-mcp/client`
+  (MCP client+server), `tuition` (TUI), `hunchentoot` (web UI),
+  `bordeaux-threads` -- are pinned in the committed `ocicl.csv`; `make
+  install-deps` (or plain `ocicl install`) fetches them. One of
+  `cl-mcp`'s own dependencies, `opsis/conditions`, isn't published
+  anywhere ocicl/Quicklisp can fetch it from; `third-party/opsis-
+  conditions-stub/` is a small committed compatible stand-in -- see
+  that file's header comment.
 - An API key for whichever provider you use (not needed for Ollama).
 - Optionally, [Ollama](https://ollama.com) running locally, for
   `make test-ollama` and the `:ollama` provider.
@@ -146,14 +157,94 @@ library), at runtime: `src/clspec.lisp` just `read`s the committed
 data file and renders it to plain text. See that file's header comment
 and `scripts/build-clspec-data.sh`'s for the full reasoning.
 
+## MCP (Model Context Protocol)
+
+cl-agent is both an MCP **client** and an MCP **server**, via
+[cl-mcp](https://github.com/quasi/cl-mcp) (not reimplemented --
+src/mcp/*.lisp is a thin adapter over that library's JSON-RPC/stdio
+transport, tool registry, and tested client; see those files' header
+comments for why it was picked over the alternatives considered,
+`cl-mcp-server` and `40ants-mcp`).
+
+**As a client**, connect to any external MCP server and its tools
+become ordinary cl-agent tools, namespaced `mcp__NAME__toolname`:
+
+```
+> connect to the filesystem MCP server rooted at /tmp
+[agent calls connect-mcp-server with name "filesystem" and command
+ ["npx", "-y", "@modelcontextprotocol/server-filesystem", "/tmp"];
+ mcp__filesystem__read_file etc. are now usable tools]
+```
+
+or ahead of time via `:mcp-servers` in `config.lisp` (auto-connected
+at startup, see [Configuration](#configuration)), or directly with
+`/mcp` / `/call connect-mcp-server {...}`. The model has
+`connect-mcp-server`/`disconnect-mcp-server`/`list-mcp-servers` as
+tools too -- attaching to a new MCP server mid-conversation is a
+self-extension act like writing a new tool, so it gets the same
+treatment.
+
+**As a server**, `cl-agent --mcp-serve` runs as an MCP server over
+stdio instead of the chat REPL, exposing every registered tool --
+`shell`, `eval-lisp`, `write-extension`, `lookup-cl-spec`, anything an
+extension added -- to an external MCP client. This is what gives
+cl-agent persistent, tool-rich, self-modifying REPL access from
+*outside* itself (the same idea behind `cl-mcp-server`, without
+depending on or reimplementing its 37 bespoke tools): point Claude
+Code, Claude Desktop, or any other MCP client at
+`["/path/to/bin/cl-agent", "--mcp-serve"]` as a server command, and it
+can drive this exact running agent.
+
+`eval-lisp` also checks submitted code for balanced parentheses before
+evaluating it (and `write-extension` before writing a file), reporting
+specifically how many are unclosed and roughly where, rather than a
+bare reader end-of-file error -- a small, self-contained utility
+(`check-paren-balance` in `src/extensions.lisp`), not a dependency,
+since nothing freely available did exactly this.
+
+## User interfaces
+
+Three frontends ship, all driving the identical `run-agent-turn`/
+`run-repl` conversation loop (`src/repl.lisp`) through one small
+protocol (`src/ui/frontend.lisp`) -- proof that the UI is swappable,
+not just the LLM backend:
+
+| `--ui` | What it is |
+|---|---|
+| `cli` (default) | Today's plain terminal session -- unchanged. |
+| `tui` | A full-screen terminal UI (scrollable transcript + persistent input box), via [tuition](https://github.com/atgreen/cl-tuition). |
+| `web` | A browser chat page, via hunchentoot, at `http://127.0.0.1:4567/` by default -- a proof of concept (polling, not push; one session; loopback-only), not a production web app. |
+
+```sh
+./bin/cl-agent --ui tui
+./bin/cl-agent --ui web   # then open the printed URL
+```
+
+**Extending it**: a UI frontend is a CLOS class (`AGENT-FRONTEND`)
+implementing a handful of generic functions -- show the model's reply,
+show a tool call starting/finishing, show a system notice, and block
+for the next line of input -- registered with `register-frontend-
+class` exactly the way a new LLM provider is registered with
+`register-provider-class` (see [Providers](#providers)). Nothing about
+`src/repl.lisp` knows or cares whether it's talking to a terminal, a
+browser, or something else -- a user (or the agent itself, via
+`write-extension`) can write a new frontend -- an SDL window, a Discord
+bot, a true multi-user hosted chat -- as a `src/ui/*.lisp`-sized file,
+without touching the conversation loop. See `src/ui/frontend.lisp`'s
+header comment for the exact contract and `src/ui/tui.lisp`/`web.lisp`
+for two real (not toy) examples of implementing it, including the
+threading involved in keeping a blocking LLM call from freezing a
+redraw loop or an HTTP server.
+
 ## Configuration
 
 `~/.config/cl-agent/config.lisp` (copy `config/config.lisp.example` to
 start) is a plain data file -- read, never evaluated -- for
 `:provider`, `:model`, `:api-key-env`, `:base-url`, `:system-prompt`,
-`:extensions`, and `:max-tool-iterations`. See `src/config.lisp` for
-the full list. `--config-dir PATH` points the whole thing (config
-*and* extensions) somewhere other than `~/.config/cl-agent/`.
+`:extensions`, `:max-tool-iterations`, `:ui`, and `:mcp-servers`. See
+`src/config.lisp` for the full list. `--config-dir PATH` points the
+whole thing (config *and* extensions) somewhere other than
+`~/.config/cl-agent/`.
 
 ## Development
 
@@ -166,10 +257,14 @@ make clean         # remove the ocicl package cache and bin/
 
 `make test` runs `t/test-*.lisp` (JSON encoding, hooks, tools,
 provider request/response shaping for both wire formats, config
-loading, the extension loader, the REPL's slash commands, and the
-`lookup-cl-spec` tool against the real committed spec data) -- all
-pure/offline, so they don't need a provider or network access.
-`make test-ollama` is the one
+loading, the extension loader, the REPL's slash commands, the
+`lookup-cl-spec` tool against the real committed spec data, MCP client
+*and* server against a real subprocess, and the web UI frontend
+against a real local HTTP server) -- all offline in the sense of no
+external network access, though not all mocked: several of those spawn
+a real subprocess or open a real (loopback) socket, deliberately,
+rather than stub out the thing actually being tested. `make test-ollama`
+is the one
 exception: it pulls a tiny model (`qwen2.5:0.5b` by default, override
 with `OLLAMA_TEST_MODEL=...`) and exercises the real HTTP + JSON +
 tool-calling round trip against it. It isn't run as part of `make

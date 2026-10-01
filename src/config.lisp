@@ -60,6 +60,17 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
   :MAX-TOOL-ITERATIONS  integer, caps how many tool-call round trips a
                    single turn may take before the agent gives up and
                    hands control back to the user (default 25).
+  :UI             keyword naming a registered UI frontend, e.g. :cli
+                   (default), :tui, :web, or one an extension
+                   registered (see ui/frontend.lisp). Overridden by
+                   --ui / CL_AGENT_UI the same way :PROVIDER is.
+  :MCP-SERVERS    list of (:name STRING :command (STRING...)) plists,
+                   each auto-connected at startup via CONNECT-MCP-
+                   SERVER (src/mcp/client.lisp); e.g. (:name
+                   \"filesystem\" :command (\"npx\" \"-y\"
+                   \"@modelcontextprotocol/server-filesystem\" \"/tmp\")).
+                   A server that fails to connect is reported and
+                   skipped, not fatal to startup.
 
 This function only ever calls READ on the file contents, never LOAD or
 EVAL, and binds *READ-EVAL* to NIL while doing so -- config.lisp is

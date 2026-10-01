@@ -19,7 +19,11 @@
   :author "Ethan"
   :license "MIT"
   :version "0.1.0"
-  :depends-on ("drakma" "shasht" "uiop")
+  :depends-on ("drakma" "shasht" "uiop"
+               "cl-mcp" "cl-mcp/client" "bordeaux-threads"  ; src/mcp/*.lisp
+               "clingon"                                     ; CLI parsing, src/main.lisp
+               "tuition"                                     ; TUI frontend, src/ui/tui.lisp
+               "hunchentoot")                                ; web frontend, src/ui/web.lisp
   :build-operation "program-op"
   :build-pathname "bin/cl-agent"
   :entry-point "cl-agent:main"
@@ -40,6 +44,11 @@
      (:file "http")
      (:file "config")
      (:file "tools")
+     (:module "mcp"
+      :serial t
+      :components
+      ((:file "client")
+       (:file "server")))
      (:module "providers"
       :serial t
       :components
@@ -54,13 +63,21 @@
        (:file "apple")))
      (:file "clspec")
      (:file "extensions")
+     (:module "ui"
+      :serial t
+      :components
+      ((:file "frontend")
+       (:file "cli")
+       (:file "tui")
+       (:file "web")))
      (:module "tools-builtin"
       :pathname "tools"
       :serial t
       :components
       ((:file "shell")
        (:file "extensions-tool")
-       (:file "clspec-tool")))
+       (:file "clspec-tool")
+       (:file "mcp-tool")))
      (:file "repl")
      (:file "main")))))
 
@@ -80,7 +97,9 @@
    (:file "test-config")
    (:file "test-extensions")
    (:file "test-clspec")
-   (:file "test-repl"))
+   (:file "test-repl")
+   (:file "test-mcp")
+   (:file "test-ui"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

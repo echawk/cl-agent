@@ -32,6 +32,47 @@
 
 (in-package :cl-agent)
 
+(defun check-paren-balance (text)
+  "Scan TEXT (Lisp source, as a string) for balanced parentheses,
+correctly skipping string literals, line comments, and character
+literals (#\\( and #\\) must not be mistaken for real parens) so it
+doesn't flag perfectly valid code containing those. Returns NIL if
+balanced, or a plist (:open-count N :line L) if not, where N is how
+many parens are still open at end-of-text and L is the 1-indexed line
+that last changed depth -- enough to point an LLM (or a person) at
+roughly where to look, the same idea as a REPL's \"paren balancer\"
+convenience, without needing a whole library for it (see
+tools/extensions-tool.lisp's EVAL-LISP and WRITE-EXTENSION, which both
+call this before reading/compiling model-submitted source, so a
+dropped or extra paren gets a specific, actionable message instead of
+a bare end-of-file reader error)."
+  (let ((depth 0) (line 1) (last-change-line 1) (i 0) (n (length text)))
+    (loop while (< i n)
+          do (let ((ch (char text i)))
+               (cond
+                 ((char= ch #\Newline) (incf line) (incf i))
+                 ((char= ch #\;) ; line comment: skip to end of line
+                  (loop while (and (< i n) (char/= (char text i) #\Newline)) do (incf i)))
+                 ((and (char= ch #\#) (< (1+ i) n) (char= (char text (1+ i)) #\\))
+                  ;; A character literal, #\x -- also #\Newline, #\( etc:
+                  ;; consume the #\ plus one char, or a run of alpha chars
+                  ;; for a named character, so its contents never get
+                  ;; mistaken for real delimiters or a string boundary.
+                  (incf i 2)
+                  (loop while (and (< i n) (alpha-char-p (char text i))) do (incf i)))
+                 ((char= ch #\")
+                  (incf i)
+                  (loop while (and (< i n) (char/= (char text i) #\"))
+                        do (incf i (if (char= (char text i) #\\) 2 1)))
+                  (when (< i n) (incf i))) ; consume closing quote
+                 ((char= ch #\()
+                  (incf depth) (setf last-change-line line) (incf i))
+                 ((char= ch #\))
+                  (decf depth) (setf last-change-line line) (incf i))
+                 (t (incf i)))))
+    (unless (zerop depth)
+      (list :open-count depth :line last-change-line))))
+
 (defun extensions-directory ()
   (merge-pathnames "extensions/" *config-directory*))
 

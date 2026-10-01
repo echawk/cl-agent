@@ -1,0 +1,123 @@
+;;;; t/test-ui.lisp -- tests for the UI frontend protocol
+;;;; (src/ui/frontend.lisp) and its three built-in implementations.
+;;;;
+;;;; The web frontend is tested with real HTTP requests against a real
+;;;; (ephemeral-port, loopback-only) hunchentoot instance -- safe and
+;;;; deterministic for CI, same reasoning as t/test-mcp.lisp's real
+;;;; subprocess tests. The TUI frontend is tested only at the model
+;;;; level (TUI:INIT/TUI:UPDATE on a TUI-CHAT-MODEL directly): actually
+;;;; running TUI:RUN needs a real TTY, which isn't available (or
+;;;; desirable to block on) under a test harness -- see UI-START's
+;;;; graceful-failure handling in ui/tui.lisp, which is exactly what
+;;;; lets this suite run under such a harness instead of hanging.
+
+(in-package :cl-agent)
+
+(deftest frontend-registry-knows-built-ins ()
+  (dolist (name '(:cli :tui :web))
+    (check (assoc name (list-frontends)) (format nil "~a is registered" name))))
+
+(deftest make-frontend-unknown-name-signals ()
+  (check-condition frontend-not-found (make-frontend :definitely-not-a-real-frontend)))
+
+(deftest tool-call-summary-single-argument ()
+  (check-equal (tool-call-summary "shell" (jobj "command" "echo hi")) "shell: echo hi"))
+
+(deftest tool-call-summary-multiple-arguments ()
+  (check-equal (tool-call-summary "connect-mcp-server" (jobj "name" "fs" "command" (list "npx" "-y")))
+               (format nil "connect-mcp-server ~a" (json-encode (jobj "name" "fs" "command" (list "npx" "-y"))))))
+
+(deftest agent-frontend-default-methods-print-to-stdout ()
+  ;; AGENT-FRONTEND itself is documented as abstract, but its default
+  ;; methods are what CLI-FRONTEND and a minimal from-scratch frontend
+  ;; both lean on -- verify they actually do something reasonable.
+  (let ((frontend (make-instance 'agent-frontend))
+        (output (make-string-output-stream)))
+    (let ((*standard-output* output))
+      (ui-assistant-text frontend "hello")
+      (ui-system frontend "a notice")
+      (ui-error frontend "boom"))
+    (let ((text (get-output-stream-string output)))
+      (check (search "hello" text))
+      (check (search "a notice" text))
+      (check (search "boom" text)))))
+
+(deftest cli-frontend-prompt-input-reads-stdin ()
+  (let ((frontend (make-frontend :cli))
+        (output (make-string-output-stream)))
+    (with-input-from-string (*standard-input* (format nil "hello there~%"))
+      (let ((*standard-output* output))
+        (check-equal (ui-prompt-input frontend) "hello there"))
+      (check (search ">" (get-output-stream-string output))))))
+
+(deftest cli-frontend-prompt-input-eof-returns-nil ()
+  (let ((frontend (make-frontend :cli))
+        (output (make-string-output-stream)))
+    (with-input-from-string (*standard-input* "")
+      (let ((*standard-output* output))
+        (check-equal (ui-prompt-input frontend) nil)))))
+
+;;; --- TUI, model level only (see header comment) ---
+
+(deftest tui-chat-model-init-creates-widgets ()
+  (let ((model (make-instance 'tui-chat-model :input-channel (trivial-channels:make-channel))))
+    (tui:init model)
+    (check (tui-chat-textarea model))
+    (check (tui-chat-viewport model))))
+
+(deftest tui-chat-model-line-msg-appends-to-transcript ()
+  (let ((model (make-instance 'tui-chat-model :input-channel (trivial-channels:make-channel))))
+    (tui:init model)
+    (tui:update model (make-instance 'tui-line-msg :text "first"))
+    (tui:update model (make-instance 'tui-line-msg :text "second"))
+    (check-equal (reverse (tui-chat-lines model)) '("first" "second"))))
+
+;;; --- Web: real HTTP against a real (ephemeral, loopback) instance ---
+
+(defparameter *test-web-port* 14599
+  "A fixed high port for the web-frontend tests. Not dynamically
+allocated since hunchentoot's easy-acceptor doesn't hand back which
+port :port 0 resolved to; a collision is unlikely enough for a test
+suite that only ever runs one of these at a time.")
+
+(defmacro with-test-web-frontend ((var) &body body)
+  `(let ((,var (make-frontend :web :port *test-web-port*)))
+     (unwind-protect (progn (ui-start ,var) (sleep 0.2) ,@body)
+       (ui-stop ,var))))
+
+(defun web-test-url (path) (format nil "http://127.0.0.1:~d~a" *test-web-port* path))
+
+(deftest web-frontend-serves-index-page ()
+  (with-test-web-frontend (frontend)
+    (multiple-value-bind (body status) (drakma:http-request (web-test-url "/"))
+      (check-equal status 200)
+      (check (search "cl-agent" body)))))
+
+(deftest web-frontend-messages-reflects-ui-calls ()
+  (with-test-web-frontend (frontend)
+    (ui-system frontend "system notice")
+    (ui-assistant-text frontend "assistant reply")
+    (ui-tool-started frontend "shell" (jobj "command" "ls"))
+    (ui-tool-finished frontend "shell" (jobj "command" "ls") "a.txt")
+    (multiple-value-bind (body status) (drakma:http-request (web-test-url "/api/messages"))
+      (check-equal status 200)
+      (let ((messages (json-decode body)))
+        (check-equal (length messages) 4)
+        (check-equal (jget (first messages) "role") "system")
+        (check-equal (jget (second messages) "role") "assistant")
+        (check-equal (jget (third messages) "role") "tool")))))
+
+(deftest web-frontend-send-reaches-ui-prompt-input ()
+  (with-test-web-frontend (frontend)
+    (bt:make-thread
+     (lambda ()
+       (sleep 0.2)
+       (drakma:http-request (web-test-url "/api/send") :method :post
+                             :content-type "application/x-www-form-urlencoded"
+                             :content "text=hello+from+test")))
+    (check-equal (ui-prompt-input frontend) "hello from test")))
+
+(deftest web-frontend-quit-endpoint-unblocks-prompt-input ()
+  (with-test-web-frontend (frontend)
+    (bt:make-thread (lambda () (sleep 0.2) (drakma:http-request (web-test-url "/api/quit") :method :post)))
+    (check-equal (ui-prompt-input frontend) nil)))

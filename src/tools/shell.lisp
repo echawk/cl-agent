@@ -15,14 +15,10 @@
                         "required" (list "command")))
   (let ((command (jget args "command")))
     (unless command (error "shell tool called with no \"command\" argument"))
-    (format t "~&$ ~a~%" command)
-    (force-output)
     (multiple-value-bind (output error-output exit-code)
         (uiop:run-program command :force-shell t
                                    :output :string
                                    :error-output :string
                                    :ignore-error-status t)
       (let ((combined (concatenate 'string output error-output)))
-        (format t "~a" combined)
-        (force-output)
         (format nil "Exit code: ~d~%~a" exit-code combined)))))
