@@ -48,6 +48,17 @@ arguments. Good place for an extension to print a banner or warm up
 some state.")
     (:on-shutdown . "Fired once as the REPL is exiting (including on
 Ctrl-D / Ctrl-C). Notify hook, called with no arguments.")
+    (:user-message . "Chain hook. Argument/return is a plist (:text
+STRING). Fires once per incoming line of user input -- the initial
+task, or each REPL prompt -- before it becomes a \"user\" role message
+and before :before-request (or the system prompt, or any prior turn)
+ever sees it; unlike :before-request, this fires once per user turn,
+not once per tool-call round within it. Mutate :text to rewrite or
+expand what the model is actually asked -- e.g. rewriting slang into
+more formal language, or prepending a synthesized plan of which tools
+to use and why -- typically via SESSION-COMPLETE (repl.lisp) to do the
+actual rewriting/planning through the model itself, since that's a
+judgment call, not a string operation.")
     (:before-request . "Chain hook. Argument/return is a plist
 (:messages LIST :tools LIST) about to be sent to the provider. Mutate
 or replace either key to change what the model sees on this turn.")

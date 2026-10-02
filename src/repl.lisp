@@ -70,12 +70,19 @@ anything where a hook needs the MODEL'S OWN opinion on some text, not \
 just a string operation -- give the hook a SESSION-COMPLETE call: it \
 runs a prompt through the current session's own provider as an \
 independent completion (its own system prompt, no effect on the real \
-conversation) and returns the reply text. A :AFTER-RESPONSE hook can \
-replace the assistant's own reply with SESSION-COMPLETE's output \
-(rewrite-as-poem); a :BEFORE-TOOL-CALL hook can call SESSION-COMPLETE \
-to judge something and then (error \"...\") to veto the call if it \
-doesn't pass -- the tool never runs and the model sees why. See \
-config/example-llm-roundtrip-extension.lisp for both, worked.
+conversation) and returns the reply text. A :USER-MESSAGE hook can \
+rewrite or expand the user's own message with SESSION-COMPLETE's \
+output before you (the main conversation) ever see it -- \"formalize \
+whatever I send you\" or \"work out a plan for which tools to use \
+before answering\" both mean a :USER-MESSAGE hook (fires once per \
+incoming user turn, earliest point in the pipeline, before the system \
+prompt or any prior turn is involved -- see hooks.lisp). A \
+:AFTER-RESPONSE hook can replace the assistant's own reply with \
+SESSION-COMPLETE's output (rewrite-as-poem); a :BEFORE-TOOL-CALL hook \
+can call SESSION-COMPLETE to judge something and then (error \"...\") \
+to veto the call if it doesn't pass -- the tool never runs and the \
+model sees why. See config/example-llm-roundtrip-extension.lisp for \
+all three, worked.
 
 Before calling DEFINE-TOOL, ADD-HOOK, REGISTER-PROVIDER-CLASS, or any \
 other cl-agent macro/function you haven't just read the definition of \
@@ -146,6 +153,19 @@ independently of the global registry."))
                   :tools tools
                   :messages (list (list :role "system" :content (or system-prompt *default-system-prompt*)))
                   :max-tool-iterations (or max-tool-iterations 25)))
+
+(defun session-submit-user-text (session text)
+  "The one place incoming user input (the initial task, or a line from
+SESSION-FRONTEND) turns into a \"user\" role message on SESSION. Threads
+TEXT through the :USER-MESSAGE chain hook first (see hooks.lisp) --
+a hook registered there sees, and can rewrite or expand, what the
+model is about to be asked before its own system prompt or any prior
+turn is involved -- then appends the (possibly changed) result.
+RUN-REPL calls this instead of appending a message directly; so should
+anything else that wants to feed the model a user turn."
+  (let ((ctx (run-hook-chain :user-message (list :text text))))
+    (setf (session-messages session)
+          (append (session-messages session) (list (list :role "user" :content (getf ctx :text)))))))
 
 (defun session-stats-snapshot (session)
   "The plist UI-STATS-UPDATED (ui/frontend.lisp) and the /stats
@@ -418,12 +438,17 @@ result (NIL => caller should stop the REPL); otherwise return :NOT-A-COMMAND."
 
 (defun run-repl (session &key initial-task)
   "The interactive loop: read a line via SESSION-FRONTEND, treat a
-/command specially, otherwise append it as a user message and run a
-turn. Fires :ON-STARTUP before the first prompt and :ON-SHUTDOWN on
-the way out (including via end-of-input / an interrupt reaching here
-as a condition), and brackets the whole session in SESSION-FRONTEND's
-UI-START/UI-STOP."
-  (let ((frontend (session-frontend session)))
+/command specially, otherwise submit it as a user message (via SESSION-
+SUBMIT-USER-TEXT -- see its docstring on the :USER-MESSAGE hook) and
+run a turn. Fires :ON-STARTUP before the first prompt and :ON-SHUTDOWN
+on the way out (including via end-of-input / an interrupt reaching
+here as a condition), and brackets the whole session in SESSION-
+FRONTEND's UI-START/UI-STOP. Binds *CURRENT-SESSION* for the whole
+session lifetime, not just a single turn, so a :USER-MESSAGE hook
+(which runs before RUN-AGENT-TURN's own narrower binding takes effect)
+can still call SESSION-COMPLETE."
+  (let ((frontend (session-frontend session))
+        (*current-session* session))
     (ui-start frontend)
     (unwind-protect
          (progn
@@ -431,8 +456,7 @@ UI-START/UI-STOP."
            (unwind-protect
                 (progn
                   (when (and initial-task (plusp (length initial-task)))
-                    (setf (session-messages session)
-                          (append (session-messages session) (list (list :role "user" :content initial-task))))
+                    (session-submit-user-text session initial-task)
                     (run-agent-turn session))
                   (loop
                     (let ((line (ui-prompt-input frontend)))
@@ -441,8 +465,7 @@ UI-START/UI-STOP."
                         (let ((result (dispatch-slash-command session line)))
                           (cond
                             ((eq result :not-a-command)
-                             (setf (session-messages session)
-                                   (append (session-messages session) (list (list :role "user" :content line))))
+                             (session-submit-user-text session line)
                              (run-agent-turn session))
                             ((null result) (return))))))))
              (run-hook :on-shutdown)))

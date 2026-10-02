@@ -149,28 +149,45 @@ what's currently loaded and hooked.
 session's own provider as an independent completion (its own system
 prompt, no effect on the real conversation, but still counted in
 `/stats`) and get the reply text back. This is what makes a request
-like "rewrite everything you say as a poem" or "refuse to save code
-that has a code smell" actually implementable, not just describable:
+like "rewrite everything you say as a poem," "refuse to save code that
+has a code smell," or "formalize whatever I send you before you see
+it" actually implementable, not just describable -- at three different
+points in the pipeline:
+
+| Hook point | Fires | Use it to |
+|---|---|---|
+| `:user-message` | Once per incoming user turn, before it becomes a message -- earliest point there is, before the system prompt or any prior turn | Rewrite or expand what the user asked, before the model sees it |
+| `:after-response` | After the model's reply, before it's shown | Rewrite the assistant's own reply |
+| `:before-tool-call` | Before a tool runs | Judge something and veto the call if it fails |
 
 ```
-> write me an extension that rewrites every reply you give as a short
-  Dr. Seuss-style poem
-[agent calls write-extension with an :after-response hook that calls
- session-complete on its own reply with a Seuss-voiced system prompt,
- and replaces the reply's text with the result]
+> write me an extension that formalizes my messages before you see
+  them, and rewrites every reply you give as a short Dr. Seuss-style
+  poem
+[agent calls write-extension with a :user-message hook that calls
+ session-complete on the incoming text with a "remove slang, keep the
+ meaning" system prompt, and an :after-response hook that does the
+ same on its own reply with a Seuss-voiced one]
 
-> also add one that refuses to save code with an obvious code smell
-[agent adds a :before-tool-call hook on write-extension that calls
- session-complete to judge the code and (error "...") to veto the
- call if it looks smelly -- the file is never written, and the model
- sees why and can revise]
+> also add one that works out a plan before acting, and one that
+  refuses to save code with an obvious code smell
+[a second :user-message hook prepends a synthesized plan -- which
+ tool(s) to use and in what order -- ahead of the user's own text,
+ using SESSION-TOOLS to know what's actually available; a
+ :before-tool-call hook on write-extension calls session-complete to
+ judge the code and (error "...") to veto the call if it looks
+ smelly -- the file is never written, and the model sees why and can
+ revise]
 ```
 
 A `:before-tool-call` hook function that signals an error vetoes the
 call outright: the tool never runs, and the condition's message
 becomes what the model is told, the same as any other tool error (see
 `run-tool-call` in `src/repl.lisp`). `config/example-llm-roundtrip-
-extension.lisp` has both of the above, worked and tested end to end.
+extension.lisp` has all four of the above, worked and tested end to
+end -- each gated behind its own `*example-...-enabled*` variable, off
+by default, so loading the file doesn't stack every transformation on
+top of every message at once.
 
 See `src/extensions.lisp` and `src/hooks.lisp` for the full design --
 both are written with the expectation that an LLM, not just a human,

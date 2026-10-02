@@ -153,6 +153,77 @@
       (setf (symbol-function 'chat-stream) orig))
     (check-equal seen session)))
 
+;;; --- SESSION-SUBMIT-USER-TEXT / :USER-MESSAGE ---
+
+(deftest session-submit-user-text-with-no-hooks-appends-as-is ()
+  (let ((session (make-session (make-instance 'ollama-provider))))
+    (session-submit-user-text session "hello there")
+    (check-equal (getf (first (last (session-messages session))) :role) "user")
+    (check-equal (getf (first (last (session-messages session))) :content) "hello there")))
+
+(deftest session-submit-user-text-hook-can-rewrite-the-text ()
+  (let ((session (make-session (make-instance 'ollama-provider))))
+    (unwind-protect
+         (progn
+           (add-hook :user-message 'test-formalize
+             (lambda (ctx) (list :text (format nil "FORMAL: ~a" (getf ctx :text)))))
+           (session-submit-user-text session "yo what's up")
+           (check-equal (getf (first (last (session-messages session))) :content) "FORMAL: yo what's up"))
+      (remove-hook :user-message 'test-formalize))))
+
+(deftest session-submit-user-text-hook-can-expand-the-text-with-a-plan ()
+  ;; The "user plan" use case: a hook prepends synthesized reasoning
+  ;; (here, a stand-in for a real SESSION-COMPLETE-driven plan) ahead
+  ;; of the original text, rather than replacing it outright.
+  (let ((session (make-session (make-instance 'ollama-provider))))
+    (unwind-protect
+         (progn
+           (add-hook :user-message 'test-plan
+             (lambda (ctx) (list :text (format nil "[plan: use the shell tool]~%~a" (getf ctx :text)))))
+           (session-submit-user-text session "what files are here")
+           (let ((content (getf (first (last (session-messages session))) :content)))
+             (check (search "[plan:" content))
+             (check (search "what files are here" content))))
+      (remove-hook :user-message 'test-plan))))
+
+(deftest session-submit-user-text-hook-sees-current-session ()
+  ;; A :USER-MESSAGE hook fires from RUN-REPL, outside RUN-AGENT-TURN's
+  ;; own narrower *CURRENT-SESSION* binding -- SESSION-SUBMIT-USER-TEXT
+  ;; must work (i.e. SESSION-COMPLETE must be callable) even when called
+  ;; on its own, not just from inside RUN-REPL's broader binding.
+  (let ((session (make-session (make-instance 'ollama-provider)))
+        (seen :unset))
+    (unwind-protect
+         (progn
+           (add-hook :user-message 'test-sees-session
+             (lambda (ctx) (setf seen *current-session*) ctx))
+           (let ((*current-session* session))
+             (session-submit-user-text session "hi")))
+      (remove-hook :user-message 'test-sees-session))
+    (check-equal seen session)))
+
+(deftest run-repl-binds-current-session-for-the-whole-session ()
+  ;; Stubs CHAT-STREAM (not the network) since this exercises RUN-REPL
+  ;; itself, which (via the initial task) reaches RUN-AGENT-TURN for
+  ;; real -- same DI pattern as RUN-AGENT-TURN-STREAMS-THROUGH-THE-
+  ;; RECORDING-FRONTEND above.
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (seen :unset)
+         (orig (symbol-function 'chat-stream)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'chat-stream)
+                 (lambda (provider messages tools on-delta)
+                   (declare (ignore provider messages tools on-delta))
+                   (list :role "assistant" :content "done" :tool-calls nil :usage nil)))
+           (add-hook :user-message 'test-run-repl-sees-session
+             (lambda (ctx) (setf seen *current-session*) ctx))
+           (with-input-from-string (*standard-input* "")
+             (run-repl session :initial-task "hi")))
+      (remove-hook :user-message 'test-run-repl-sees-session)
+      (setf (symbol-function 'chat-stream) orig))
+    (check-equal seen session)))
+
 (deftest slash-stats-shows-formatted-snapshot ()
   (let* ((session (make-session (make-instance 'ollama-provider)))
          (output (make-string-output-stream)))
