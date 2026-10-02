@@ -76,6 +76,83 @@
     (check-equal (getf (session-stats-snapshot session) :tool-calls) 1)
     (check stats-updates "UI-STATS-UPDATED fired at least once")))
 
+(deftest run-tool-call-veto-via-before-tool-call-hook-does-not-propagate ()
+  ;; Regression test: a :before-tool-call hook signalling an error used
+  ;; to propagate all the way out of RUN-TOOL-CALL (and from there,
+  ;; RUN-AGENT-TURN) uncaught, contradicting what hooks.lisp's
+  ;; *HOOK-POINTS* documents ("signal an error to veto the call
+  ;; entirely"). The tool must never run, and the veto's message
+  ;; becomes the "tool" role message's content instead.
+  (let ((session (make-session (make-instance 'ollama-provider)))
+        (shell-ran nil))
+    (let ((orig (symbol-function 'call-tool)))
+      (unwind-protect
+           (progn
+             (setf (symbol-function 'call-tool) (lambda (name args) (declare (ignore name args)) (setf shell-ran t) "should not run"))
+             (add-hook :before-tool-call 'test-veto (lambda (ctx) (declare (ignore ctx)) (error "nope, not today")))
+             (let ((message (run-tool-call session (list :id "1" :name "shell" :arguments (jobj "command" "echo hi")))))
+               (check (not shell-ran) "the tool itself never ran")
+               (check-equal (getf message :role) "tool")
+               (check (search "nope, not today" (getf message :content)))))
+        (remove-hook :before-tool-call 'test-veto)
+        (setf (symbol-function 'call-tool) orig)))))
+
+(deftest run-tool-call-before-tool-call-hook-can-still-mutate-and-allow ()
+  ;; The common, non-veto case must still work: a hook that mutates CTX
+  ;; and returns normally lets the (mutated) call proceed.
+  (let ((session (make-session (make-instance 'ollama-provider))))
+    (unwind-protect
+         (progn
+           (add-hook :before-tool-call 'test-mutate
+             (lambda (ctx) (list :tool-name (getf ctx :tool-name) :arguments (jobj "command" "echo mutated"))))
+           (let ((message (run-tool-call session (list :id "1" :name "shell" :arguments (jobj "command" "echo original")))))
+             (check (search "mutated" (getf message :content)))
+             (check (not (search "original" (getf message :content))))))
+      (remove-hook :before-tool-call 'test-mutate))))
+
+;;; --- SESSION-COMPLETE / *CURRENT-SESSION* ---
+
+(deftest session-complete-signals-without-a-running-session ()
+  (let ((*current-session* nil))
+    (check-condition error (session-complete "hello"))))
+
+(deftest session-complete-uses-current-sessions-provider-and-counts-stats ()
+  (let ((session (make-session (make-instance 'ollama-provider)))
+        (seen-messages nil)
+        (orig (symbol-function 'chat)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'chat)
+                 (lambda (provider messages tools)
+                   (declare (ignore provider tools))
+                   (setf seen-messages messages)
+                   (list :role "assistant" :content "a Seussian reply"
+                         :usage (list :prompt-tokens 3 :completion-tokens 4 :total-tokens 7))))
+           (let ((*current-session* session))
+             (check-equal (session-complete "rewrite this" :system "be seussian") "a Seussian reply")))
+      (setf (symbol-function 'chat) orig))
+    (check-equal (getf (first seen-messages) :role) "system")
+    (check-equal (getf (first seen-messages) :content) "be seussian")
+    (check-equal (getf (second seen-messages) :content) "rewrite this")
+    (check-equal (getf (session-stats-snapshot session) :requests) 1 "SESSION-COMPLETE counts as a real request")
+    (check-equal (getf (session-stats-snapshot session) :total-tokens) 7)
+    (check-equal (length (session-messages session)) 1 "SESSION-COMPLETE does not touch the visible conversation (still just the initial system message)")))
+
+(deftest run-agent-turn-binds-current-session-for-hooks-and-tools ()
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (seen nil)
+         (orig (symbol-function 'chat-stream)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'chat-stream)
+                 (lambda (provider messages tools on-delta)
+                   (declare (ignore provider messages tools on-delta))
+                   (setf seen *current-session*)
+                   (list :role "assistant" :content "done" :tool-calls nil :usage nil)))
+           (run-agent-turn session))
+      (setf (symbol-function 'chat-stream) orig))
+    (check-equal seen session)))
+
 (deftest slash-stats-shows-formatted-snapshot ()
   (let* ((session (make-session (make-instance 'ollama-provider)))
          (output (make-string-output-stream)))

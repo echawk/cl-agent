@@ -63,6 +63,20 @@ asks you to improve yourself, change how you behave, or add a \
 capability, prefer actually doing it with these tools over just \
 explaining how they would do it.
 
+If what's asked for needs its own judgment call or its own creative \
+rewrite -- \"rewrite every reply as a poem\", \"refuse to save code \
+that has a code smell\", \"translate what you say into French\", \
+anything where a hook needs the MODEL'S OWN opinion on some text, not \
+just a string operation -- give the hook a SESSION-COMPLETE call: it \
+runs a prompt through the current session's own provider as an \
+independent completion (its own system prompt, no effect on the real \
+conversation) and returns the reply text. A :AFTER-RESPONSE hook can \
+replace the assistant's own reply with SESSION-COMPLETE's output \
+(rewrite-as-poem); a :BEFORE-TOOL-CALL hook can call SESSION-COMPLETE \
+to judge something and then (error \"...\") to veto the call if it \
+doesn't pass -- the tool never runs and the model sees why. See \
+config/example-llm-roundtrip-extension.lisp for both, worked.
+
 Before calling DEFINE-TOOL, ADD-HOOK, REGISTER-PROVIDER-CLASS, or any \
 other cl-agent macro/function you haven't just read the definition of \
 in this conversation, check its real calling convention with \
@@ -156,25 +170,77 @@ wrong, just incomplete)."
       (incf (getf stats :completion-tokens) (or (getf usage :completion-tokens) 0))
       (incf (getf stats :total-tokens) (or (getf usage :total-tokens) 0)))))
 
+(defvar *current-session* nil
+  "The AGENT-SESSION currently driving a turn -- dynamically bound by
+RUN-AGENT-TURN for the duration of that turn, so every hook function
+and tool body that runs during it (including a nested SESSION-COMPLETE
+call) can reach back to the session it's running inside of, rather
+than needing its own separately-configured provider. NIL outside a
+running turn.")
+
+(defun session-complete (prompt &key system)
+  "Run PROMPT through *CURRENT-SESSION*'s own provider as one
+independent, one-off completion -- SYSTEM (or a plain default) as the
+system message, PROMPT as the only user message, no tools -- and
+return the reply text (or NIL). Does not touch SESSION-MESSAGES (it's
+a side completion, not part of the visible conversation), but does
+count toward the session's stats via SESSION-NOTE-REQUEST, since it's
+a real request against the same provider and a hidden one would make
+/stats lie about how many requests a turn actually made.
+
+This is the primitive for a hook or tool body that wants the model
+itself to transform or judge some text, rather than pattern-matching
+it by hand -- e.g. an :AFTER-RESPONSE hook that rewrites the
+assistant's reply in a different voice, or a :BEFORE-TOOL-CALL hook
+that asks the model to judge whether code WRITE-EXTENSION is about to
+save has an obvious code smell before deciding whether to veto the
+call (see RUN-TOOL-CALL's docstring on vetoing, and
+config/example-llm-roundtrip-extension.lisp for both, worked).
+
+Signals a plain error if called with no turn running (*CURRENT-SESSION*
+is NIL) -- there is no provider to borrow outside of one."
+  (unless *current-session*
+    (error "SESSION-COMPLETE needs a running turn (*CURRENT-SESSION* is NIL) -- call it from inside a hook or tool body, not standalone"))
+  (let ((message (chat (session-provider *current-session*)
+                        (list (list :role "system" :content (or system "You are a helpful assistant."))
+                              (list :role "user" :content prompt))
+                        nil)))
+    (session-note-request *current-session* message)
+    (getf message :content)))
+
 (defun run-tool-call (session tool-call)
   "Run one normalized tool-call plist (:id :name :arguments), wrapped
 in the :before-tool-call / :after-tool-call chain hooks and
 SESSION-FRONTEND's UI-TOOL-STARTED/UI-TOOL-FINISHED, and return the
-normalized \"tool\" role message to append to the conversation."
+normalized \"tool\" role message to append to the conversation.
+
+A :before-tool-call hook function that signals an error vetoes the
+call: the tool itself never runs (so e.g. write-extension never writes
+its file), :after-tool-call never fires either (nothing actually ran
+for it to react to), and the condition's REPORT text becomes the
+\"tool\" message's content instead -- the model sees why its call was
+refused and can adjust, the same as any other tool error (see
+CALL-TOOL), rather than the error propagating out of the turn
+entirely."
   (let* ((frontend (session-frontend session))
-         (ctx (run-hook-chain :before-tool-call
-                               (list :tool-name (getf tool-call :name)
-                                     :arguments (getf tool-call :arguments)))))
-    (ui-tool-started frontend (getf ctx :tool-name) (getf ctx :arguments))
-    (let* ((result (call-tool (getf ctx :tool-name) (getf ctx :arguments)))
-           (after (run-hook-chain :after-tool-call
-                                   (list :tool-name (getf ctx :tool-name)
-                                         :arguments (getf ctx :arguments)
-                                         :result result))))
+         (requested (list :tool-name (getf tool-call :name) :arguments (getf tool-call :arguments))))
+    (multiple-value-bind (ctx veto)
+        (handler-case (values (run-hook-chain :before-tool-call requested) nil)
+          (error (c) (values requested c)))
+      (ui-tool-started frontend (getf ctx :tool-name) (getf ctx :arguments))
+      (let* ((result (if veto
+                          (format nil "Tool call vetoed by a :before-tool-call hook: ~a" veto)
+                          (call-tool (getf ctx :tool-name) (getf ctx :arguments))))
+             (after (if veto
+                        (list* :result result ctx)
+                        (run-hook-chain :after-tool-call
+                                        (list :tool-name (getf ctx :tool-name)
+                                              :arguments (getf ctx :arguments)
+                                              :result result)))))
       (ui-tool-finished frontend (getf ctx :tool-name) (getf ctx :arguments) (getf after :result))
       (incf (getf (session-raw-stats session) :tool-calls))
       (ui-stats-updated frontend (session-stats-snapshot session))
-      (list :role "tool" :tool-call-id (getf tool-call :id) :content (getf after :result)))))
+      (list :role "tool" :tool-call-id (getf tool-call :id) :content (getf after :result))))))
 
 (defun run-agent-turn (session)
   "Drive SESSION forward: send the current message history to the
@@ -188,8 +254,11 @@ ITERATIONS is hit (a safety valve against an infinite tool-call loop --
 the loop is broken with a synthetic system note appended to the
 history, not an error, so the conversation can continue normally
 afterward). Updates SESSION's running stats (SESSION-STATS-SNAPSHOT)
-and fires UI-STATS-UPDATED after every request and tool call."
-  (let ((frontend (session-frontend session)))
+and fires UI-STATS-UPDATED after every request and tool call. Binds
+*CURRENT-SESSION* for the duration, so a hook or tool body running
+during this turn can call SESSION-COMPLETE."
+  (let ((frontend (session-frontend session))
+        (*current-session* session))
     (loop for iteration from 1
           do (let* ((ctx (run-hook-chain :before-request
                                           (list :messages (session-messages session)

@@ -144,6 +144,34 @@ just not loaded) via `set-extension-enabled`, which `write-extension`
 calls for you. `/extensions`, `/reload`, and `/hooks` in the REPL show
 what's currently loaded and hooked.
 
+**A hook can give the model its own opinion to act on**, via
+`session-complete` (`src/repl.lisp`): run a prompt through the current
+session's own provider as an independent completion (its own system
+prompt, no effect on the real conversation, but still counted in
+`/stats`) and get the reply text back. This is what makes a request
+like "rewrite everything you say as a poem" or "refuse to save code
+that has a code smell" actually implementable, not just describable:
+
+```
+> write me an extension that rewrites every reply you give as a short
+  Dr. Seuss-style poem
+[agent calls write-extension with an :after-response hook that calls
+ session-complete on its own reply with a Seuss-voiced system prompt,
+ and replaces the reply's text with the result]
+
+> also add one that refuses to save code with an obvious code smell
+[agent adds a :before-tool-call hook on write-extension that calls
+ session-complete to judge the code and (error "...") to veto the
+ call if it looks smelly -- the file is never written, and the model
+ sees why and can revise]
+```
+
+A `:before-tool-call` hook function that signals an error vetoes the
+call outright: the tool never runs, and the condition's message
+becomes what the model is told, the same as any other tool error (see
+`run-tool-call` in `src/repl.lisp`). `config/example-llm-roundtrip-
+extension.lisp` has both of the above, worked and tested end to end.
+
 See `src/extensions.lisp` and `src/hooks.lisp` for the full design --
 both are written with the expectation that an LLM, not just a human,
 is the one reading them and writing new code against them.
