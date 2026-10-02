@@ -18,7 +18,7 @@
 key required; CL_AGENT_OLLAMA_BASE_URL or :base-url in config can
 point this at a non-default host/port."))
 
-(defmethod provider-default-model ((provider ollama-provider)) "qwen2.5:0.5b")
+(defmethod provider-default-model ((provider ollama-provider)) "qwen2.5:7b")
 (defmethod provider-display-name ((provider ollama-provider)) "Ollama")
 ;; Deliberately no PROVIDER-API-KEY-ENV-VAR method: the LLM-PROVIDER
 ;; default (NIL) is correct here, so MAKE-PROVIDER never demands a key.
