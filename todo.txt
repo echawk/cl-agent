@@ -1,6 +1,18 @@
-emacs integration - how to allow emacs users to easily query the agent
-  - can the agent update their emacs config?
-    - part of me thinks this is already possible with existing emacs packages; likely just glue
+Continue to improve the UI - things could still look and function much better than they presently do
+ - take inspiration from claude-code, codex, and opencode
 
-improve the ui dramatically with both the tui and web ui ; include some stats and
-show the currently text/reasoning that the model is doing.
+Need to fix little UI bugs on web and tui; text is often malformed on the tui and
+for the web ui there are lots of little bugs that crop up from time to time. 
+
+
+One example when using the 7b parameter qwen model is that it seems to get stuck when writing a tool
+it does not know the proper way to look at available functions by type signature, nor how to search
+for existing functions which may do what it wants.
+
+I think we need to use more orchestration in this; perhaps there is some way we can search for lisp functions
+like we can haskell functions?
+
+Or maybe we can load up some common CL libraries, and allow the agent to search them for what it needs
+
+I think our current biggest issue is that we do not yet let the agent iterate or attempt multiple times -
+we need to see if we can get the llm to loop until a task is completed. 

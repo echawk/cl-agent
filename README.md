@@ -183,6 +183,37 @@ library), at runtime: `src/clspec.lisp` just `read`s the committed
 data file and renders it to plain text. See that file's header comment
 and `scripts/build-clspec-data.sh`'s for the full reasoning.
 
+## Searching loaded Lisp code
+
+`lookup-cl-spec` only covers the ANSI standard. For everything else --
+cl-agent's own functions and macros, and every library this image
+happens to have loaded -- there's `lisp-apropos`: a name search (via
+`apropos-list`) across every loaded package, reporting each match's
+kind (function/macro/generic-function/variable/class), lambda list
+(via `sb-introspect`), and first line of docstring.
+
+```
+> /call lisp-apropos {"query": "flatten"}
+ALEXANDRIA:FLATTEN function (TREE) -- Traverses the tree in order, collecting non-null leaves into a list.
+SERAPEUM:FLATTEN function (SEQS) -- ...
+...
+```
+
+This image already has `alexandria`, `serapeum`, `iterate`, and
+`trivia` loaded (transitively, via other dependencies -- not something
+cl-agent depends on directly, just something already sitting in the
+image, same as the standard library). The agent is told to search
+before writing a new tool or helper with `write-extension`, so it
+reuses an existing function instead of reimplementing one -- and,
+separately, to check a cl-agent macro's own real calling convention
+(`lisp-apropos("define-tool")`, etc.) before calling it from memory, a
+concrete thing a smaller local model gets wrong often enough to be
+worth calling out explicitly (see `*default-system-prompt*` in
+`src/repl.lisp`). It's a name search, not a type-signature search --
+Lisp has nothing like Hoogle for that -- so a query built like a search
+phrase (`"reverse words"`) is retried one word at a time if the whole
+phrase matches nothing, rather than just coming back empty.
+
 ## MCP (Model Context Protocol)
 
 cl-agent is both an MCP **client** and an MCP **server**, via

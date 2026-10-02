@@ -62,6 +62,7 @@
        (:file "anthropic")
        (:file "apfel")))
      (:file "clspec")
+     (:file "apropos")
      (:file "extensions")
      (:module "ui"
       :serial t
@@ -77,6 +78,7 @@
       ((:file "shell")
        (:file "extensions-tool")
        (:file "clspec-tool")
+       (:file "apropos-tool")
        (:file "mcp-tool")))
      (:file "repl")
      (:file "main")))))
@@ -100,6 +102,7 @@
    (:file "test-config")
    (:file "test-extensions")
    (:file "test-clspec")
+   (:file "test-apropos")
    (:file "test-repl")
    (:file "test-mcp")
    (:file "test-ui"))
