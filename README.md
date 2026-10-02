@@ -88,6 +88,21 @@ and its tool-calling is occasionally flaky, the same caveats Ollama's
 own tiny local models have -- see `src/providers/apfel.lisp`'s header
 comment.
 
+**On tool-calling reliability with small local Ollama models**: cl-agent's
+default system prompt and tool set (7 tools) are correctly sent and
+correctly parsed regardless of model size -- verified directly against
+Ollama's raw API with and without cl-agent in between. What varies is
+whether the *model* reliably chooses to call a tool instead of just
+describing what it would do (e.g. telling you to run `pwd` yourself
+instead of running it). A ~0.5B model frequently fails to call a tool
+at all once there's a realistic system prompt and several tool schemas
+in context; a 7B-class model (e.g. `ollama pull qwen2.5:7b`, then
+`--model qwen2.5:7b`) is dramatically more reliable at actually
+invoking tools, including chaining a retry after a failed shell
+command. Use `OLLAMA_TEST_MODEL` (see the Makefile) to point the test
+suite at a specific pulled model; the tiny default there is chosen for
+CI speed, not as a recommendation for interactive use.
+
 None of this is hard-wired: `src/providers/provider.lisp` defines the
 five-function protocol every provider implements, `src/providers/
 openai-compatible.lisp` is the shared base for the four backends that
