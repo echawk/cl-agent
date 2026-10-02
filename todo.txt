@@ -1,23 +1,6 @@
-Want broad access to MCP servers
+emacs integration - how to allow emacs users to easily query the agent
+  - can the agent update their emacs config?
+    - part of me thinks this is already possible with existing emacs packages; likely just glue
 
-Some repos for ideas:
- - https://github.com/lizqwerscott/mcp.el
-   - mcp client written in emacs lisp.
-   - supports generic mcp servers etc
-   - integrates with gptel ; may be useful as a reference?
- - https://github.com/quasi/cl-mcp-server
-   - mcp server for agents
-     - persistent repl access with paren balancer and lots of tools
-     - should integrate into our repo (impl similar functionality, i prefer to import features though in this context).
-       - ie our code should be as minimal as it can be to enable the functionality we desire (user and ai extensibility with lots of info and checking features).
-         - https://github.com/40ants/mcp ; a library for writing mcp servers; perhaps we can expose our stuff via this library?
- - https://github.com/atgreen/cl-tuition
-   - should add in a nice! TUI; similar to claude code or codex;
-     - this should be broadly user exentedable (ie ui code is "generic")
-       - ex: someone decides to write an extension using sdl or ltk for a gui?
-         - maybe even someone wants to host it and have a true chatgpt like experience.
-   - perhaps can be ran default w/o configuration and allow for user to select what they want (provided that the agent cannot infer the correct provider?)
-
- - avoid writing our own parsers for things which have libraries, for example
-   using clingon intead of rolling our own cli parser.
-
+improve the ui dramatically with both the tui and web ui ; include some stats and
+show the currently text/reasoning that the model is doing.

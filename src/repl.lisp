@@ -65,7 +65,13 @@ code (and tests) that doesn't care about UI can ignore this slot.")
    (messages :initarg :messages :initform nil :accessor session-messages)
    (tools :initarg :tools :initform (list-tools) :accessor session-tools)
    (max-tool-iterations :initarg :max-tool-iterations :initform 25
-                         :accessor session-max-tool-iterations))
+                         :accessor session-max-tool-iterations)
+   (start-time :initform (get-internal-real-time) :accessor session-start-time)
+   (raw-stats :initform (list :requests 0 :tool-calls 0 :prompt-tokens 0 :completion-tokens 0 :total-tokens 0)
+              :accessor session-raw-stats
+              :documentation "Plist of running totals; use SESSION-
+STATS-SNAPSHOT, not this directly, for anything display-facing -- it
+adds the computed/live fields (:provider :model :elapsed-seconds)."))
   (:documentation "Holds one conversation's state: which provider it's
 talking to, which UI is presenting it, the message history so far, and
 which tools are on offer. SESSION-TOOLS is a snapshot taken at
@@ -80,6 +86,29 @@ independently of the global registry."))
                   :tools tools
                   :messages (list (list :role "system" :content (or system-prompt *default-system-prompt*)))
                   :max-tool-iterations (or max-tool-iterations 25)))
+
+(defun session-stats-snapshot (session)
+  "The plist UI-STATS-UPDATED (ui/frontend.lisp) and the /stats
+command display: SESSION-RAW-STATS's running totals, plus :PROVIDER,
+:MODEL, and :ELAPSED-SECONDS computed fresh each call."
+  (list* :provider (provider-display-name (session-provider session))
+         :model (provider-model (session-provider session))
+         :elapsed-seconds (round (/ (- (get-internal-real-time) (session-start-time session))
+                                    internal-time-units-per-second))
+         (session-raw-stats session)))
+
+(defun session-note-request (session assistant-message)
+  "Fold one CHAT-STREAM/CHAT round trip into SESSION's running stats:
+always counts the request; adds token counts only if ASSISTANT-MESSAGE
+reported :USAGE (see CHAT's docstring on that commonly being NIL for a
+streamed turn -- this makes the totals a lower bound in that case, not
+wrong, just incomplete)."
+  (let ((stats (session-raw-stats session)) (usage (getf assistant-message :usage)))
+    (incf (getf stats :requests))
+    (when usage
+      (incf (getf stats :prompt-tokens) (or (getf usage :prompt-tokens) 0))
+      (incf (getf stats :completion-tokens) (or (getf usage :completion-tokens) 0))
+      (incf (getf stats :total-tokens) (or (getf usage :total-tokens) 0)))))
 
 (defun run-tool-call (session tool-call)
   "Run one normalized tool-call plist (:id :name :arguments), wrapped
@@ -97,32 +126,46 @@ normalized \"tool\" role message to append to the conversation."
                                          :arguments (getf ctx :arguments)
                                          :result result))))
       (ui-tool-finished frontend (getf ctx :tool-name) (getf ctx :arguments) (getf after :result))
+      (incf (getf (session-raw-stats session) :tool-calls))
+      (ui-stats-updated frontend (session-stats-snapshot session))
       (list :role "tool" :tool-call-id (getf tool-call :id) :content (getf after :result)))))
 
 (defun run-agent-turn (session)
   "Drive SESSION forward: send the current message history to the
-provider, show any assistant text via SESSION-FRONTEND, run any
-requested tool calls and feed their results back, and repeat until the
-model replies with no tool calls (an ordinary turn) or SESSION-MAX-
-TOOL-ITERATIONS is hit (a safety valve against an infinite tool-call
-loop -- the loop is broken with a synthetic system note appended to
-the history, not an error, so the conversation can continue normally
-afterward)."
+provider via CHAT-STREAM (providers/provider.lisp), relaying each
+incremental chunk to SESSION-FRONTEND's UI-ASSISTANT-DELTA as it
+arrives (bracketed by UI-THINKING-STARTED/STOPPED) and the complete
+text to UI-ASSISTANT-TEXT once the response is done, run any requested
+tool calls and feed their results back, and repeat until the model
+replies with no tool calls (an ordinary turn) or SESSION-MAX-TOOL-
+ITERATIONS is hit (a safety valve against an infinite tool-call loop --
+the loop is broken with a synthetic system note appended to the
+history, not an error, so the conversation can continue normally
+afterward). Updates SESSION's running stats (SESSION-STATS-SNAPSHOT)
+and fires UI-STATS-UPDATED after every request and tool call."
   (let ((frontend (session-frontend session)))
     (loop for iteration from 1
           do (let* ((ctx (run-hook-chain :before-request
                                           (list :messages (session-messages session)
                                                 :tools (session-tools session))))
                      (assistant-message
-                       (handler-case (chat (session-provider session) (getf ctx :messages) (getf ctx :tools))
+                       (handler-case
+                           (progn
+                             (ui-thinking-started frontend)
+                             (unwind-protect
+                                  (chat-stream (session-provider session) (getf ctx :messages) (getf ctx :tools)
+                                               (lambda (chunk) (ui-assistant-delta frontend chunk)))
+                               (ui-thinking-stopped frontend)))
                          (provider-error (c)
                            (run-hook :on-error c)
                            (ui-error frontend c)
                            (return-from run-agent-turn nil)))))
                 (setf assistant-message (run-hook-chain :after-response assistant-message))
                 (setf (session-messages session) (append (session-messages session) (list assistant-message)))
+                (session-note-request session assistant-message)
                 (when (getf assistant-message :content)
                   (ui-assistant-text frontend (getf assistant-message :content)))
+                (ui-stats-updated frontend (session-stats-snapshot session))
                 (let ((tool-calls (getf assistant-message :tool-calls)))
                   (cond
                     ((null tool-calls) (return-from run-agent-turn assistant-message))
@@ -224,6 +267,11 @@ name is parsed as one JSON object and passed to the tool as-is."
   (ui-system (session-frontend session)
              (format nil "~a, model ~a" (provider-display-name (session-provider session))
                      (provider-model (session-provider session))))
+  t)
+
+(define-slash-command stats (session arg)
+  (declare (ignore arg))
+  (ui-system (session-frontend session) (format-stats (session-stats-snapshot session)))
   t)
 
 (define-slash-command mcp (session arg)

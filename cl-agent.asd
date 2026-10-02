@@ -94,6 +94,7 @@
    (:file "test-hooks")
    (:file "test-tools")
    (:file "test-providers")
+   (:file "test-streaming")
    (:file "test-ollama-ensure-ready")
    (:file "test-apfel-ensure-ready")
    (:file "test-config")

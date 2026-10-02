@@ -213,6 +213,31 @@ bare reader end-of-file error -- a small, self-contained utility
 (`check-paren-balance` in `src/extensions.lisp`), not a dependency,
 since nothing freely available did exactly this.
 
+## Emacs integration
+
+`integrations/emacs/cl-agent.el` is a copy-into-your-init.el starting
+point (not a MELPA package) giving Emacs users two independent ways to
+reach cl-agent, in increasing order of capability:
+
+- **`cl-agent-ask`** -- zero dependencies. Runs `cl-agent-executable`
+  on a one-shot task as an async subprocess and streams its output
+  live into a `*cl-agent*` buffer, without blocking Emacs.
+- **`cl-agent-gptel-mcp-server-entry`** -- full, bidirectional tool
+  use from inside [gptel](https://github.com/karthink/gptel)'s chat
+  buffers, via the MCP server mode described above. gptel already
+  ships an MCP client (`gptel-integrations.el`, bundled with gptel
+  itself) that talks to [mcp.el](https://github.com/lizqwerscott/mcp.el)
+  (the `mcp-hub` package it expects, not on MELPA -- install it the
+  same way you'd install `claude-code-ide.el`, via Emacs 30+'s `:vc`
+  package keyword); this function builds the `mcp-hub-servers` entry
+  that points it at `cl-agent --mcp-serve`. Once connected
+  (`gptel-mcp-connect`), every cl-agent tool -- `shell`, `eval-lisp`,
+  `write-extension`, `lookup-cl-spec`, anything a loaded extension
+  added -- is callable from a gptel chat, including editing your own
+  init.el if you ask it to.
+
+See the file's header comment for the exact setup snippet.
+
 ## User interfaces
 
 Three frontends ship, all driving the identical `run-agent-turn`/
@@ -231,21 +256,37 @@ not just the LLM backend:
 ./bin/cl-agent --ui web   # then open the printed URL
 ```
 
+**The TUI and web UI both show the model's reply appearing live,
+token by token, as it streams in** (not just the final text all at
+once), plus a "thinking" indicator while waiting and a running stats
+line (provider/model, elapsed time, request count, tool-call count,
+token usage where the provider reports it) updated after every turn.
+This is real incremental HTTP streaming for any OpenAI-compatible
+provider (REALLMS/OpenAI/xAI/Ollama/apfel) -- see `CHAT-STREAM` and
+`PARSE-SSE-STREAM` in `src/providers/provider.lisp`/`openai-
+compatible.lisp` -- with a plain (non-streamed, but still correct)
+fallback for a provider that doesn't implement it (Anthropic, for
+now). `/stats` shows the same summary on demand in any frontend,
+including the plain CLI, which otherwise looks exactly as it always
+has -- streaming and stats are purely additive, not something a
+frontend has to opt into to keep working.
+
 **Extending it**: a UI frontend is a CLOS class (`AGENT-FRONTEND`)
-implementing a handful of generic functions -- show the model's reply,
-show a tool call starting/finishing, show a system notice, and block
-for the next line of input -- registered with `register-frontend-
-class` exactly the way a new LLM provider is registered with
-`register-provider-class` (see [Providers](#providers)). Nothing about
-`src/repl.lisp` knows or cares whether it's talking to a terminal, a
-browser, or something else -- a user (or the agent itself, via
-`write-extension`) can write a new frontend -- an SDL window, a Discord
-bot, a true multi-user hosted chat -- as a `src/ui/*.lisp`-sized file,
-without touching the conversation loop. See `src/ui/frontend.lisp`'s
-header comment for the exact contract and `src/ui/tui.lisp`/`web.lisp`
-for two real (not toy) examples of implementing it, including the
-threading involved in keeping a blocking LLM call from freezing a
-redraw loop or an HTTP server.
+implementing a handful of generic functions -- show the model's reply
+(in full, or incrementally), show a tool call starting/finishing, show
+a stats update, show a system notice, and block for the next line of
+input -- registered with `register-frontend-class` exactly the way a
+new LLM provider is registered with `register-provider-class` (see
+[Providers](#providers)). Nothing about `src/repl.lisp` knows or cares
+whether it's talking to a terminal, a browser, or something else -- a
+user (or the agent itself, via `write-extension`) can write a new
+frontend -- an SDL window, a Discord bot, a true multi-user hosted
+chat -- as a `src/ui/*.lisp`-sized file, without touching the
+conversation loop. See `src/ui/frontend.lisp`'s header comment for the
+exact contract and `src/ui/tui.lisp`/`web.lisp` for two real (not toy)
+examples of implementing it, including the threading involved in
+keeping a blocking/streaming LLM call from freezing a redraw loop or
+an HTTP server.
 
 ## Configuration
 

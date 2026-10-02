@@ -38,11 +38,22 @@ resolved consistently)."))
    "Send one chat-completion request to PROVIDER and return the
 model's reply as a single normalized ASSISTANT-MESSAGE plist:
 
-  (:role \"assistant\" :content STRING-OR-NIL :tool-calls TOOL-CALLS)
+  (:role \"assistant\" :content STRING-OR-NIL :tool-calls TOOL-CALLS
+   :usage USAGE-OR-NIL)
 
 where TOOL-CALLS is a (possibly empty) list of
 
   (:id STRING :name STRING :arguments HASH-TABLE)
+
+and USAGE, when the provider reports it, is
+
+  (:prompt-tokens N :completion-tokens N :total-tokens N)
+
+-- NIL when unavailable (not every provider/request reports usage; see
+CHAT-STREAM's docstring for why a streamed turn commonly won't). Only
+:ROLE/:CONTENT/:TOOL-CALLS are load-bearing elsewhere in this project
+(repl.lisp); :USAGE is read, if present, purely to accumulate
+SESSION-STATS for display (see ui/frontend.lisp's UI-STATS-UPDATED).
 
 MESSAGES is a list of normalized message plists in the same shape
 this function returns, plus:
@@ -62,6 +73,37 @@ new OpenAI-compatible providers should specialize those two instead of
 CHAT itself. A provider with a genuinely different wire protocol
 (Anthropic's Messages API is the example in this codebase) implements
 CHAT directly."))
+
+(defgeneric chat-stream (provider messages tools on-delta)
+  (:documentation
+   "Like CHAT, but calls (FUNCALL ON-DELTA CHUNK) with each new bit of
+visible text as it arrives, before returning the same normalized
+ASSISTANT-MESSAGE plist CHAT returns (built up from the accumulated
+chunks) once the response is complete. This is what lets a UI frontend
+(ui/frontend.lisp's UI-ASSISTANT-DELTA) show the model's reply
+appearing live instead of all at once.
+
+Default method (here, on LLM-PROVIDER): just calls CHAT once, and
+calls ON-DELTA a single time with the complete :CONTENT if non-NIL --
+i.e. \"no real streaming, but still correct,\" the right fallback for
+a provider that hasn't implemented incremental delivery (a frontend
+only sees one update instead of many; it still gets the final
+message). OPENAI-COMPATIBLE-PROVIDER (providers/openai-compatible.lisp)
+overrides this with real Server-Sent-Events streaming; a provider with
+its own streaming wire format (Anthropic's, say) would override it
+the same way CHAT itself can be overridden directly.
+
+USAGE is commonly NIL on a real streamed response: getting per-request
+token counts while streaming requires an extra request field
+(`stream_options.include_usage`) that not every OpenAI-compatible
+backend tolerates (some reject unrecognized fields outright -- see
+providers/apfel.lisp's header comment), so this project doesn't send
+it; SESSION-STATS (repl.lisp) simply accumulates whatever usage values
+do show up rather than depending on every turn having one.")
+  (:method ((provider llm-provider) messages tools on-delta)
+    (let ((message (chat provider messages tools)))
+      (when (getf message :content) (funcall on-delta (getf message :content)))
+      message)))
 
 (defgeneric provider-default-model (provider)
   (:documentation "The model string to use when the user/config didn't

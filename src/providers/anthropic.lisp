@@ -101,7 +101,8 @@ Returns (values system-string anthropic-messages-list)."
                    (when tools (list "tools" (mapcar #'anthropic-tool-schema tools)))))))
 
 (defmethod parse-chat-response ((provider anthropic-provider) response)
-  (let ((blocks (jget response "content")))
+  (let ((blocks (jget response "content"))
+        (usage (jget response "usage")))
     (list :role "assistant"
           :content (let ((texts (loop for b in blocks
                                        when (string= (jget b "type") "text")
@@ -111,7 +112,12 @@ Returns (values system-string anthropic-messages-list)."
                              when (string= (jget b "type") "tool_use")
                                collect (list :id (jget b "id")
                                              :name (jget b "name")
-                                             :arguments (jget b "input"))))))
+                                             :arguments (jget b "input")))
+          ;; Anthropic's usage has no ready-made "total_tokens" field
+          ;; (OpenAI's does); sum the two it does give.
+          :usage (and usage (let ((in (jget usage "input_tokens")) (out (jget usage "output_tokens")))
+                               (list :prompt-tokens in :completion-tokens out
+                                     :total-tokens (and in out (+ in out))))))))
 
 (defmethod chat ((provider anthropic-provider) messages tools)
   (let* ((url (concatenate 'string (provider-base-url provider) "/messages"))

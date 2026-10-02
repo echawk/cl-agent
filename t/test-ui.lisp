@@ -72,6 +72,41 @@
     (tui:update model (make-instance 'tui-line-msg :text "second"))
     (check-equal (reverse (tui-chat-lines model)) '("first" "second"))))
 
+(deftest tui-chat-model-delta-msg-accumulates-pending-text ()
+  (let ((model (make-instance 'tui-chat-model :input-channel (trivial-channels:make-channel))))
+    (tui:init model)
+    (tui:update model (make-instance 'tui-delta-msg :chunk "hel"))
+    (tui:update model (make-instance 'tui-delta-msg :chunk "lo"))
+    (check-equal (tui-chat-pending model) "hello")
+    (check-equal (tui-chat-lines model) nil "deltas don't become transcript lines on their own")))
+
+(deftest tui-chat-model-line-msg-clears-pending-after-deltas ()
+  ;; The complete text (from UI-ASSISTANT-TEXT) supersedes whatever
+  ;; partial text was streamed in -- the viewport shouldn't show both.
+  (let ((model (make-instance 'tui-chat-model :input-channel (trivial-channels:make-channel))))
+    (tui:init model)
+    (tui:update model (make-instance 'tui-delta-msg :chunk "hel"))
+    (tui:update model (make-instance 'tui-delta-msg :chunk "lo"))
+    (tui:update model (make-instance 'tui-line-msg :text "hello"))
+    (check-equal (tui-chat-pending model) "")
+    (check-equal (reverse (tui-chat-lines model)) '("hello"))))
+
+(deftest tui-chat-model-status-msg-sets-status-line ()
+  (let ((model (make-instance 'tui-chat-model :input-channel (trivial-channels:make-channel))))
+    (tui:init model)
+    (check-equal (tui-chat-status-line model) "")
+    (tui:update model (make-instance 'tui-status-msg :text "⋯ thinking"))
+    (check-equal (tui-chat-status-line model) "⋯ thinking")
+    (tui:update model (make-instance 'tui-status-msg :text ""))
+    (check-equal (tui-chat-status-line model) "")))
+
+(deftest tui-chat-model-view-includes-status-line-only-when-non-empty ()
+  (let ((model (make-instance 'tui-chat-model :input-channel (trivial-channels:make-channel))))
+    (tui:init model)
+    (check (not (search "thinking" (tui:view-state-content (tui:view model)))))
+    (tui:update model (make-instance 'tui-status-msg :text "⋯ thinking"))
+    (check (search "thinking" (tui:view-state-content (tui:view model))))))
+
 ;;; --- Web: real HTTP against a real (ephemeral, loopback) instance ---
 
 (defparameter *test-web-port* 14599
@@ -101,11 +136,51 @@ suite that only ever runs one of these at a time.")
     (ui-tool-finished frontend "shell" (jobj "command" "ls") "a.txt")
     (multiple-value-bind (body status) (drakma:http-request (web-test-url "/api/messages"))
       (check-equal status 200)
-      (let ((messages (json-decode body)))
+      (let ((messages (jget (json-decode body) "messages")))
         (check-equal (length messages) 4)
         (check-equal (jget (first messages) "role") "system")
         (check-equal (jget (second messages) "role") "assistant")
         (check-equal (jget (third messages) "role") "tool")))))
+
+(deftest web-frontend-status-json-is-well-formed-json-array-when-empty ()
+  ;; Regression test for the same NIL-vs-[] JSON ambiguity fixed
+  ;; elsewhere (see tools.lisp's TOOL class docstring) -- an empty
+  ;; transcript must serialize as "messages":[], not "messages":false.
+  (with-test-web-frontend (frontend)
+    (multiple-value-bind (body status) (drakma:http-request (web-test-url "/api/messages"))
+      (check-equal status 200)
+      (check (search "\"messages\":[]" (remove #\space body))))))
+
+(deftest web-frontend-pending-and-thinking-reflect-streaming-state ()
+  (with-test-web-frontend (frontend)
+    (ui-thinking-started frontend)
+    (let ((status (json-decode (drakma:http-request (web-test-url "/api/messages")))))
+      (check-equal (jget status "thinking") t)
+      (check-equal (jget status "pending") ""))
+    (ui-assistant-delta frontend "Sure")
+    (ui-assistant-delta frontend "!")
+    (let ((status (json-decode (drakma:http-request (web-test-url "/api/messages")))))
+      (check-equal (jget status "pending") "Sure!"))
+    (ui-thinking-stopped frontend)
+    (ui-assistant-text frontend "Sure!")
+    (let* ((status (json-decode (drakma:http-request (web-test-url "/api/messages"))))
+           (messages (jget status "messages")))
+      (check-equal (jget status "pending") "" "the complete text clears PENDING")
+      (check-equal (jget status "thinking") nil)
+      (check-equal (length messages) 1)
+      (check-equal (jget (first messages) "text") "Sure!"))))
+
+(deftest web-frontend-stats-reflects-ui-stats-updated ()
+  (with-test-web-frontend (frontend)
+    (let ((status (json-decode (drakma:http-request (web-test-url "/api/messages")))))
+      (check-equal (jget status "stats") nil "no stats yet"))
+    (ui-stats-updated frontend (list :provider "ollama" :model "m" :elapsed-seconds 3
+                                      :requests 2 :tool-calls 1 :total-tokens 50))
+    (let* ((status (json-decode (drakma:http-request (web-test-url "/api/messages"))))
+           (stats (jget status "stats")))
+      (check-equal (jget stats "provider") "ollama")
+      (check-equal (jget stats "requests") 2)
+      (check-equal (jget stats "total_tokens") 50))))
 
 (deftest web-frontend-send-reaches-ui-prompt-input ()
   (with-test-web-frontend (frontend)

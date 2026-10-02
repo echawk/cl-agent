@@ -88,6 +88,47 @@ to the user (a provider error, a hook that misbehaved, ...).")
   (:method ((frontend agent-frontend) condition)
     (ui-system frontend (format nil "[error] ~a" condition))))
 
+(defgeneric ui-thinking-started (frontend)
+  (:documentation "Called right before sending a request to the
+provider, so a frontend that wants to show a \"thinking\" indicator
+while waiting for the first byte back can start one. Always paired
+with a later UI-THINKING-STOPPED call, even if the request errors.
+Default: no-op (the CLI, like before this existed, shows nothing while
+waiting -- the final UI-ASSISTANT-TEXT/UI-ASSISTANT-DELTA calls are
+enough for it; see this file's header comment on frontends only
+needing to override what they actually want to do differently).")
+  (:method ((frontend agent-frontend)) (values)))
+
+(defgeneric ui-thinking-stopped (frontend)
+  (:documentation "Pairs with UI-THINKING-STARTED: the response (in
+full, or the last of its streamed chunks) has arrived. Default: no-op.")
+  (:method ((frontend agent-frontend)) (values)))
+
+(defgeneric ui-assistant-delta (frontend chunk)
+  (:documentation "Called zero or more times as the model's reply
+streams in (see CHAT-STREAM, providers/provider.lisp), each CHUNK the
+next bit of visible text to show live -- strictly before the final
+UI-ASSISTANT-TEXT call for the same turn, which always still fires
+with the complete text once the response is done, streamed or not.
+Default: no-op, so a frontend that's happy to just show the final
+UI-ASSISTANT-TEXT (the CLI) is entirely unaffected by streaming having
+been added -- it never has to know the difference between a provider
+that streams and one that doesn't.")
+  (:method ((frontend agent-frontend) chunk) (declare (ignore chunk)) (values)))
+
+(defgeneric ui-stats-updated (frontend stats)
+  (:documentation "Called after each turn with STATS, the plist
+SESSION-STATS-SNAPSHOT (repl.lisp) returns:
+  (:provider STRING :model STRING :requests N :tool-calls N
+   :prompt-tokens N :completion-tokens N :total-tokens N
+   :elapsed-seconds N)
+Token counts accumulate only from turns where the provider actually
+reported usage (see CHAT's docstring on :USAGE commonly being NIL for
+a streamed response) -- they are a lower bound, not exact, when any
+turn didn't report it. Default: no-op; a frontend with nowhere
+sensible to put a stats display (the CLI) can just ignore this.")
+  (:method ((frontend agent-frontend) stats) (declare (ignore stats)) (values)))
+
 (defun tool-call-summary (tool-name arguments)
   "A short, generic one-line summary of a tool call, with no
 knowledge of any particular tool: if ARGUMENTS has exactly one key,
@@ -99,6 +140,18 @@ wants the same summary."
     (if (= (length keys) 1)
         (format nil "~a: ~a" tool-name (jget arguments (first keys)))
         (format nil "~a ~a" tool-name (json-encode arguments)))))
+
+(defun format-stats (stats)
+  "One-line human-readable rendering of a SESSION-STATS-SNAPSHOT
+(repl.lisp) plist, e.g. \"ollama (qwen2.5:0.5b) | 12s | 3 requests, 2
+tool calls | 234 tokens\". Shared by the /stats command and any
+frontend that wants the same text for its own stats display (see
+ui/tui.lisp/ui/web.lisp, which both use this rather than formatting
+STATS themselves)."
+  (format nil "~a (~a) | ~ds | ~d request~:p, ~d tool call~:p~@[ | ~d token~:p~]"
+          (getf stats :provider) (getf stats :model) (getf stats :elapsed-seconds)
+          (getf stats :requests) (getf stats :tool-calls)
+          (and (plusp (getf stats :total-tokens 0)) (getf stats :total-tokens))))
 
 (defvar *frontend-registry* (make-hash-table :test 'eq)
   "keyword -> class-name, e.g. :cli -> 'cli-frontend. See providers/

@@ -2,10 +2,15 @@
 ;;;; (https://github.com/atgreen/cl-tuition, ocicl system name
 ;;;; "tuition", package nicknamed TUI), in the style of Claude Code /
 ;;;; Codex: a scrollable transcript viewport above a persistent input
-;;;; box. Structurally a close port of tuition's own bundled chat
-;;;; example (examples/chat.lisp) -- textarea + viewport joined
-;;;; vertically -- wired into cl-agent's UI protocol (ui/frontend.lisp)
-;;;; instead of that example's own ad-hoc message list.
+;;;; box, with a status line above that showing a live "thinking"
+;;;; indicator while waiting on the model and a running stats summary
+;;;; (requests/tool calls/tokens/elapsed time) once a turn completes --
+;;;; see TUI-STATUS-MSG. The model's reply itself appears incrementally
+;;;; as it streams in (TUI-DELTA-MSG), not all at once at the end.
+;;;; Structurally a close port of tuition's own bundled chat example
+;;;; (examples/chat.lisp) -- textarea + viewport joined vertically --
+;;;; wired into cl-agent's UI protocol (ui/frontend.lisp) instead of
+;;;; that example's own ad-hoc message list.
 ;;;;
 ;;;; Threading: tuition owns its own event loop (`tui:run`, called
 ;;;; here in a dedicated thread) and its own terminal-input thread;
@@ -31,16 +36,36 @@
 
 (defclass tui-line-msg ()
   ((text :initarg :text :reader tui-line-msg-text))
-  (:documentation "A tuition message wrapping one line (or block) of
-text to append to the transcript. Sent via TUI:SEND from whichever
-thread has something to show; handled in TUI-CHAT-MODEL's UPDATE
-method below."))
+  (:documentation "A tuition message wrapping one complete line (or
+block) of text to append to the transcript. Sent via TUI:SEND from
+whichever thread has something to show; handled in TUI-CHAT-MODEL's
+UPDATE method below."))
+
+(defclass tui-delta-msg ()
+  ((chunk :initarg :chunk :reader tui-delta-msg-chunk))
+  (:documentation "One incremental chunk of the model's reply as it
+streams in (see UI-ASSISTANT-DELTA, ui/frontend.lisp): appended to
+TUI-CHAT-MODEL's PENDING text, shown as a trailing in-progress line in
+the viewport until the matching TUI-LINE-MSG (the complete text, from
+UI-ASSISTANT-TEXT) arrives and supersedes it."))
+
+(defclass tui-status-msg ()
+  ((text :initarg :text :reader tui-status-msg-text))
+  (:documentation "Replaces TUI-CHAT-MODEL's status line, shown above
+the viewport -- used for both the \"thinking\" indicator
+(UI-THINKING-STARTED/STOPPED) and the live stats summary
+(UI-STATS-UPDATED), whichever was sent most recently."))
 
 (defclass tui-chat-model ()
   ((viewport :accessor tui-chat-viewport)
    (textarea :accessor tui-chat-textarea)
    (lines :initform nil :accessor tui-chat-lines
           :documentation "Transcript lines, NEWEST FIRST (cheap to push to).")
+   (pending :initform "" :accessor tui-chat-pending
+            :documentation "Accumulated TUI-DELTA-MSG chunks for the
+reply currently streaming in; see that class's docstring.")
+   (status-line :initform "" :accessor tui-chat-status-line
+                :documentation "See TUI-STATUS-MSG's docstring.")
    (input-channel :initarg :input-channel :reader tui-chat-input-channel))
   (:documentation "tuition model for cl-agent's TUI. See this file's
 header comment for the threading story; TUI-FRONTEND below is the
@@ -59,16 +84,25 @@ AGENT-FRONTEND that owns one of these."))
   (tui:tick 0.5))
 
 (defun tui-chat-refresh-viewport (model)
-  (tui.viewport:viewport-set-content (tui-chat-viewport model)
-                                      (format nil "~{~a~^~%~}" (reverse (tui-chat-lines model))))
+  (let ((lines (reverse (tui-chat-lines model))))
+    (tui.viewport:viewport-set-content
+     (tui-chat-viewport model)
+     (format nil "~{~a~^~%~}"
+             (if (plusp (length (tui-chat-pending model))) (append lines (list (tui-chat-pending model))) lines))))
   (tui.viewport:viewport-goto-bottom (tui-chat-viewport model)))
 
 (defmethod tui:update ((model tui-chat-model) msg)
   (let (ta-cmd vp-cmd (pass-to-textarea t))
     (cond
       ((typep msg 'tui-line-msg)
+       (setf (tui-chat-pending model) "") ; the complete text supersedes any partial deltas shown so far
        (push (tui-line-msg-text msg) (tui-chat-lines model))
        (tui-chat-refresh-viewport model))
+      ((typep msg 'tui-delta-msg)
+       (setf (tui-chat-pending model) (concatenate 'string (tui-chat-pending model) (tui-delta-msg-chunk msg)))
+       (tui-chat-refresh-viewport model))
+      ((typep msg 'tui-status-msg)
+       (setf (tui-chat-status-line model) (tui-status-msg-text msg)))
       ((tui:key-press-msg-p msg)
        (let ((key (tui:key-event-code msg))
              (ctrl (tui:mod-contains (tui:key-event-mod msg) tui:+mod-ctrl+)))
@@ -100,7 +134,8 @@ AGENT-FRONTEND that owns one of these."))
     (values model (tui:batch ta-cmd vp-cmd))))
 
 (defmethod tui:view ((model tui-chat-model))
-  (tui:make-view (format nil "~a~%~%~a"
+  (tui:make-view (format nil "~@[~a~%~%~]~a~%~%~a"
+                          (and (plusp (length (tui-chat-status-line model))) (tui-chat-status-line model))
                           (tui.viewport:viewport-view (tui-chat-viewport model))
                           (tui.textarea:textarea-view (tui-chat-textarea model)))))
 
@@ -155,5 +190,17 @@ comment for the threading model."))
 
 (defmethod ui-system ((frontend tui-frontend) text)
   (tui:send (tui-frontend-program frontend) (make-instance 'tui-line-msg :text (format nil "[*] ~a" text))))
+
+(defmethod ui-assistant-delta ((frontend tui-frontend) chunk)
+  (tui:send (tui-frontend-program frontend) (make-instance 'tui-delta-msg :chunk chunk)))
+
+(defmethod ui-thinking-started ((frontend tui-frontend))
+  (tui:send (tui-frontend-program frontend) (make-instance 'tui-status-msg :text "⋯ thinking")))
+
+(defmethod ui-thinking-stopped ((frontend tui-frontend))
+  (tui:send (tui-frontend-program frontend) (make-instance 'tui-status-msg :text "")))
+
+(defmethod ui-stats-updated ((frontend tui-frontend) stats)
+  (tui:send (tui-frontend-program frontend) (make-instance 'tui-status-msg :text (format-stats stats))))
 
 (register-frontend-class :tui 'tui-frontend)
