@@ -195,6 +195,32 @@
                (setf (symbol-function 'call-tool) original))))
       (setf (symbol-function 'session-complete) complete))))
 
+(deftest shell-command-inspector-rejects-whole-host-discovery-before-model-review ()
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (complete (symbol-function 'session-complete))
+         (called nil))
+    (setf (session-messages session)
+          (append (session-messages session) (list (list :role "user" :content "Explain an installed library"))))
+    (unwind-protect
+         (progn
+           ;; The structural inspector must reject this before asking a model
+           ;; that might otherwise endorse its own over-broad suggestion.
+           (setf (symbol-function 'session-complete)
+                 (lambda (&rest ignored) (declare (ignore ignored))
+                   (error "model review should not run")))
+           (let ((original (symbol-function 'call-tool)))
+             (unwind-protect
+                  (progn
+                    (setf (symbol-function 'call-tool)
+                          (lambda (&rest ignored) (declare (ignore ignored)) (setf called t) "ran"))
+                    (let ((*current-session* session))
+                      (let ((result (run-tool-call session (list :id "whole-host" :name "shell"
+                                                                  :arguments (jobj "command" "find / -name '*.lisp'")))))
+                        (check (not called))
+                        (check (search "entire host filesystem" (getf result :content))))))
+               (setf (symbol-function 'call-tool) original))))
+      (setf (symbol-function 'session-complete) complete))))
+
 ;;; --- SESSION-COMPLETE / *CURRENT-SESSION* ---
 
 (deftest session-complete-signals-without-a-running-session ()

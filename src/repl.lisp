@@ -507,6 +507,37 @@ The inspector is deliberately about relevance, scope, and evidence quality,
 not user authorization.  A rejected command is returned to the model as tool
 feedback so it can choose a narrower or more direct next step.")
 
+(defparameter *whole-host-search-programs*
+  '("find" "locate" "fd" "fdfind" "rg" "grep" "ag" "ack")
+  "Programs whose use can turn a path argument into a broad discovery scan.
+
+This is deliberately a property of shell command shape, not a list of
+libraries, files, or user requests.  The model inspector evaluates every
+other question of relevance; this preflight reserves an unscoped whole-host
+scan as categorically disproportionate for an agent's exploratory step.")
+
+(defun shell-command-tokens (command)
+  "Split enough shell punctuation to inspect the shape of a proposed command.
+
+This is not a shell parser: it recognizes ordinary agent-generated commands
+and deliberately fails closed only for an unmistakable whole-host traversal."
+  (remove-if (lambda (token) (zerop (length token)))
+             (uiop:split-string command :separator '(#\Space #\Tab #\Newline #\; #\| #\&))))
+
+(defun whole-host-shell-search-reason (command)
+  "Return a reason when COMMAND asks a discovery tool to traverse the host root.
+
+Searching from the filesystem root has an unbounded scope and is not an
+appropriate fallback for locating a dependency or answering a normal task.
+The caller reports this as tool feedback rather than asking the user."
+  (let ((tokens (and (stringp command) (shell-command-tokens command))))
+    (when (and tokens
+               (some (lambda (program) (member program *whole-host-search-programs*
+                                               :test #'string=))
+                     tokens)
+               (member "/" tokens :test #'string=))
+      "The command would perform an unscoped search of the entire host filesystem. Use a known project, package-manager, or runtime-specific location instead.")))
+
 (defun parse-shell-command-inspection (response)
   "Validate the JSON-only result from the isolated shell command inspector."
   (let* ((decoded (handler-case (and (stringp response) (json-decode response))
@@ -531,12 +562,18 @@ feedback so it can choose a narrower or more direct next step.")
 
 SESSION supplies the actual task and evidence, preventing the reviewer from
 judging a command in isolation.  It never asks the user for permission."
-  (parse-shell-command-inspection
-   (let ((*current-session* session))
-     (session-complete
-      (format nil "Current task and evidence:~%~a~%~%Proposed shell command:~%~a"
-              (current-turn-review-evidence session) command)
-      :system "You are a shell-command inspector for a coding agent. Decide whether the proposed command is a necessary, proportionate, and technically sound next step for the current task. Reject commands that gather information more broadly than the task/evidence justifies, have an unbounded or poorly targeted search space, duplicate available direct evidence, or are unlikely to answer the question. This is not a permission check: do not ask the user anything and do not consider authorization. Prefer the smallest command with a known target and bounded output. Reply JSON only: {\"decision\": \"allow\"|\"reject\", \"reason\": string, \"alternative\": string|null}."))))
+  (let ((whole-host-reason (whole-host-shell-search-reason command)))
+    (if whole-host-reason
+        ;; A model cannot override this: whole-host discovery has no bounded
+        ;; evidence target, regardless of how confidently it proposes it.
+        (list :decision :reject :reason whole-host-reason
+              :alternative "Inspect the package manager, language runtime, or another known location.")
+        (parse-shell-command-inspection
+         (let ((*current-session* session))
+           (session-complete
+            (format nil "Current task and evidence:~%~a~%~%Proposed shell command:~%~a"
+                    (current-turn-review-evidence session) command)
+            :system "You are a conservative shell-command inspector for a coding agent. Reject by default unless the command has a concrete, bounded target and a direct evidence need that follows from the task. Allow only if you can state both (1) the exact evidence it will obtain and (2) why the command's scope is the smallest reasonable one. Reject commands that gather information more broadly than the task/evidence justifies, have an unbounded or poorly targeted search space, duplicate available direct evidence, or are unlikely to answer the question. This is not a permission check: do not ask the user anything and do not consider authorization. Reply JSON only: {\"decision\": \"allow\"|\"reject\", \"reason\": string, \"alternative\": string|null}."))))))
 
 (defun rejected-shell-command-result (inspection)
   "Feedback returned to the model when command inspection rejects a shell call."
