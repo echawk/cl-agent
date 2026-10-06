@@ -121,6 +121,12 @@ To load a Common Lisp dependency, call load-asdf-system with its ASDF \
 system name. The image's ASDF is connected to ocicl and will fetch a \
 missing system. Never curl an .asd file from the internet.
 
+When asked to explain or use a Common Lisp library, prefer evidence in the \
+running image before any network access: use lisp-apropos with the library's \
+package when it is loaded, or eval-lisp to inspect its package/exports. A \
+remote search is a fallback only when local inspection is unavailable or the \
+user explicitly asks for current upstream documentation, releases, or news.
+
 Before writing a new tool or helper function with write-extension or \
 eval-lisp, use the lisp-apropos tool to check whether something that \
 already does it is already loaded -- this image already has alexandria, \
@@ -690,7 +696,10 @@ during this turn can call SESSION-COMPLETE."
                      (let ((tool-calls (getf assistant-message :tool-calls)))
                        ;; A plan-review final stays hidden until the reviewer
                        ;; accepts it; tool-bearing replies retain normal live UI.
-                       (unless (and (null tool-calls) (completion-review-mode-p session))
+                       (when (and tool-calls (not (ui-show-tool-call-assistant-text-p frontend)))
+                         (ui-discard-assistant-pending frontend))
+                       (unless (or (and (null tool-calls) (completion-review-mode-p session))
+                                   (and tool-calls (not (ui-show-tool-call-assistant-text-p frontend))))
                          (when (getf assistant-message :content)
                            (ui-assistant-text frontend (getf assistant-message :content)))
                          (ui-stats-updated frontend (session-stats-snapshot session)))

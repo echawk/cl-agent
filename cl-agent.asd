@@ -21,7 +21,7 @@
   :version "0.1.0"
   :depends-on ("drakma" "shasht" "uiop" "mallet" "defstar"
                "cl-mcp" "cl-mcp/client" "bordeaux-threads"  ; src/mcp/*.lisp
-               "clingon" "3bmd"                              ; CLI parsing; Markdown web rendering
+               "clingon" "3bmd" "3bmd-ext-tables"           ; CLI parsing; Markdown web rendering
                "tuition"                                     ; TUI frontend, src/ui/tui.lisp
                "hunchentoot")                                ; web frontend, src/ui/web.lisp
   :build-operation "program-op"

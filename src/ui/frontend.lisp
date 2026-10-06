@@ -61,6 +61,17 @@ queue, ...) and there is no safe generic fallback."))
 turn (never NIL -- callers only invoke this when there is text).")
   (:method ((frontend agent-frontend) text) (format t "~&~a~%" text) (force-output)))
 
+(defgeneric ui-show-tool-call-assistant-text-p (frontend)
+  (:documentation "Whether assistant narration accompanying a tool call is
+shown. Terminal frontends retain it; a final-answer-first frontend can hide
+the transient narration while still showing the eventual no-tool completion.")
+  (:method ((frontend agent-frontend)) t))
+
+(defgeneric ui-discard-assistant-pending (frontend)
+  (:documentation "Discard streamed assistant text when a tool-calling turn
+is intentionally not shown by the frontend. Default: no-op.")
+  (:method ((frontend agent-frontend)) (values)))
+
 (defgeneric ui-tool-started (frontend tool-name arguments)
   (:documentation "A tool call is about to run. ARGUMENTS is the hash
 table of parsed call arguments (see tools.lisp).")
