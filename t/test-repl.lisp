@@ -76,7 +76,9 @@
     (setf (session-tools session) (list (find-tool "discover-tools")))
     (dispatch-slash-command session "/mode direct")
     (check-equal (session-orchestration-mode session) :direct)
-    (check-equal (mapcar #'tool-name (session-tools session)) '("shell" "discover-tools"))))
+    (check-equal (mapcar #'tool-name (session-tools session)) '("shell" "discover-tools"))
+    (dispatch-slash-command session "/mode plan-review")
+    (check-equal (session-orchestration-mode session) :plan-review)))
 
 ;;; --- stats tracking ---
 
@@ -226,6 +228,90 @@
            (check-equal (getf (run-agent-turn session) :content) "revised"))
       (setf (symbol-function 'chat-stream) orig))
     (check-equal calls 2 "one automatic feedback round was requested")))
+
+(deftest plan-review-accepts-a-verified-final-answer ()
+  (let* ((session (make-session (make-instance 'ollama-provider) :orchestration-mode :plan-review))
+         (stream (symbol-function 'chat-stream))
+         (complete (symbol-function 'session-complete)))
+    (setf (session-messages session)
+          (append (session-messages session) (list (list :role "user" :content "Original request: verify it"))))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'chat-stream)
+                 (lambda (provider messages tools on-delta)
+                   (declare (ignore provider messages tools on-delta))
+                   (list :role "assistant" :content "Verified answer" :tool-calls nil :usage nil)))
+           (setf (symbol-function 'session-complete)
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   "{\"decision\":\"accept\",\"reason\":\"Evidence is sufficient\",\"missing_verification\":[]}"))
+           (check-equal (getf (run-agent-turn session) :content) "Verified answer"))
+      (setf (symbol-function 'chat-stream) stream
+            (symbol-function 'session-complete) complete))))
+
+(deftest plan-review-requests-one-revision-then-accepts ()
+  (let* ((session (make-session (make-instance 'ollama-provider) :orchestration-mode :plan-review))
+         (stream (symbol-function 'chat-stream))
+         (complete (symbol-function 'session-complete))
+         (model-calls 0)
+         (review-calls 0)
+         (output (make-string-output-stream)))
+    (setf (session-messages session)
+          (append (session-messages session) (list (list :role "user" :content "Original request: verify it"))))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'chat-stream)
+                 (lambda (provider messages tools on-delta)
+                   (declare (ignore provider messages tools on-delta))
+                   (incf model-calls)
+                   (list :role "assistant" :content (if (= model-calls 1) "draft" "revised")
+                         :tool-calls nil :usage nil)))
+           (setf (symbol-function 'session-complete)
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   (incf review-calls)
+                   (if (= review-calls 1)
+                       "{\"decision\":\"revise\",\"reason\":\"Run the test\",\"missing_verification\":[\"test output\"]}"
+                       "{\"decision\":\"accept\",\"reason\":\"Test output is present\",\"missing_verification\":[]}")))
+           (let ((*standard-output* output))
+             (check-equal (getf (run-agent-turn session) :content) "revised")))
+      (setf (symbol-function 'chat-stream) stream
+            (symbol-function 'session-complete) complete))
+    (check-equal model-calls 2)
+    (check-equal review-calls 2)
+    (let ((text (get-output-stream-string output)))
+      (check (not (search "draft" text)) "unreviewed draft is not shown")
+      (check (search "revised" text)))))
+
+(deftest malformed-completion-review-blocks ()
+  (let ((review (parse-completion-review "not JSON")))
+    (check-equal (getf review :decision) :block)
+    (check (search "unusable" (getf review :reason)))))
+
+(deftest plan-review-hides-a-blocked-final-answer ()
+  (let* ((session (make-session (make-instance 'ollama-provider) :orchestration-mode :plan-review))
+         (stream (symbol-function 'chat-stream))
+         (complete (symbol-function 'session-complete))
+         (output (make-string-output-stream)))
+    (setf (session-messages session)
+          (append (session-messages session) (list (list :role "user" :content "Original request: verify it"))))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'chat-stream)
+                 (lambda (provider messages tools on-delta)
+                   (declare (ignore provider messages tools on-delta))
+                   (list :role "assistant" :content "unsupported claim" :tool-calls nil :usage nil)))
+           (setf (symbol-function 'session-complete)
+                 (lambda (&rest arguments)
+                   (declare (ignore arguments))
+                   "{\"decision\":\"block\",\"reason\":\"No test evidence\",\"missing_verification\":[\"test output\"]}"))
+           (let ((*standard-output* output))
+             (check-equal (getf (run-agent-turn session) :content) "unsupported claim")))
+      (setf (symbol-function 'chat-stream) stream
+            (symbol-function 'session-complete) complete))
+    (let ((text (get-output-stream-string output)))
+      (check (search "[review] BLOCK" text))
+      (check (not (search "unsupported claim" text))))))
 
 ;;; --- SESSION-SUBMIT-USER-TEXT / :USER-MESSAGE ---
 

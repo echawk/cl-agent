@@ -15,7 +15,7 @@
  ;; :api-key-env "REALLMS_API_KEY" ; optional; override which env var the key comes from
  ;; :base-url "https://reallms.rescloud.iu.edu/direct/v1" ; optional; OpenAI-compatible providers only
  ;; :system-prompt "..." ; optional; overrides cl-agent::*default-system-prompt*
- ;; :orchestration-mode :plan ; optional; :direct (default) or :plan
+ ;; :orchestration-mode :plan-review ; optional; :direct, :plan, or :plan-review
  ;; :orchestration-tool-limit 8 ; optional; plan-mode tool schema budget
  :extensions :all             ; :all, or a list like ("word-count.lisp")
  :max-tool-iterations 25)

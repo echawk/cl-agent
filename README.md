@@ -105,6 +105,10 @@ full session catalog and enables a small matching set for the next request.
 Set `:orchestration-tool-limit` (default `8`) to cap the number of schemas
 available in plan mode; discovery respects the remaining budget.
 
+`/mode plan-review` adds a final, tool-free verification stage. It receives the
+task evidence and proposed answer, then accepts it, requests one bounded
+evidence-focused revision, or visibly blocks an unverified completion.
+
 **On tool-calling reliability with small local Ollama models**: cl-agent's
 default system prompt and tool set (7 tools) are correctly sent and
 correctly parsed regardless of model size -- verified directly against

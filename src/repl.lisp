@@ -161,7 +161,8 @@ mode exposes the full catalog.")
    (orchestration-mode :initarg :orchestration-mode :initform :direct
                        :accessor session-orchestration-mode
                        :documentation "How incoming user work is prepared: :DIRECT
-submits it normally; :PLAN first gets a tool-free planning brief.")
+submits it normally; :PLAN adds a planning brief; :PLAN-REVIEW also verifies
+the proposed final answer with an isolated reviewer.")
    (max-tool-iterations :initarg :max-tool-iterations :initform 25
                          :accessor session-max-tool-iterations)
    (start-time :initform (get-internal-real-time) :accessor session-start-time)
@@ -177,7 +178,7 @@ construction time (not always every currently-registered tool) so a
 hook or extension can curate a specific session's capabilities
 independently of the global registry."))
 
-(defparameter *orchestration-modes* '(:direct :plan)
+(defparameter *orchestration-modes* '(:direct :plan :plan-review)
   "Supported first-stage orchestration modes.")
 
 (defun normalize-orchestration-mode (mode)
@@ -187,6 +188,14 @@ command strings. Unknown or absent values safely select :DIRECT."
                        ((stringp mode) (intern (string-upcase mode) :keyword))
                        (t :direct))))
     (if (member keyword *orchestration-modes*) keyword :direct)))
+
+(defun planning-mode-p (session)
+  "True for modes that run the planning and curated-tool stages."
+  (member (session-orchestration-mode session) '(:plan :plan-review)))
+
+(defun completion-review-mode-p (session)
+  "True only when final answers require phase-three verification."
+  (eq (session-orchestration-mode session) :plan-review))
 
 (defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit)
   (make-instance 'agent-session
@@ -299,7 +308,7 @@ RUN-REPL calls this instead of appending a message directly; so should
 anything else that wants to feed the model a user turn."
   (let* ((ctx (run-hook-chain :user-message (list :text text)))
          (prepared-text (getf ctx :text))
-         (execution-text (if (eq (session-orchestration-mode session) :plan)
+         (execution-text (if (planning-mode-p session)
                              (plan-user-request session prepared-text)
                              prepared-text)))
     (setf (session-messages session)
@@ -369,6 +378,47 @@ is NIL) -- there is no provider to borrow outside of one."
       (session-note-request *current-session* message)
       (getf message :content))))
 
+(defun current-turn-review-evidence (session)
+  "Render the latest user turn and its tool results for the isolated reviewer."
+  (let* ((messages (session-messages session))
+         (start (position "user" messages :from-end t :key (lambda (message) (getf message :role))))
+         (turn (if start (subseq messages start) nil)))
+    (with-output-to-string (out)
+      (dolist (message turn)
+        (when (member (getf message :role) '("user" "tool") :test #'string=)
+          (let ((content (or (getf message :content) "")))
+            (format out "~a: ~a~%" (string-upcase (getf message :role))
+                    (subseq content 0 (min 12000 (length content))))))))))
+
+(defun parse-completion-review (response)
+  "Validate a JSON-only reviewer response; invalid output fails closed."
+  (let* ((decoded (handler-case (and (stringp response) (json-decode response))
+                    (error () nil)))
+         (decision (jget decoded "decision"))
+         (reason (jget decoded "reason"))
+         (missing (string-list (jget decoded "missing_verification"))))
+    (if (and (hash-table-p decoded) (member decision '("accept" "revise" "block") :test #'string=)
+             (stringp reason))
+        (list :decision (intern (string-upcase decision) :keyword) :reason reason
+              :missing-verification missing)
+        (list :decision :block
+              :reason "The completion reviewer returned unusable output, so completion cannot be verified."
+              :missing-verification nil))))
+
+(defun request-completion-review (session assistant-message)
+  "Ask an isolated, tool-free reviewer to evaluate the proposed final answer."
+  (parse-completion-review
+   (session-complete
+    (format nil "Task evidence from this turn:~%~a~%~%Proposed final answer:~%~a"
+            (current-turn-review-evidence session) (or (getf assistant-message :content) ""))
+    :system "You are a completion verifier for a coding agent. Judge the proposed final answer against the user request, plan, verification criteria, and tool evidence. Do not trust unsupported claims. Reply with JSON only: {\"decision\": \"accept\"|\"revise\"|\"block\", \"reason\": string, \"missing_verification\": [string]}. Accept only when evidence supports completion. Revise means one concrete follow-up can establish it. Block means the task cannot currently be verified. You have no tools and must not perform work.")))
+
+(defun format-completion-review (review)
+  "Human-visible audit record for a completion review result."
+  (format nil "[review] ~a: ~a~@[~%Missing verification: ~{~a~^; ~}~]"
+          (string-upcase (string (getf review :decision))) (getf review :reason)
+          (getf review :missing-verification)))
+
 (defun run-tool-call (session tool-call)
   "Run one normalized tool-call plist (:id :name :arguments), wrapped
 in the :before-tool-call / :after-tool-call chain hooks and
@@ -423,64 +473,97 @@ during this turn can call SESSION-COMPLETE."
         ;; One automatic revision is enough to make review feedback actionable
         ;; without trapping a task whose least-bad solution retains a smell.
         (lisp-review-retries 0)
-        (review-tool-used-p nil))
+        (review-tool-used-p nil)
+        (completion-review-retries 0))
     (loop for iteration from 1
           do (let* ((ctx (run-hook-chain :before-request
                                           (list :messages (session-messages session)
                                                 :tools (session-tools session))))
-                     (assistant-message
-                       (handler-case
-                           (progn
-                             (ui-thinking-started frontend)
-                             (unwind-protect
-                                  (chat-stream (session-provider session) (getf ctx :messages) (getf ctx :tools)
-                                               (lambda (chunk) (ui-assistant-delta frontend chunk)))
-                               (ui-thinking-stopped frontend)))
-                         (provider-error (c)
-                           (run-hook :on-error c)
-                           (ui-error frontend c)
-                           (return-from run-agent-turn nil)))))
-                (setf assistant-message (run-hook-chain :after-response assistant-message))
-                (setf (session-messages session) (append (session-messages session) (list assistant-message)))
-                (session-note-request session assistant-message)
-                (let* ((reviews (review-assistant-common-lisp (getf assistant-message :content)))
-                       (request-revision-p
-                         (and reviews
-                              (not review-tool-used-p)
-                              (zerop lisp-review-retries)
-                              (some #'lisp-review-needs-revision-p reviews))))
-                  (if request-revision-p
-                      (progn
-                        (incf lisp-review-retries)
-                        (setf (session-messages session)
-                              (append (session-messages session)
-                                      (list (list :role "system"
-                                                  :content (format-assistant-lisp-reviews reviews)))))
-                        (ui-system frontend "[cl-agent] generated Lisp had review findings; requesting one revision.")
-                        (ui-stats-updated frontend (session-stats-snapshot session)))
-                      (progn
-                        (when (getf assistant-message :content)
-                          (ui-assistant-text frontend (getf assistant-message :content)))
-                        (ui-stats-updated frontend (session-stats-snapshot session))
-                        (let ((tool-calls (getf assistant-message :tool-calls)))
-                          (cond
-                            ((null tool-calls) (return-from run-agent-turn assistant-message))
-                            ((>= iteration (session-max-tool-iterations session))
-                             (setf (session-messages session)
-                                   (append (session-messages session)
-                                           (list (list :role "system"
-                                                       :content (format nil "Stopped after ~d tool-call rounds in this turn; ~
-                                                                              continue if you'd like, but check whether you're ~
-                                                                              stuck in a loop." iteration)))))
-                             (ui-system frontend (format nil "[cl-agent] hit max-tool-iterations (~d); pausing this turn." iteration))
-                             (return-from run-agent-turn assistant-message))
-                            (t (dolist (tc tool-calls)
-                                 (when (string= (getf tc :name) "review-lisp")
-                                   (setf review-tool-used-p t))
-                                 (setf (session-messages session)
-                                       (append (session-messages session)
-                                               (list (run-tool-call session tc))))))))))))))
-  )
+                    (assistant-message
+                      (handler-case
+                          (progn
+                            (ui-thinking-started frontend)
+                            (unwind-protect
+                                 (chat-stream (session-provider session) (getf ctx :messages) (getf ctx :tools)
+                                              (lambda (chunk) (ui-assistant-delta frontend chunk)))
+                              (ui-thinking-stopped frontend)))
+                        (provider-error (c)
+                          (run-hook :on-error c)
+                          (ui-error frontend c)
+                          (return-from run-agent-turn nil)))))
+               (setf assistant-message (run-hook-chain :after-response assistant-message))
+               (setf (session-messages session) (append (session-messages session) (list assistant-message)))
+               (session-note-request session assistant-message)
+               (let* ((reviews (review-assistant-common-lisp (getf assistant-message :content)))
+                      (request-revision-p
+                        (and reviews
+                             (not review-tool-used-p)
+                             (zerop lisp-review-retries)
+                             (some #'lisp-review-needs-revision-p reviews))))
+                 (if request-revision-p
+                     (progn
+                       (incf lisp-review-retries)
+                       (setf (session-messages session)
+                             (append (session-messages session)
+                                     (list (list :role "system"
+                                                 :content (format-assistant-lisp-reviews reviews)))))
+                       (ui-system frontend "[cl-agent] generated Lisp had review findings; requesting one revision.")
+                       (ui-stats-updated frontend (session-stats-snapshot session)))
+                     (let ((tool-calls (getf assistant-message :tool-calls)))
+                       ;; A plan-review final stays hidden until the reviewer
+                       ;; accepts it; tool-bearing replies retain normal live UI.
+                       (unless (and (null tool-calls) (completion-review-mode-p session))
+                         (when (getf assistant-message :content)
+                           (ui-assistant-text frontend (getf assistant-message :content)))
+                         (ui-stats-updated frontend (session-stats-snapshot session)))
+                       (cond
+                         ((null tool-calls)
+                          (if (not (completion-review-mode-p session))
+                              (return-from run-agent-turn assistant-message)
+                              (let ((review (request-completion-review session assistant-message)))
+                                (ui-system frontend (format-completion-review review))
+                                (ui-stats-updated frontend (session-stats-snapshot session))
+                                (case (getf review :decision)
+                                  (:accept
+                                   (when (getf assistant-message :content)
+                                     (ui-assistant-text frontend (getf assistant-message :content)))
+                                   (return-from run-agent-turn assistant-message))
+                                  (:revise
+                                   (if (zerop completion-review-retries)
+                                       (progn
+                                         (incf completion-review-retries)
+                                         (setf (session-messages session)
+                                               (append (session-messages session)
+                                                       (list (list :role "system"
+                                                                   :content (format nil "Completion review requires one revision: ~a~@[ Missing verification: ~{~a~^; ~}.~] Do the required verification, then provide a corrected final answer."
+                                                                                    (getf review :reason)
+                                                                                    (getf review :missing-verification)))))))
+                                       (progn
+                                         (ui-system frontend "[review] Revision budget exhausted; completion remains unverified.")
+                                         (return-from run-agent-turn assistant-message))))
+                                  (:block
+                                   (setf (session-messages session)
+                                         (append (session-messages session)
+                                                 (list (list :role "system"
+                                                             :content (format nil "Completion blocked by independent review: ~a"
+                                                                              (getf review :reason))))))
+                                   (return-from run-agent-turn assistant-message))))))
+                         ((>= iteration (session-max-tool-iterations session))
+                          (setf (session-messages session)
+                                (append (session-messages session)
+                                        (list (list :role "system"
+                                                    :content (format nil "Stopped after ~d tool-call rounds in this turn; ~
+                                                                           continue if you'd like, but check whether you're ~
+                                                                           stuck in a loop." iteration)))))
+                          (ui-system frontend (format nil "[cl-agent] hit max-tool-iterations (~d); pausing this turn." iteration))
+                          (return-from run-agent-turn assistant-message))
+                         (t
+                          (dolist (tc tool-calls)
+                            (when (string= (getf tc :name) "review-lisp")
+                              (setf review-tool-used-p t))
+                            (setf (session-messages session)
+                                  (append (session-messages session)
+                                          (list (run-tool-call session tc))))))))))))))
 
 (defparameter *slash-commands* nil
   "Alist of (\"name\" . function), populated by DEFINE-SLASH-COMMAND.
@@ -605,8 +688,8 @@ rewritten behind the user's back."
   t)
 
 (define-slash-command mode (session arg)
-  "Usage: /mode to show the pipeline mode, or /mode direct|plan. Plan mode
-makes a visible, isolated planning request before each user task."
+  "Usage: /mode to show the pipeline mode, or /mode direct|plan|plan-review.
+Plan mode makes a visible planning request; plan-review also verifies finals."
   (let* ((frontend (session-frontend session)) (choice (string-trim " " arg)))
     (if (zerop (length choice))
         (ui-system frontend (format nil "Orchestration mode: ~a. Available: ~{~(~a~)~^, ~}."
