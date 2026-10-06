@@ -63,13 +63,31 @@ file's header comment for scope and the threading model."))
   (bt:with-lock-held ((web-frontend-state-lock frontend))
     (push (list :role role :text text) (web-frontend-transcript frontend))))
 
+(defun web-markdown-html (text)
+  "Render assistant Markdown for the web client.
+
+3BMD intentionally supports raw HTML, so the browser applies its allowlist
+before inserting this output into the document.  Keeping the Markdown source
+in the API as well makes that sanitization auditable and provides a graceful
+plain-text fallback if rendering fails."
+  (handler-case
+      (with-output-to-string (stream)
+        (3bmd:parse-string-and-print-to-stream (or text "") stream))
+    (error () "")))
+
 (defun web-frontend-status-json (frontend)
   "The single JSON object /api/messages serves: the transcript so far,
 the in-progress streamed reply (if any), whether a request is
 currently in flight, and the latest stats snapshot."
   (bt:with-lock-held ((web-frontend-state-lock frontend))
     (json-encode
-     (jobj "messages" (or (mapcar (lambda (entry) (jobj "role" (getf entry :role) "text" (getf entry :text)))
+     (jobj "messages" (or (mapcar (lambda (entry)
+                                     (let ((role (getf entry :role))
+                                           (text (getf entry :text)))
+                                       (jobj "role" role "text" text
+                                             "html" (if (string= role "assistant")
+                                                        (web-markdown-html text)
+                                                        :null))))
                                    (reverse (web-frontend-transcript frontend)))
                           ;; An empty Lisp list is indistinguishable from
                           ;; JSON false in our convention (see json-util.lisp's
@@ -86,43 +104,20 @@ currently in flight, and the latest stats snapshot."
                          :null))))))
 
 (defparameter *web-page-html*
-  "<!doctype html><html><head><meta charset=\"utf-8\">
-<title>cl-agent</title>
-<style>
-body{font-family:ui-monospace,Menlo,Consolas,monospace;max-width:760px;margin:2rem auto;padding:0 1rem;background:#1e1e1e;color:#ddd}
-#stats{color:#888;font-size:.85em;margin-bottom:.5rem;min-height:1.2em}
-#t{white-space:pre-wrap;border:1px solid #444;border-radius:6px;padding:1rem;height:60vh;overflow-y:auto;margin-bottom:1rem}
-.role-user{color:#7fc}.role-assistant{color:#ddd}.role-tool{color:#fc7}.role-system{color:#888;font-style:italic}
-.role-pending{color:#ddd;opacity:.7} .role-thinking{color:#888;font-style:italic}
-#f{display:flex;gap:.5rem} #i{flex:1;font:inherit;background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:6px;padding:.5rem}
-button{font:inherit;background:#2a2a2a;color:#ddd;border:1px solid #444;border-radius:6px;padding:.5rem 1rem;cursor:pointer}
-</style></head><body>
-<h3>cl-agent</h3>
-<div id=\"stats\"></div>
-<div id=\"t\"></div>
-<form id=\"f\"><input id=\"i\" autocomplete=\"off\" placeholder=\"Message cl-agent...\" autofocus><button>Send</button></form>
+  "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">
+<title>cl-agent</title><style>
+:root{color-scheme:dark;--bg:#0b1020;--panel:#121a2d;--panel-2:#19233a;--line:#2b3855;--text:#e7edf8;--muted:#9aa8c2;--accent:#7dd3fc;--accent-2:#a78bfa;--user:#17395a;--tool:#302846;--danger:#fb7185}*{box-sizing:border-box}body{margin:0;min-width:320px;background:radial-gradient(circle at 8% 0%,#1b3152 0,transparent 30rem),var(--bg);color:var(--text);font:15px/1.55 ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,\"Segoe UI\",sans-serif}.app{width:min(1120px,100%);height:100dvh;margin:auto;display:grid;grid-template-rows:auto minmax(0,1fr) auto;padding:18px 22px 16px;gap:14px}.topbar{display:flex;align-items:center;justify-content:space-between;gap:16px}.brand{display:flex;align-items:center;gap:11px;font-weight:720;letter-spacing:-.02em}.mark{display:grid;place-items:center;width:34px;height:34px;border-radius:11px;background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#0b1020;font:800 19px ui-monospace,monospace}.status{color:var(--muted);font-size:12px;text-align:right}.status strong{color:var(--text);font-weight:650}.chat{position:relative;min-height:0;background:color-mix(in srgb,var(--panel) 90%,transparent);border:1px solid var(--line);border-radius:18px;box-shadow:0 24px 70px #0005;overflow:hidden}.messages{height:100%;overflow-y:auto;padding:25px clamp(16px,4vw,48px) 38px;scroll-behavior:smooth}.message{display:grid;grid-template-columns:30px minmax(0,1fr);gap:10px;margin:0 auto 20px;max-width:820px}.badge{display:grid;place-items:center;width:28px;height:28px;border-radius:9px;background:#24314d;color:var(--accent);font:700 12px ui-monospace,monospace}.card{min-width:0;padding:13px 16px;border:1px solid transparent;border-radius:4px 15px 15px 15px;background:var(--panel-2);box-shadow:0 4px 12px #0002}.meta{margin-bottom:7px;color:var(--muted);font-size:11px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}.role-user{grid-template-columns:minmax(0,1fr) 30px}.role-user .badge{grid-column:2;background:var(--user);color:#b8e3ff}.role-user .card{grid-column:1;grid-row:1;justify-self:end;border-top-right-radius:4px;border-top-left-radius:15px;background:var(--user);max-width:88%}.role-tool .badge{background:var(--tool);color:#d8c0ff}.role-tool .card{background:#1d2034;border-color:#393251}.role-system{opacity:.9}.role-system .card{background:transparent;border-color:#34405b;color:var(--muted);font-size:13px}.plain{white-space:pre-wrap;overflow-wrap:anywhere}.markdown{overflow-wrap:anywhere}.markdown>*:first-child{margin-top:0}.markdown>*:last-child{margin-bottom:0}.markdown h1,.markdown h2,.markdown h3{line-height:1.2;letter-spacing:-.025em;margin:1.15em 0 .5em}.markdown h1{font-size:1.55em}.markdown h2{font-size:1.3em}.markdown h3{font-size:1.12em}.markdown p,.markdown ul,.markdown ol,.markdown blockquote{margin:.7em 0}.markdown ul,.markdown ol{padding-left:1.45em}.markdown blockquote{padding:.15em 0 .15em .9em;border-left:3px solid var(--accent-2);color:#c7d0e4}.markdown code,.plain{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}.markdown :not(pre)>code{padding:.12em .35em;border-radius:5px;background:#0d1527;color:#c5e7ff;font-size:.9em}.markdown pre{overflow:auto;padding:13px;border:1px solid #303d5a;border-radius:10px;background:#090f1d}.markdown pre code{font-size:.88em}.markdown a{color:var(--accent);text-decoration-thickness:1px}.markdown table{display:block;max-width:100%;overflow:auto;border-collapse:collapse}.markdown th,.markdown td{padding:.45em .65em;border:1px solid #34405b;text-align:left}.markdown hr{border:0;border-top:1px solid var(--line);margin:1.2em 0}.pending .card{border-color:#3a5475}.thinking .card{color:var(--muted);font-style:italic}.jump{position:absolute;right:24px;bottom:20px;border:1px solid #426184;border-radius:999px;padding:8px 12px;background:#152946ee;color:#d9efff;box-shadow:0 5px 18px #0007;cursor:pointer;font:600 12px inherit}.jump[hidden]{display:none}.composer{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:end;background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:10px 11px;box-shadow:0 10px 34px #0003}.composer textarea{resize:none;min-height:44px;max-height:180px;border:0;outline:0;background:transparent;color:var(--text);font:inherit;line-height:1.45;padding:10px}.composer textarea::placeholder{color:#73819c}.send{border:0;border-radius:11px;padding:11px 16px;background:linear-gradient(135deg,var(--accent),#8bbcff);color:#07111e;font:700 14px inherit;cursor:pointer}.send:disabled{opacity:.55;cursor:wait}.hint{grid-column:1/-1;margin:-4px 10px 0;color:var(--muted);font-size:11px}@media(max-width:600px){.app{padding:12px;gap:10px}.status{display:none}.messages{padding:18px 14px 30px}.role-user .card{max-width:94%}.composer{border-radius:14px}.hint{display:none}}
+</style></head><body><main class=\"app\"><header class=\"topbar\"><div class=\"brand\"><span class=\"mark\">λ</span><span>cl-agent</span></div><div class=\"status\" id=\"stats\">Connecting…</div></header><section class=\"chat\"><div class=\"messages\" id=\"messages\" aria-live=\"polite\"></div><button class=\"jump\" id=\"jump\" hidden>Jump to latest ↓</button></section><form class=\"composer\" id=\"form\"><textarea id=\"input\" rows=\"1\" autocomplete=\"off\" placeholder=\"Message cl-agent…\" autofocus></textarea><button class=\"send\" id=\"send\" type=\"submit\">Send</button><span class=\"hint\">Enter to send · Shift+Enter for a new line</span></form></main>
 <script>
-const t=document.getElementById('t'),f=document.getElementById('f'),i=document.getElementById('i'),statsEl=document.getElementById('stats');
-function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;');}
-async function poll(){
-  try{
-    const r=await fetch('/api/messages');const data=await r.json();
-    let html=data.messages.map(m=>`<div class=\"role-${m.role}\">${esc(m.text)}</div>`).join('');
-    if(data.pending){html+=`<div class=\"role-pending\">${esc(data.pending)}</div>`;}
-    else if(data.thinking){html+=`<div class=\"role-thinking\">&#8942; thinking...</div>`;}
-    t.innerHTML=html;
-    t.scrollTop=t.scrollHeight;
-    if(data.stats){
-      const s=data.stats;
-      statsEl.textContent=`${s.provider} (${s.model}) | ${s.elapsed_seconds}s | ${s.requests} request(s), ${s.tool_calls} tool call(s)`+
-        (s.total_tokens?` | ${s.total_tokens} tokens`:'');
-    }
-  }catch(e){}
-  setTimeout(poll,500);
-}
-f.onsubmit=async(e)=>{e.preventDefault();const text=i.value;if(!text.trim())return;i.value='';
-  await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'text='+encodeURIComponent(text)});};
-poll();
+const messages=document.getElementById('messages'),form=document.getElementById('form'),input=document.getElementById('input'),send=document.getElementById('send'),stats=document.getElementById('stats'),jump=document.getElementById('jump');let signature='',sending=false;
+const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
+function nearBottom(){return messages.scrollHeight-messages.scrollTop-messages.clientHeight<56}function scrollLatest(){messages.scrollTop=messages.scrollHeight;jump.hidden=true}
+function cleanMarkdown(html){const allowed=new Set(['A','BLOCKQUOTE','BR','CODE','DEL','EM','H1','H2','H3','H4','H5','H6','HR','LI','OL','P','PRE','S','STRONG','TABLE','TBODY','TD','TH','THEAD','TR','UL']);const box=document.createElement('template');box.innerHTML=html;for(const node of [...box.content.querySelectorAll('*')]){if(!allowed.has(node.tagName)){node.replaceWith(document.createTextNode(node.textContent||''));continue}for(const attr of [...node.attributes]){if(node.tagName==='A'&&attr.name==='href'&&/^(https?:|mailto:|#)/i.test(attr.value))continue;node.removeAttribute(attr.name)}}return box.innerHTML}
+function card(role,label,content,markdown=false,extra=''){return `<article class=\"message role-${role} ${extra}\"><div class=\"badge\">${role==='assistant'?'AI':role==='user'?'YOU':role==='tool'?'⌘':'·'}</div><div class=\"card\"><div class=\"meta\">${label}</div><div class=\"${markdown?'markdown':'plain'}\">${markdown?cleanMarkdown(content):esc(content)}</div></div></article>`}
+function render(data){const next=JSON.stringify([data.messages,data.pending,data.thinking]);if(next===signature)return;const follow=nearBottom();signature=next;let html=data.messages.map(m=>card(m.role,m.role,m.html||m.text,m.role==='assistant')).join('');if(data.pending)html+=card('assistant','cl-agent',data.pending,false,'pending');else if(data.thinking)html+=card('system','cl-agent','Thinking…',false,'thinking');messages.innerHTML=html||card('system','cl-agent','Start a conversation to see the agent here.',false);if(follow)scrollLatest();else jump.hidden=false}
+function renderStats(s){stats.innerHTML=s?`<strong>${esc(s.provider)} · ${esc(s.model)}</strong><br>${s.requests} requests · ${s.tool_calls} tools${s.total_tokens?` · ${s.total_tokens} tokens`:''}`:'Ready'}
+async function poll(){try{const response=await fetch('/api/messages',{cache:'no-store'});if(!response.ok)throw Error(response.status);const data=await response.json();render(data);renderStats(data.stats)}catch(e){stats.textContent='Connection lost — retrying…'}setTimeout(poll,500)}
+messages.addEventListener('scroll',()=>{jump.hidden=nearBottom()});jump.onclick=scrollLatest;input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,180)+'px'});input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}});form.onsubmit=async e=>{e.preventDefault();const text=input.value.trim();if(!text||sending)return;sending=true;send.disabled=true;input.value='';input.style.height='auto';try{await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'text='+encodeURIComponent(text)});scrollLatest()}finally{sending=false;send.disabled=false;input.focus()}};poll();
 </script></body></html>"
   "The whole web frontend client, inline -- see this file's header
 comment on why that's an acceptable PoC simplification. Polls

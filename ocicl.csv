@@ -1,3 +1,12 @@
+3bmd, ghcr.io/ocicl/3bmd@sha256:307cf28e24a166dd0b5c43600cfeae6cf1cdd0cde1f7f46cab6da639d3ed6067, 3bmd-20260814-41262d9/3bmd.asd
+3bmd-ext-code-blocks, ghcr.io/ocicl/3bmd@sha256:307cf28e24a166dd0b5c43600cfeae6cf1cdd0cde1f7f46cab6da639d3ed6067, 3bmd-20260814-41262d9/3bmd-ext-code-blocks.asd
+3bmd-ext-definition-lists, ghcr.io/ocicl/3bmd@sha256:307cf28e24a166dd0b5c43600cfeae6cf1cdd0cde1f7f46cab6da639d3ed6067, 3bmd-20260814-41262d9/3bmd-ext-definition-lists.asd
+3bmd-ext-math, ghcr.io/ocicl/3bmd@sha256:307cf28e24a166dd0b5c43600cfeae6cf1cdd0cde1f7f46cab6da639d3ed6067, 3bmd-20260814-41262d9/3bmd-ext-math.asd
+3bmd-ext-tables, ghcr.io/ocicl/3bmd@sha256:307cf28e24a166dd0b5c43600cfeae6cf1cdd0cde1f7f46cab6da639d3ed6067, 3bmd-20260814-41262d9/3bmd-ext-tables.asd
+3bmd-ext-wiki-links, ghcr.io/ocicl/3bmd@sha256:307cf28e24a166dd0b5c43600cfeae6cf1cdd0cde1f7f46cab6da639d3ed6067, 3bmd-20260814-41262d9/3bmd-ext-wiki-links.asd
+3bmd-tests, ghcr.io/ocicl/3bmd@sha256:307cf28e24a166dd0b5c43600cfeae6cf1cdd0cde1f7f46cab6da639d3ed6067, 3bmd-20260814-41262d9/3bmd-tests.asd
+3bmd-youtube, ghcr.io/ocicl/3bmd@sha256:307cf28e24a166dd0b5c43600cfeae6cf1cdd0cde1f7f46cab6da639d3ed6067, 3bmd-20260814-41262d9/3bmd-youtube.asd
+3bmd-youtube-tests, ghcr.io/ocicl/3bmd@sha256:307cf28e24a166dd0b5c43600cfeae6cf1cdd0cde1f7f46cab6da639d3ed6067, 3bmd-20260814-41262d9/3bmd-youtube-tests.asd
 acclimation, ghcr.io/ocicl/acclimation@sha256:f6f7b6782ea4fa53b86f23cf169f06f16a441000e5512955f0ef6ab065adbe4b, acclimation-20251218-9339b92/acclimation.asd
 acclimation-temperature, ghcr.io/ocicl/acclimation@sha256:f6f7b6782ea4fa53b86f23cf169f06f16a441000e5512955f0ef6ab065adbe4b, acclimation-20251218-9339b92/Temperature/acclimation-temperature.asd
 alexandria, ghcr.io/ocicl/alexandria@sha256:407634b0781b2d8fc3e55a30432bcb5d0c042af2feb2d1d72de825940b0fb0df, alexandria-20260812-f283e25/alexandria.asd
@@ -42,6 +51,7 @@ dref-test-package-inferred, ghcr.io/ocicl/mgl-pax-bootstrap@sha256:1c15644701ad5
 eclector, ghcr.io/ocicl/eclector@sha256:90581d8749230af629b4679eebe7671fa9ce406c3b64b28df81f8d8b3b428697, Eclector-20260829-1088a79/eclector.asd
 eclector-concrete-syntax-tree, ghcr.io/ocicl/eclector@sha256:90581d8749230af629b4679eebe7671fa9ce406c3b64b28df81f8d8b3b428697, Eclector-20260829-1088a79/eclector-concrete-syntax-tree.asd
 eclector.syntax-extensions, ghcr.io/ocicl/eclector@sha256:90581d8749230af629b4679eebe7671fa9ce406c3b64b28df81f8d8b3b428697, Eclector-20260829-1088a79/eclector.syntax-extensions.asd
+esrap, ghcr.io/ocicl/esrap@sha256:d1748dc272d987937d759d2376dc18027efb1ed84c4b3561a367be3b4233183a, esrap-20251010-54debc5/esrap.asd
 flexi-streams, ghcr.io/ocicl/flexi-streams@sha256:95005b06a8a95c82780c75ead53810bcb273d07fcf5fe76b527f1856df9923f2, flexi-streams-20240503-4951d57/flexi-streams.asd
 flexi-streams-test, ghcr.io/ocicl/flexi-streams@sha256:95005b06a8a95c82780c75ead53810bcb273d07fcf5fe76b527f1856df9923f2, flexi-streams-20240503-4951d57/flexi-streams-test.asd
 global-vars, ghcr.io/ocicl/global-vars@sha256:d197e871c9c9abc4bf31b1186f5fd28f0ca848ebe2e9dddf2d82ecee01dbdc65, global-vars-20240503-c749f32/global-vars.asd
@@ -95,6 +105,7 @@ trivial-gray-streams-test, ghcr.io/ocicl/trivial-gray-streams@sha256:9d702556e59
 trivial-macroexpand-all, ghcr.io/ocicl/trivial-macroexpand-all@sha256:b23da4c2e508efe2396ec8f721cb22b8a4c076b2f0aea014a09f69dfd716d7f8, trivial-macroexpand-all-20250518-b6e4efa/trivial-macroexpand-all.asd
 trivial-timeout, ghcr.io/ocicl/trivial-timeout@sha256:18f5f87e1fa3a35e5608cd424d22c2b24f581f810d9f9f8c6229b849c2f239ad, trivial-timeout-20240503-e70d9b4/trivial-timeout.asd
 trivial-timeout-test, ghcr.io/ocicl/trivial-timeout@sha256:18f5f87e1fa3a35e5608cd424d22c2b24f581f810d9f9f8c6229b849c2f239ad, trivial-timeout-20240503-e70d9b4/trivial-timeout-test.asd
+trivial-with-current-source-form, ghcr.io/ocicl/trivial-with-current-source-form@sha256:955baad39fb52d9d02af21ea36442c9675419c2486392279f669ada9788f3e3b, trivial-with-current-source-form-20240503-dc3fff9/trivial-with-current-source-form.asd
 tuition, ghcr.io/ocicl/tuition@sha256:47e7de41fa30b819d52641a91952499b3b24548802dc374507885589968b3a3d, cl-tuition-20260912-afaa51f/tuition.asd
 type-i, ghcr.io/ocicl/type-i@sha256:de5c3e7f7b72409c5ec49885eea8c6fe2e02def2846cf97f70c1c21f21a1567c, type-i-20240503-4407a68/type-i.asd
 type-i.test, ghcr.io/ocicl/type-i@sha256:de5c3e7f7b72409c5ec49885eea8c6fe2e02def2846cf97f70c1c21f21a1567c, type-i-20240503-4407a68/type-i.test.asd

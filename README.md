@@ -51,7 +51,7 @@ Type /help for commands, Ctrl-D to exit.
   (`./check-env.sh` checks for both). Dependencies -- `drakma` (HTTP),
   `shasht` (JSON), `clingon` (CLI parsing), `cl-mcp`/`cl-mcp/client`
   (MCP client+server), `tuition` (TUI), `hunchentoot` (web UI),
-  `bordeaux-threads` -- are pinned in the committed `ocicl.csv`; `make
+  `bordeaux-threads`, `3bmd` (Markdown rendering) -- are pinned in the committed `ocicl.csv`; `make
   install-deps` (or plain `ocicl install`) fetches them. One of
   `cl-mcp`'s own dependencies, `opsis/conditions`, isn't published
   anywhere ocicl/Quicklisp can fetch it from; `third-party/opsis-
@@ -392,6 +392,9 @@ token by token, as it streams in** (not just the final text all at
 once), plus a "thinking" indicator while waiting and a running stats
 line (provider/model, elapsed time, request count, tool-call count,
 token usage where the provider reports it) updated after every turn.
+The web UI renders assistant Markdown (including code blocks and tables),
+keeps the reading position fixed unless you are already at the bottom, and
+shows a “Jump to latest” control when new activity arrives below you.
 This is real incremental HTTP streaming for any OpenAI-compatible
 provider (REALLMS/OpenAI/xAI/Ollama/apfel) -- see `CHAT-STREAM` and
 `PARSE-SSE-STREAM` in `src/providers/provider.lisp`/`openai-
