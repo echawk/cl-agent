@@ -76,6 +76,35 @@ a bare end-of-file reader error)."
 (defun extensions-directory ()
   (merge-pathnames "extensions/" *config-directory*))
 
+(defun scratch-directory ()
+  "Return the private directory for user-requested, non-executing artifacts.
+Unlike EXTENSIONS-DIRECTORY, nothing here is loaded automatically."
+  (merge-pathnames "scratch/" *config-directory*))
+
+(defun safe-scratch-filename-p (filename)
+  "Whether FILENAME is a non-empty, single path component.
+Scratch artifacts are deliberately confined to SCRATCH-DIRECTORY; callers
+must not be able to use this convenience surface as an arbitrary file writer."
+  (and (stringp filename)
+       (plusp (length filename))
+       (not (member filename '("." "..") :test #'string=))
+       (not (search "/" filename))
+       (not (search "\\" filename))))
+
+(defun write-scratch-file (filename contents &key (if-exists :supersede))
+  "Write CONTENTS to FILENAME under SCRATCH-DIRECTORY and return its pathname.
+This deliberately does not compile, load, enable, or evaluate the artifact.
+Use it for a draft program, a one-off test file, or material the user may want
+to retrieve later; use WRITE-EXTENSION-FILE only for durable agent behavior."
+  (unless (safe-scratch-filename-p filename)
+    (error "Scratch filename must be a non-empty basename, not a path: ~s" filename))
+  (ensure-config-directory)
+  (let ((path (merge-pathnames filename (scratch-directory))))
+    (with-open-file (out path :direction :output :if-exists if-exists
+                          :if-does-not-exist :create)
+      (write-string contents out))
+    path))
+
 (defun enabled-file-path ()
   (merge-pathnames "enabled.lisp" (extensions-directory)))
 

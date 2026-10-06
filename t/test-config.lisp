@@ -30,7 +30,8 @@ of BODY, so config/extensions tests never touch the user's real
     (check-condition error (load-user-config)
                       "#. is rejected (as a read error, with *read-eval* nil) rather than executed")))
 
-(deftest ensure-config-directory-creates-extensions-subdir ()
+(deftest ensure-config-directory-creates-agent-state-subdirs ()
   (with-temp-config-dir ()
     (ensure-config-directory)
-    (check (probe-file (extensions-directory)))))
+    (check (probe-file (extensions-directory)))
+    (check (probe-file (scratch-directory)))))

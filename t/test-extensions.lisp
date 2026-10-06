@@ -18,6 +18,32 @@
     (let ((path (write-extension-file "baz.lisp" "(in-package :cl-agent)")))
       (check-equal (file-namestring path) "baz.lisp"))))
 
+(deftest write-scratch-file-is-confined-and-not-an-extension ()
+  (with-temp-config-dir ()
+    (let ((path (write-scratch-file "experiment.lisp" "(format t \"hello\")")))
+      (check (probe-file path))
+      (check-equal (pathname-directory path) (pathname-directory (scratch-directory)))
+      (check-equal (uiop:read-file-string path) "(format t \"hello\")")
+      (check-equal (list-extension-files) nil))
+    (check-condition error (write-scratch-file "../outside.lisp" "nope"))))
+
+(deftest write-scratch-file-tool-saves-without-evaluation ()
+  (with-temp-config-dir ()
+    (let ((result (call-tool "write-scratch-file"
+                             (jobj "filename" "one-off.lisp"
+                                   "contents" "(error \"must not run\")"))))
+      (check (search "not compiled, loaded, enabled, or evaluated" result))
+      (check (probe-file (merge-pathnames "one-off.lisp" (scratch-directory)))))))
+
+(deftest write-extension-rejects-standalone-programs ()
+  (with-temp-config-dir ()
+    (let ((result (call-tool "write-extension"
+                             (jobj "filename" "scratch-by-mistake.lisp"
+                                   "source" "(in-package :cl-agent) (defun* scratch-only () 42)"))))
+      (check (search "does not add a durable cl-agent integration" result))
+      (check (not (probe-file (merge-pathnames "scratch-by-mistake.lisp"
+                                                   (extensions-directory))))))))
+
 (deftest fresh-install-enables-everything-by-default ()
   (with-temp-config-dir ()
     (ensure-config-directory)

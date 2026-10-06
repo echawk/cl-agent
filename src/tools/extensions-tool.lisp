@@ -8,6 +8,10 @@
 ;;;;                      (list-tools, list-hooks, apropos...) or try
 ;;;;                      an idea before committing it to a file.
 ;;;;
+;;;;   write-scratch-file non-executing: save a temporary artifact under
+;;;;                      ~/.config/cl-agent/scratch/ for the user or a
+;;;;                      later deliberate command to use.
+;;;;
 ;;;;   write-extension   persistent: write a named file of Lisp source
 ;;;;                      under ~/.config/cl-agent/extensions/, then
 ;;;;                      (by default) load it into this image AND
@@ -22,6 +26,30 @@
 ;;;; survive a restart, entirely from inside the conversation.
 
 (in-package :cl-agent)
+
+(define-tool write-scratch-file (args)
+    (:description "Save arbitrary text as a non-executing scratch artifact under ~/.config/cl-agent/scratch/. Use this for draft programs, one-off test files, code the user asked to receive, or any temporary file. It never compiles, loads, enables, or evaluates the contents. Filename must be a bare filename, not a path. Do NOT use write-extension as scratch space: write-extension is only for a durable change to cl-agent itself."
+     :parameters
+     (jobj "type" "object"
+           "properties"
+           (jobj "filename" (jobj "type" "string" "description" "Bare filename such as \"experiment.lisp\" or \"answer.txt\"; directories are not allowed.")
+                 "contents" (jobj "type" "string" "description" "Exact text to save. It can be any language or plain text."))
+           "required" (list "filename" "contents")))
+  (let ((filename (jget args "filename"))
+        (contents (jget args "contents")))
+    (handler-case
+        (let ((path (write-scratch-file filename contents)))
+          (format nil "Saved scratch artifact ~a. It was not compiled, loaded, enabled, or evaluated." path))
+      (error (c)
+        (format nil "Scratch artifact was not saved: ~a" c)))))
+
+(defun extension-source-integrates-p (source)
+  "Recognize the public integration forms that make a file an extension.
+A standalone DEFUN or test program is a scratch artifact, not an extension:
+loading it changes no agent capability and makes future starts carry junk."
+  (some (lambda (form) (search form source :test #'char-equal))
+        '("define-tool" "add-hook" "defmethod" "register-provider-class"
+          "register-frontend-class" "define-slash-command")))
 
 (define-tool eval-lisp (args)
     (:description "Evaluate a Common Lisp form in the running agent's own image and return its printed result. Before evaluation, the form is automatically reviewed with Mallet, checked for DEFSTAR/DECLAIM type claims on definitions, and compiled; compilation failures prevent evaluation while advisory smells are returned with the value so you can improve the code. Ephemeral: has full read/write access to the agent's own state but is not saved. The form is read with *package* bound to :cl-agent."
@@ -60,7 +88,7 @@ specifically what to fix, rather than a bare reader end-of-file error."
                 (- n) line))))
 
 (define-tool write-extension (args)
-    (:description "Write a named Common Lisp extension, load it, and optionally enable it for future starts. Source is automatically reviewed with strict Mallet, checked for a DEFSTAR or DECLAIM FTYPE claim on every function, and compiled first. Compilation failures are reported and are not written; nonzero smell scores are advisory and are returned after a successful write so you can minimize them. The file MUST start with (in-package :cl-agent). Prefer adding definitions/hooks/methods over replacing core functions."
+    (:description "Write a named Common Lisp extension, load it, and optionally enable it for future starts. This is exclusively for a durable change to cl-agent itself: the source must integrate a tool, hook, method, provider, frontend, or slash command. It is NOT a scratchpad or a way to run ordinary programs/tests; use write-scratch-file for those. Source is automatically reviewed with strict Mallet, checked for a DEFSTAR or DECLAIM FTYPE claim on every function, and compiled first. Compilation failures are reported and are not written; nonzero smell scores are advisory and are returned after a successful write so you can minimize them. The file MUST start with (in-package :cl-agent). Prefer adding definitions/hooks/methods over replacing core functions."
      :parameters
      (jobj "type" "object"
            "properties"
@@ -78,9 +106,13 @@ specifically what to fix, rather than a bare reader end-of-file error."
          (do-load (not (null (jget args "load" t))))
          (do-enable (not (null (jget args "enable" t))))
          (imbalance (check-paren-balance source)))
-    (if imbalance
-        (format nil "Not written -- ~a" (paren-imbalance-message imbalance))
-        (let ((review (review-lisp-source source)))
+    (cond
+      (imbalance
+        (format nil "Not written -- ~a" (paren-imbalance-message imbalance)))
+      ((not (extension-source-integrates-p source))
+       "Not written: this source does not add a durable cl-agent integration. Use write-scratch-file for a program, experiment, test, or draft; reserve write-extension for a tool, hook, method, provider, frontend, or slash command.")
+      (t
+       (let ((review (review-lisp-source source)))
           (if (getf review :compile-failure-p)
               (format nil "Not written because compilation failed. Fix the source and retry.~%~a"
                       (format-lisp-review review))
@@ -97,4 +129,4 @@ specifically what to fix, rather than a bare reader end-of-file error."
                                (format nil "Wrote ~a but it failed to load, so it was NOT enabled:~%~a~%Fix the error and retry."
                                        path c)))
                            (format nil "Wrote ~a (not loaded or enabled; pass load=true to activate it)." path))))
-                (format nil "~a~%~%~a" outcome (format-lisp-review review))))))))
+                (format nil "~a~%~%~a" outcome (format-lisp-review review)))))))))

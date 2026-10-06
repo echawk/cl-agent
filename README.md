@@ -149,10 +149,17 @@ running Lisp image:
 - **`eval-lisp`** evaluates a form in the agent's own process right
   now. Ephemeral -- gone on restart. Good for the agent to inspect its
   own state (`(list-tools)`, `(list-hooks)`) or try an idea.
+- **`write-scratch-file`** saves an arbitrary, non-executing artifact
+  under `~/.config/cl-agent/scratch/`. It is for draft programs,
+  one-off test files, and code the user wants to keep; it never loads,
+  compiles, or enables the saved text.
 - **`write-extension`** writes a named `.lisp` file to
   `~/.config/cl-agent/extensions/`, loads it into the running image
   immediately, and (by default) enables it to auto-load on every
-  future start.
+  future start. It only accepts code that integrates a durable agent
+  capability (a tool, hook, method, provider, frontend, or slash
+  command), so standalone programs cannot accidentally become startup
+  extensions.
 
 Because of this, you can ask the agent in plain English to improve
 itself, and it can actually do it -- durably:

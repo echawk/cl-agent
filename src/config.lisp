@@ -22,8 +22,8 @@
 (defparameter *config-directory*
   (merge-pathnames ".config/cl-agent/" (user-homedir-pathname))
   "Root of cl-agent's per-user state: config.lisp lives directly here;
-extensions/ is a subdirectory of this (see *EXTENSIONS-DIRECTORY* in
-extensions.lisp). Rebind this (e.g. in tests, or via --config-dir) to
+extensions/ and scratch/ are subdirectories of this (see extensions.lisp).
+Rebind this (e.g. in tests, or via --config-dir) to
 point somewhere else entirely.")
 
 (defparameter *config-file-name* "config.lisp"
@@ -33,10 +33,11 @@ point somewhere else entirely.")
   (merge-pathnames *config-file-name* *config-directory*))
 
 (defun ensure-config-directory ()
-  "Create *CONFIG-DIRECTORY* (and its extensions/ subdirectory) if they
+  "Create *CONFIG-DIRECTORY* (and its extensions/ and scratch/ subdirectories) if they
 don't exist yet. Safe to call repeatedly."
   (ensure-directories-exist *config-directory*)
   (ensure-directories-exist (extensions-directory))
+  (ensure-directories-exist (scratch-directory))
   (values))
 
 (defun load-user-config (&optional (path (config-file-path)))
