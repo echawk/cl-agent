@@ -8,6 +8,42 @@
 
 (in-package :cl-agent)
 
+;; REPL.LISP defines and documents this dynamic session binding later in the
+;; ASDF load order. Declare it here so tool compilation preserves special
+;; binding semantics rather than treating it as an accidental global.
+(defvar *current-session*)
+
+(define-tool discover-tools (args)
+    (:description "Search the full session tool catalog and enable a small matching set for later tool-call rounds. Use this in plan mode when the current tools do not cover the task. Search by a concise capability or name, such as \"git\", \"MCP\", \"Lisp\", or \"extension\"."
+     :parameters (jobj "type" "object"
+                       "properties" (jobj "query" (jobj "type" "string" "description" "Capability or tool-name fragment to search for.")
+                                          "limit" (jobj "type" "integer" "description" "Maximum matching tools to enable; constrained by the remaining session tool budget."))
+                       "required" (list "query")))
+  (unless *current-session*
+    (error "discover-tools is available only while an agent session is running"))
+  (let* ((query (jget args "query"))
+         (limit (jget args "limit" 5)))
+    (unless (and (stringp query) (plusp (length (string-trim " " query))))
+      (error "discover-tools requires a non-empty string query"))
+    (unless (and (integerp limit) (plusp limit))
+      (error "discover-tools limit must be a positive integer"))
+    (let* ((remaining (max 0 (- (session-orchestration-tool-limit *current-session*)
+                                (length (session-tools *current-session*)))))
+           (needle (string-downcase query))
+           (matches (loop for tool in (session-tool-catalog *current-session*)
+                          when (or (search needle (string-downcase (tool-name tool)))
+                                   (search needle (string-downcase (tool-description tool))))
+                            collect tool))
+           (selected (subseq matches 0 (min limit remaining (length matches))))
+           (newly-enabled (session-enable-tools *current-session* (mapcar #'tool-name selected))))
+      (if selected
+          (progn
+            (ui-system (session-frontend *current-session*)
+                       (format nil "[tools] Discovery enabled: ~{~a~^, ~}." (mapcar #'tool-name newly-enabled)))
+            (format nil "Enabled matching tools for the next request:~%~{~{~a — ~a~}~^~%~}"
+                    (mapcar (lambda (tool) (list (tool-name tool) (tool-description tool))) selected)))
+          (format nil "No tools in this session match ~s." query)))))
+
 (define-tool list-models (args)
     (:description "List models available from the current provider by calling its /models endpoint. Use this before ask-llm when you need to choose a different model; pass an exact returned identifier as ask-llm's model argument."
      :parameters (jobj "type" "object" "properties" (jobj) "required" :empty-array))

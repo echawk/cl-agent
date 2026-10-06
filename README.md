@@ -99,7 +99,11 @@ Set `:orchestration-mode :plan` in config, or run `/mode plan`, to prepare
 each user task with an independent, tool-free planning call. The visible
 intermediate brief gives the main agent a rewritten task, a short plan,
 suggested registered tools, and verification criteria. `/mode direct` returns
-to the normal loop.
+to the normal loop. In plan mode only validated suggested tools and
+`discover-tools` initially reach the main agent; `discover-tools` searches the
+full session catalog and enables a small matching set for the next request.
+Set `:orchestration-tool-limit` (default `8`) to cap the number of schemas
+available in plan mode; discovery respects the remaining budget.
 
 **On tool-calling reliability with small local Ollama models**: cl-agent's
 default system prompt and tool set (7 tools) are correctly sent and

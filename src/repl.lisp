@@ -150,6 +150,14 @@ I/O (see ui/frontend.lisp). Defaults to a CLI-FRONTEND so existing
 code (and tests) that doesn't care about UI can ignore this slot.")
    (messages :initarg :messages :initform nil :accessor session-messages)
    (tools :initarg :tools :initform (list-tools) :accessor session-tools)
+   (tool-catalog :initarg :tool-catalog :accessor session-tool-catalog
+                 :documentation "The full, session-scoped tool inventory. In
+:PLAN mode SESSION-TOOLS is a curated working subset of this catalog; direct
+mode exposes the full catalog.")
+   (orchestration-tool-limit :initarg :orchestration-tool-limit :initform 8
+                             :accessor session-orchestration-tool-limit
+                             :documentation "Maximum number of tool schemas exposed in
+:PLAN mode, including discover-tools. Direct mode does not use this limit.")
    (orchestration-mode :initarg :orchestration-mode :initform :direct
                        :accessor session-orchestration-mode
                        :documentation "How incoming user work is prepared: :DIRECT
@@ -180,12 +188,17 @@ command strings. Unknown or absent values safely select :DIRECT."
                        (t :direct))))
     (if (member keyword *orchestration-modes*) keyword :direct)))
 
-(defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode)
+(defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit)
   (make-instance 'agent-session
                   :provider provider
                   :frontend (or frontend (make-frontend :cli))
                   :tools tools
+                  :tool-catalog tools
                   :orchestration-mode (normalize-orchestration-mode orchestration-mode)
+                  :orchestration-tool-limit (if (and (integerp orchestration-tool-limit)
+                                                     (<= 1 orchestration-tool-limit))
+                                                orchestration-tool-limit
+                                                8)
                   :messages (list (list :role "system" :content (or system-prompt *default-system-prompt*)))
                   :max-tool-iterations (or max-tool-iterations 25)))
 
@@ -196,8 +209,43 @@ command strings. Unknown or absent values safely select :DIRECT."
 (defun orchestration-tool-catalog (session)
   "Compact planning-time view of SESSION's tools, omitting full schemas."
   (sort (mapcar (lambda (tool) (format nil "~a — ~a" (tool-name tool) (tool-description tool)))
-                (session-tools session))
+                (session-tool-catalog session))
         #'string<))
+
+(defun find-session-catalog-tool (session name)
+  "Find NAME in SESSION's full catalog, not just its currently exposed set."
+  (find name (session-tool-catalog session) :key #'tool-name :test #'string=))
+
+(defun session-enable-tools (session names)
+  "Add the valid catalog tool NAMES to SESSION's exposed set. Returns the
+newly added tools in NAME order, so callers can show an auditable event."
+  (let ((newly-enabled nil))
+    (dolist (name names)
+      (let ((tool (find-session-catalog-tool session name)))
+        (when (and tool (not (find (tool-name tool) (session-tools session)
+                                  :key #'tool-name :test #'string=)))
+          (push tool newly-enabled)
+          (setf (session-tools session) (append (session-tools session) (list tool))))))
+    (nreverse newly-enabled)))
+
+(defun activate-planned-tools (session brief)
+  "Make a plan's validated suggestions operational. DISCOVER-TOOLS is always
+available in plan mode so an incomplete plan can recover without restoring a
+large tool schema dump. An invalid planner result retains the full catalog."
+  (if (getf brief :valid-p)
+      (let* ((budget (session-orchestration-tool-limit session))
+             (suggested (subseq (getf brief :suggested-tools) 0
+                                (min (max 0 (1- budget)) (length (getf brief :suggested-tools)))))
+             (names (remove-duplicates (append suggested (list "discover-tools")) :test #'string=))
+             (active (remove nil (mapcar (lambda (name) (find-session-catalog-tool session name)) names))))
+        (setf (session-tools session) active)
+        (ui-system (session-frontend session)
+                   (format nil "[tools] Plan mode enabled: ~{~a~^, ~} (budget ~d). Use discover-tools to expand this set."
+                           (mapcar #'tool-name active) budget)))
+      (progn
+        (setf (session-tools session) (copy-list (session-tool-catalog session)))
+        (ui-system (session-frontend session)
+                   "[tools] Planner output was unusable; keeping the full tool set."))))
 
 (defun parse-planning-brief (response original-text session)
   "Validate planner RESPONSE. Only registered tool names are retained; bad
@@ -205,12 +253,14 @@ JSON conservatively falls back to the original request."
   (let* ((decoded (handler-case (and (stringp response) (json-decode response))
                     (error () nil)))
          (rewritten (jget decoded "rewritten_prompt"))
-         (known-tools (mapcar #'tool-name (session-tools session)))
+         (known-tools (mapcar #'tool-name (session-tool-catalog session)))
          (suggested (remove-if-not (lambda (name) (member name known-tools :test #'string=))
                                    (string-list (jget decoded "suggested_tools"))))
          (plan (string-list (jget decoded "plan")))
          (verification (string-list (jget decoded "verification"))))
-    (list :rewritten-prompt (if (and (stringp rewritten) (plusp (length (string-trim " " rewritten))))
+    (list :valid-p (and (hash-table-p decoded) (stringp rewritten)
+                        (plusp (length (string-trim " " rewritten))))
+          :rewritten-prompt (if (and (stringp rewritten) (plusp (length (string-trim " " rewritten))))
                                 rewritten original-text)
           :plan plan :suggested-tools suggested :verification verification)))
 
@@ -235,6 +285,7 @@ the main agent. The JSON contract makes intermediate planning inspectable."
          (brief (parse-planning-brief response text session))
          (rendered (format-planning-brief brief text)))
     (ui-system (session-frontend session) rendered)
+    (activate-planned-tools session brief)
     rendered))
 
 (defun session-submit-user-text (session text)
@@ -507,7 +558,10 @@ name is parsed as one JSON object and passed to the tool as-is."
   (multiple-value-bind (loaded failed) (load-enabled-extensions)
     (ui-system (session-frontend session)
                (format nil "Reloaded ~d extension(s)~:[~;, ~d failed~]." (length loaded) failed (length failed))))
-  (setf (session-tools session) (list-tools))
+  (setf (session-tool-catalog session) (list-tools))
+  (if (eq (session-orchestration-mode session) :direct)
+      (setf (session-tools session) (copy-list (session-tool-catalog session)))
+      (session-enable-tools session (mapcar #'tool-name (session-tools session))))
   t)
 
 (define-slash-command provider (session arg)
@@ -560,6 +614,8 @@ makes a visible, isolated planning request before each user task."
         (let ((requested (intern (string-upcase choice) :keyword)))
           (if (member requested *orchestration-modes*)
               (progn (setf (session-orchestration-mode session) requested)
+                     (when (eq requested :direct)
+                       (setf (session-tools session) (copy-list (session-tool-catalog session))))
                      (ui-system frontend (format nil "Orchestration mode switched to ~a." requested)))
               (ui-system frontend (format nil "Unknown mode ~s. Available: ~{~(~a~)~^, ~}."
                                           choice *orchestration-modes*))))))

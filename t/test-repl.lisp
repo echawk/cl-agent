@@ -68,12 +68,15 @@
     (check-equal (provider-model (session-provider session)) "alpha")))
 
 (deftest slash-mode-selects-plan-and-direct ()
-  (let ((session (make-session (make-instance 'ollama-provider))))
+  (let ((session (make-session (make-instance 'ollama-provider)
+                               :tools (list (find-tool "shell") (find-tool "discover-tools")))))
     (check-equal (session-orchestration-mode session) :direct)
     (dispatch-slash-command session "/mode plan")
     (check-equal (session-orchestration-mode session) :plan)
+    (setf (session-tools session) (list (find-tool "discover-tools")))
     (dispatch-slash-command session "/mode direct")
-    (check-equal (session-orchestration-mode session) :direct)))
+    (check-equal (session-orchestration-mode session) :direct)
+    (check-equal (mapcar #'tool-name (session-tools session)) '("shell" "discover-tools"))))
 
 ;;; --- stats tracking ---
 
@@ -267,6 +270,30 @@
       (setf (symbol-function 'session-complete) original))
     (check (search "Original request: do the thing"
                    (getf (first (last (session-messages session))) :content)))))
+
+(deftest plan-mode-curates-to-planned-tools-and-discovery ()
+  (let* ((shell (find-tool "shell"))
+         (discover (find-tool "discover-tools"))
+         (review (find-tool "review-lisp"))
+         (session (make-session (make-instance 'ollama-provider)
+                                :tools (list shell discover review)
+                                :orchestration-mode :plan))
+         (brief (list :valid-p t :suggested-tools (list "shell"))))
+    (activate-planned-tools session brief)
+    (check-equal (mapcar #'tool-name (session-tools session)) '("shell" "discover-tools"))
+    (let ((*current-session* session))
+      (call-tool "discover-tools" (jobj "query" "review")))
+    (check (member "review-lisp" (mapcar #'tool-name (session-tools session)) :test #'string=)
+           "discovery enables matching catalog tools for the next request")))
+
+(deftest invalid-plan-output-preserves-the-full-tool-set ()
+  (let* ((shell (find-tool "shell"))
+         (discover (find-tool "discover-tools"))
+         (session (make-session (make-instance 'ollama-provider) :tools (list shell discover)
+                                :orchestration-mode :plan)))
+    (setf (session-tools session) nil)
+    (activate-planned-tools session (list :valid-p nil))
+    (check-equal (mapcar #'tool-name (session-tools session)) '("shell" "discover-tools"))))
 
 (deftest session-submit-user-text-hook-can-rewrite-the-text ()
   (let ((session (make-session (make-instance 'ollama-provider))))

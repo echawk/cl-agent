@@ -55,6 +55,8 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
   :SYSTEM-PROMPT  string, overrides the default system prompt.
   :ORCHESTRATION-MODE  :DIRECT (default) submits user input directly;
                    :PLAN makes an isolated planning request first.
+  :ORCHESTRATION-TOOL-LIMIT  positive integer; maximum tool schemas available
+                   in :PLAN mode (default 8). Discovery cannot exceed it.
   :EXTENSIONS     list of filenames (strings, relative to the
                    extensions directory) to load at startup, or the
                    keyword :ALL to load every *.lisp file found there.

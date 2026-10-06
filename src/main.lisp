@@ -120,6 +120,7 @@ message and a non-zero exit, not a Lisp backtrace."
                                         :frontend (make-frontend (resolve-ui-keyword (clingon:getopt cmd :ui) config))
                                         :system-prompt (config-value config :system-prompt)
                                         :orchestration-mode (config-value config :orchestration-mode)
+                                        :orchestration-tool-limit (config-value config :orchestration-tool-limit)
                                         :max-tool-iterations (config-value config :max-tool-iterations))
                           :initial-task task))))
       (provider-not-found (c)
