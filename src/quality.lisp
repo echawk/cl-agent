@@ -188,6 +188,83 @@ guidance, not a gate; only :COMPILE-FAILURE-P should prevent code from running."
   (member (string-downcase (string-trim '(#\Space #\Tab) language))
           '("lisp" "common-lisp" "commonlisp" "cl") :test #'string=))
 
+(defun trim-trailing-whitespace (source)
+  "Remove only spaces and tabs at the end of each SOURCE line.
+This is deliberately not a pretty-printer: it preserves every token, newline,
+and form while eliminating a common, low-value LLM lint finding."
+  (with-output-to-string (out)
+    (loop with start = 0
+          for newline = (position #\Newline source :start start)
+          for end = (or newline (length source))
+          do (write-string (string-right-trim '(#\Space #\Tab #\Return)
+                                               (subseq source start end)) out)
+             (when newline (write-char #\Newline out))
+             (setf start (if newline (1+ newline) (length source)))
+          until (null newline))))
+
+(defun pretty-print-common-lisp-source (source)
+  "Pretty-print parseable SOURCE, otherwise return it unchanged.
+
+Mallet is the parse gate: malformed parentheses or reader syntax are retained
+verbatim for the model to repair rather than being obscured by a formatter."
+  (call-with-temporary-lisp-source
+   source
+   (lambda (path)
+     (multiple-value-bind (forms parse-errors) (mallet:parse-forms source path)
+       (declare (ignore forms))
+       (if parse-errors
+           source
+           (handler-case
+               (with-input-from-string (in source)
+                 (with-output-to-string (out)
+                   (let ((*read-eval* nil)
+                         (*package* (find-package :cl-user))
+                         (*print-pretty* t)
+                         (*print-right-margin* 88))
+                     (loop for form = (read in nil :eof)
+                           until (eq form :eof)
+                           do (pprint form out)))))
+             ;; A valid Mallet parse can still use implementation-specific
+             ;; reader syntax. Preserve such source rather than damaging it.
+             (error () source)))))))
+
+(defun normalize-assistant-common-lisp (content)
+  "Trim trailing whitespace in fenced Common Lisp, preserving all other text.
+Parseable blocks are then pretty-printed. The normalized text is both shown to
+the user and reviewed by Mallet."
+  (with-output-to-string (out)
+    (loop with cursor = 0
+          do (let ((opening (search "```" content :start2 cursor)))
+               (unless opening
+                 (write-string content out :start cursor)
+                 (return))
+               (let* ((opening-end (position #\Newline content :start (+ opening 3)))
+                      (closing (and opening-end
+                                    (search (format nil "~%```") content :start2 (1+ opening-end)))))
+                 (unless (and opening-end closing)
+                   (write-string content out :start cursor)
+                   (return))
+                 (let ((language (subseq content (+ opening 3) opening-end)))
+                   (if (common-lisp-fence-language-p language)
+                       (progn
+                         (write-string content out :start cursor :end (1+ opening-end))
+                         (let ((formatted
+                                 (string-left-trim '(#\Newline #\Return)
+                                                   (pretty-print-common-lisp-source
+                                                    (trim-trailing-whitespace
+                                                     (subseq content (1+ opening-end) closing))))))
+                           (write-string formatted out)
+                           ;; PPRINT may start a fresh line but does not promise
+                           ;; to end one; keep the closing fence on its own line.
+                           (unless (and (plusp (length formatted))
+                                        (char= (char formatted (1- (length formatted))) #\Newline))
+                             (terpri out)))
+                         (write-string "```" out)
+                         (setf cursor (+ closing 4)))
+                       (progn
+                         (write-string content out :start cursor :end (+ closing 4))
+                         (setf cursor (+ closing 4))))))))))
+
 (defun extract-common-lisp-code-blocks (text)
   "Return Common Lisp bodies from fenced Markdown in TEXT."
   (let ((blocks nil)
@@ -210,7 +287,8 @@ guidance, not a gate; only :COMPILE-FAILURE-P should prevent code from running."
 
 (defun review-assistant-common-lisp (content)
   "Review every fenced Common Lisp block in assistant CONTENT."
-  (loop for source in (extract-common-lisp-code-blocks (or content ""))
+  (loop for source in (extract-common-lisp-code-blocks
+                       (normalize-assistant-common-lisp (or content "")))
         collect (review-lisp-source source)))
 
 (defun lisp-review-needs-revision-p (review)

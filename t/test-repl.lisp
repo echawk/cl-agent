@@ -565,4 +565,63 @@
            (run-agent-turn session))
       (setf (symbol-function 'chat-stream) orig))
     (let ((events (nreverse (recording-frontend-events frontend))))
-      (check-equal events '(:thinking-started (:delta "hel") (:delta "lo") :thinking-stopped (:text "hello") :stats)))))
+      (check-equal events '(:thinking-started (:delta "hel") (:delta "lo") (:text "hello") :stats :thinking-stopped)))))
+
+(deftest run-agent-turn-keeps-one-activity-interval-across-follow-up-requests ()
+  "A revision retry represents the same multi-request lifecycle as a tool
+round: the UI must not flicker between individual provider calls."
+  (let* ((frontend (make-instance 'recording-frontend))
+         (session (make-session (make-instance 'ollama-provider) :frontend frontend))
+         (calls 0)
+         (orig (symbol-function 'chat-stream)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'chat-stream)
+                 (lambda (provider messages tools on-delta)
+                   (declare (ignore provider messages tools on-delta))
+                   (incf calls)
+                   (if (= calls 1)
+                       (list :role "assistant"
+                             :content (format nil "```lisp~%(in-package :cl-agent)~%(defun needs-review (x) x)~%```")
+                             :tool-calls nil :usage nil)
+                       (list :role "assistant" :content "revised" :tool-calls nil :usage nil))))
+           (run-agent-turn session))
+      (setf (symbol-function 'chat-stream) orig))
+    (let ((events (nreverse (recording-frontend-events frontend))))
+      (check-equal (count :thinking-started events) 1)
+      (check-equal (count :thinking-stopped events) 1)
+      (check-equal (first events) :thinking-started)
+      (check-equal (car (last events)) :thinking-stopped))))
+
+(deftest tool-budget-denial-forces-a-final-no-tool-response ()
+  (define-tool test-tool-budget-probe (args)
+    (:description "Test-only tool for the budget reviewer." :parameters (jobj "type" "object"))
+    (format nil "should not run: ~s" args))
+  (let* ((session (make-session (make-instance 'ollama-provider)
+                                :tools (list (find-tool "test-tool-budget-probe"))
+                                :max-tool-iterations 1))
+         (calls 0)
+         (stream (symbol-function 'chat-stream))
+         (complete (symbol-function 'session-complete)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'session-complete)
+                 (lambda (&rest ignored)
+                   (declare (ignore ignored))
+                   "{\"decision\":\"finish\",\"reason\":\"Further probing would be speculative\",\"extra_rounds\":0}"))
+           (setf (symbol-function 'chat-stream)
+                 (lambda (provider messages tools on-delta)
+                   (declare (ignore provider messages on-delta))
+                   (incf calls)
+                   (if (= calls 1)
+                       (list :role "assistant" :content nil :usage nil
+                             :tool-calls (list (list :id "budget-call" :name "test-tool-budget-probe"
+                                                     :arguments (make-hash-table))))
+                       (progn
+                         (check-equal tools nil "the finalizing request must not expose tools")
+                         (list :role "assistant" :content "Here is the best answer from the evidence." :tool-calls nil :usage nil)))))
+           (check-equal (getf (run-agent-turn session) :content) "Here is the best answer from the evidence."))
+      (setf (symbol-function 'chat-stream) stream
+            (symbol-function 'session-complete) complete)
+      (unregister-tool "test-tool-budget-probe"))
+    (check-equal calls 2)))

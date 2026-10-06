@@ -100,10 +100,10 @@ to the user (a provider error, a hook that misbehaved, ...).")
     (ui-system frontend (format nil "[error] ~a" condition))))
 
 (defgeneric ui-thinking-started (frontend)
-  (:documentation "Called right before sending a request to the
-provider, so a frontend that wants to show a \"thinking\" indicator
-while waiting for the first byte back can start one. Always paired
-with a later UI-THINKING-STOPPED call, even if the request errors.
+  (:documentation "Called at the start of an agent turn, so a frontend
+can show an activity indicator while the agent works. The indicator stays
+active through tool execution and any follow-up model requests, then is
+paired with UI-THINKING-STOPPED when the turn ends, even if it errors.
 Default: no-op (the CLI, like before this existed, shows nothing while
 waiting -- the final UI-ASSISTANT-TEXT/UI-ASSISTANT-DELTA calls are
 enough for it; see this file's header comment on frontends only
@@ -111,8 +111,8 @@ needing to override what they actually want to do differently).")
   (:method ((frontend agent-frontend)) (values)))
 
 (defgeneric ui-thinking-stopped (frontend)
-  (:documentation "Pairs with UI-THINKING-STARTED: the response (in
-full, or the last of its streamed chunks) has arrived. Default: no-op.")
+  (:documentation "Pairs with UI-THINKING-STARTED when the agent turn
+has completed or stopped. Default: no-op.")
   (:method ((frontend agent-frontend)) (values)))
 
 (defgeneric ui-assistant-delta (frontend chunk)

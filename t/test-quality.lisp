@@ -39,6 +39,17 @@
     (format nil "text~%```common-lisp~%(+ 1 2)~%```~%```python~%print(3)~%```~%```cl~%(+ 4 5)~%```~%"))
    (list (format nil "(+ 1 2)~%") (format nil "(+ 4 5)~%"))))
 
+(deftest assistant-common-lisp-trailing-whitespace-is-normalized ()
+  (let ((content (format nil "```lisp~%(defun tidy () 42)   ~%```~%Text with trailing spaces stays untouched.   ~%")))
+    (check-equal
+     (normalize-assistant-common-lisp content)
+     (format nil "```lisp~%(DEFUN TIDY () 42)~%```~%Text with trailing spaces stays untouched.   ~%"))))
+
+(deftest malformed-common-lisp-is-not-pretty-printed ()
+  (let ((content (format nil "```lisp~%(defun broken (x)   ~%```")))
+    (check-equal (normalize-assistant-common-lisp content)
+                 (format nil "```lisp~%(defun broken (x)~%```"))))
+
 (deftest assistant-common-lisp-is-automatically-reviewed ()
   (let ((reviews
           (review-assistant-common-lisp

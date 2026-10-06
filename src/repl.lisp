@@ -127,6 +127,12 @@ package when it is loaded, or eval-lisp to inspect its package/exports. A \
 remote search is a fallback only when local inspection is unavailable or the \
 user explicitly asks for current upstream documentation, releases, or news.
 
+Use tools purposefully and make progress toward a timely answer. Tool work is \
+bounded to protect the user from loops and open-ended investigation. If the \
+system says the tool budget is exhausted, do not request another tool: give a \
+clear final answer from the evidence already obtained, state relevant limits, \
+and suggest the most useful next step when needed.
+
 Before writing a new tool or helper function with write-extension or \
 eval-lisp, use the lisp-apropos tool to check whether something that \
 already does it is already loaded -- this image already has alexandria, \
@@ -486,6 +492,42 @@ is NIL) -- there is no provider to borrow outside of one."
           (string-upcase (string (getf review :decision))) (getf review :reason)
           (getf review :missing-verification)))
 
+(defun parse-tool-budget-review (response)
+  "Validate the isolated tool-budget review. Invalid output conservatively
+declines an extension so a malformed reviewer cannot create open-ended work."
+  (let* ((decoded (handler-case (and (stringp response) (json-decode response))
+                    (error () nil)))
+         (decision (jget decoded "decision"))
+         (reason (jget decoded "reason"))
+         (extra-rounds (jget decoded "extra_rounds")))
+    (if (and (hash-table-p decoded)
+             (member decision '("extend" "finish") :test #'string=)
+             (stringp reason)
+             (or (string= decision "finish")
+                 (and (integerp extra-rounds) (<= 1 extra-rounds 3))))
+        (list :decision (intern (string-upcase decision) :keyword)
+              :reason reason
+              :extra-rounds (if (string= decision "extend") extra-rounds 0))
+        (list :decision :finish
+              :reason "The tool-budget reviewer returned unusable output; preserving a timely response."
+              :extra-rounds 0))))
+
+(defun request-tool-budget-review (session iteration limit)
+  "Ask a tool-free reviewer whether a small, one-time extension benefits the user."
+  (parse-tool-budget-review
+   (session-complete
+    (format nil "The agent reached its tool-round limit (~d) at round ~d.~%~%Task evidence so far:~%~a"
+            limit iteration (current-turn-review-evidence session))
+    :system "You are a conservative tool-budget reviewer for an agent. Protect the user's time and attention: approve a small extension only when evidence shows concrete progress and a clear, near-term path to materially improve the answer. Do not approve exploratory, repetitive, or speculative work, and do not ask the user a question. If additional work is unlikely to finish promptly, require a timely final answer that states what is known and what remains. Reply with JSON only: {\"decision\": \"extend\"|\"finish\", \"reason\": string, \"extra_rounds\": integer}. For extend, extra_rounds must be 1, 2, or 3; it is a one-time bounded extension. For finish, use 0.")))
+
+(defun tool-budget-skipped-results (tool-calls reason)
+  "Produce protocol-valid synthetic tool results when the budget declines work.
+Every assistant tool call must receive a tool result before the next request."
+  (mapcar (lambda (tool-call)
+            (list :role "tool" :tool-call-id (getf tool-call :id)
+                  :content (format nil "Tool call was not run because the tool budget was exhausted: ~a" reason)))
+          tool-calls))
+
 (defun tool-call-json-error (tool-call)
   "Return a model-readable validation error for TOOL-CALL, or NIL.
 
@@ -640,7 +682,8 @@ entirely."
   "Drive SESSION forward: send the current message history to the
 provider via CHAT-STREAM (providers/provider.lisp), relaying each
 incremental chunk to SESSION-FRONTEND's UI-ASSISTANT-DELTA as it
-arrives (bracketed by UI-THINKING-STARTED/STOPPED) and the complete
+arrives (while one UI-THINKING-STARTED/STOPPED interval brackets the
+entire agent turn, including tool work and follow-up requests) and the complete
 text to UI-ASSISTANT-TEXT once the response is done, run any requested
 tool calls and feed their results back, and repeat until the model
 replies with no tool calls (an ordinary turn) or SESSION-MAX-TOOL-
@@ -657,25 +700,36 @@ during this turn can call SESSION-COMPLETE."
         ;; without trapping a task whose least-bad solution retains a smell.
         (lisp-review-retries 0)
         (review-tool-used-p nil)
-        (completion-review-retries 0))
-    (loop for iteration from 1
+        (completion-review-retries 0)
+        (tool-iteration-limit (session-max-tool-iterations session))
+        (tool-budget-extension-used-p nil)
+        (tool-budget-finalization-p nil))
+    ;; A tool-using turn can make several model requests.  Keep one stable
+    ;; activity indicator across the whole turn rather than flashing it off
+    ;; after each response and back on for the follow-up request.
+    (ui-thinking-started frontend)
+    (unwind-protect
+         (loop for iteration from 1
           do (let* ((ctx (run-hook-chain :before-request
                                           (list :messages (session-messages session)
-                                                :tools (session-tools session))))
+                                                ;; A denied budget becomes a no-tool final-answer pass.
+                                                :tools (unless tool-budget-finalization-p
+                                                         (session-tools session)))))
                     (assistant-message
                       (handler-case
-                          (progn
-                            (ui-thinking-started frontend)
-                            (unwind-protect
-                                 (chat-stream (session-provider session) (getf ctx :messages) (getf ctx :tools)
-                                              (lambda (chunk) (ui-assistant-delta frontend chunk)))
-                              (ui-thinking-stopped frontend)))
+                          (chat-stream (session-provider session) (getf ctx :messages) (getf ctx :tools)
+                                       (lambda (chunk) (ui-assistant-delta frontend chunk)))
                         (provider-error (c)
                           (run-hook :on-error c)
                           (ui-error frontend c)
                           (return-from run-agent-turn
                             (finish-agent-turn session nil "blocked" (princ-to-string c)))))))
                (setf assistant-message (run-hook-chain :after-response assistant-message))
+               ;; Normalize harmless formatting noise before it is visible or
+               ;; reaches the strict Lisp reviewer, avoiding spurious warnings.
+               (when (stringp (getf assistant-message :content))
+                 (setf (getf assistant-message :content)
+                       (normalize-assistant-common-lisp (getf assistant-message :content))))
                (setf (session-messages session) (append (session-messages session) (list assistant-message)))
                (session-note-request session assistant-message)
                (let* ((reviews (review-assistant-common-lisp (getf assistant-message :content)))
@@ -741,24 +795,47 @@ during this turn can call SESSION-COMPLETE."
                                    (return-from run-agent-turn
                                      (finish-agent-turn session assistant-message "blocked"
                                                         (getf review :reason))))))))
-                         ((>= iteration (session-max-tool-iterations session))
-                          (setf (session-messages session)
-                                (append (session-messages session)
-                                        (list (list :role "system"
-                                                    :content (format nil "Stopped after ~d tool-call rounds in this turn; ~
-                                                                           continue if you'd like, but check whether you're ~
-                                                                           stuck in a loop." iteration)))))
-                          (ui-system frontend (format nil "[cl-agent] hit max-tool-iterations (~d); pausing this turn." iteration))
-                          (return-from run-agent-turn
-                            (finish-agent-turn session assistant-message "blocked"
-                                               "Maximum tool-call iterations reached.")))
+                         ((>= iteration tool-iteration-limit)
+                          (let ((review (if tool-budget-extension-used-p
+                                            (list :decision :finish :extra-rounds 0
+                                                  :reason "The one-time tool-budget extension has already been used.")
+                                            (request-tool-budget-review session iteration tool-iteration-limit))))
+                            (if (eq (getf review :decision) :extend)
+                                (progn
+                                  (setf tool-budget-extension-used-p t)
+                                  ;; Include this proposed round, plus the bounded
+                                  ;; number of follow-up rounds the reviewer approved.
+                                  (incf tool-iteration-limit (1+ (getf review :extra-rounds)))
+                                  (ui-system frontend
+                                             (format nil "[tool budget] Extended through round ~d: ~a"
+                                                     tool-iteration-limit (getf review :reason)))
+                                  (dolist (tc tool-calls)
+                                    (when (string= (getf tc :name) "review-lisp")
+                                      (setf review-tool-used-p t))
+                                    (setf (session-messages session)
+                                          (append (session-messages session)
+                                                  (list (run-tool-call session tc))))))
+                                (progn
+                                  ;; Do not leave unanswered tool calls in provider history:
+                                  ;; OpenAI-compatible APIs require a result for each one.
+                                  (setf (session-messages session)
+                                        (append (session-messages session)
+                                                (tool-budget-skipped-results tool-calls (getf review :reason))
+                                                (list (list :role "system"
+                                                            :content (format nil "Tool budget exhausted. Do not call tools. Provide the user a timely final answer using the evidence already collected; be candid about limits and suggest a useful next step if needed. Reviewer rationale: ~a"
+                                                                             (getf review :reason))))))
+                                  (setf tool-budget-finalization-p t)
+                                  (ui-system frontend
+                                             (format nil "[tool budget] Continuing without tools for a final answer: ~a"
+                                                     (getf review :reason)))))))
                          (t
                           (dolist (tc tool-calls)
                             (when (string= (getf tc :name) "review-lisp")
                               (setf review-tool-used-p t))
                             (setf (session-messages session)
                                   (append (session-messages session)
-                                          (list (run-tool-call session tc))))))))))))))
+                                          (list (run-tool-call session tc))))))))))))
+      (ui-thinking-stopped frontend))))
 
 (defparameter *slash-commands* nil
   "Alist of (\"name\" . function), populated by DEFINE-SLASH-COMMAND.

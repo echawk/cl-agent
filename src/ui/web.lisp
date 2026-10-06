@@ -82,6 +82,145 @@ contains a Markdown separator row, keeping ordinary prose untouched."
               finally (write-string text out :start start)))
       text))
 
+(defun normalize-compact-markdown-list (text)
+  "Recover one-line bullet lists such as `- one - two - three`.
+
+Only a line that begins with a Markdown bullet is transformed, avoiding
+accidental changes to ordinary prose containing a dash or multiplication sign."
+  (if (and (stringp text) (not (find #\Newline text))
+           (or (and (>= (length text) 2)
+                    (member (char text 0) '(#\- #\*))
+                    (char= (char text 1) #\Space))))
+      (with-output-to-string (out)
+        (loop with start = 0
+              for dash = (search " - " text :start2 (+ start 2))
+              for star = (search " * " text :start2 (+ start 2))
+              for boundary = (cond ((and dash star) (min dash star)) (dash dash) (star star))
+              while boundary
+              do (write-string text out :start start :end boundary)
+                 (terpri out)
+                 (setf start (1+ boundary))
+              finally (write-string text out :start start)))
+      text))
+
+(defun last-substring-position (needle text start)
+  "Return the last occurrence of NEEDLE in TEXT at or after START."
+  (loop with position = nil
+        with cursor = start
+        for found = (search needle text :start2 cursor)
+        while found
+        do (setf position found
+                 cursor (+ found (length needle)))
+        finally (return position)))
+
+(defun normalize-inline-fenced-code (text)
+  "Repair a frequent near-Markdown fence emitted by chat models.
+
+`\`\`\`lisp (code) \`\`\`` is not legal GitHub-flavored Markdown because
+the opening fence's info string and the code share a line.  When a whole
+message has that unambiguous shape, insert the two missing line boundaries
+without attempting to reinterpret ordinary inline backticks."
+  (if (and (stringp text) (uiop:string-prefix-p "```" text))
+      (let* ((opening-end (position-if (lambda (character)
+                                         (member character '(#\Space #\Tab #\Newline)))
+                                       text :start 3))
+             (closing-start (last-substring-position "```" text 3)))
+        (if (and opening-end closing-start
+                 (> closing-start (1+ opening-end))
+                 (not (char= (char text opening-end) #\Newline)))
+            (with-output-to-string (out)
+              (write-string text out :end opening-end)
+              (terpri out)
+              (write-string text out :start (1+ opening-end) :end closing-start)
+              (terpri out)
+              (write-string text out :start closing-start))
+            text))
+      text))
+
+(defun html-escape (text)
+  "Escape TEXT for insertion into the small raw-HTML code-block shim."
+  (with-output-to-string (out)
+    (loop for character across text
+          do (write-string (case character
+                             (#\& "&amp;") (#\< "&lt;") (#\> "&gt;")
+                             (#\" "&quot;") (#\' "&#39;")
+                             (t (string character)))
+                           out))))
+
+(defun render-fenced-code-blocks (text)
+  "Turn valid triple-backtick blocks into safe raw HTML before 3BMD parses.
+
+3BMD's optional code-block extension is not CommonMark-compatible enough for
+agent output and can fail to terminate on malformed fence shapes. This narrow,
+linear preprocessor handles the GitHub-style form we need and leaves all other
+Markdown to 3BMD."
+  (let ((text (normalize-inline-fenced-code text)))
+    (with-output-to-string (out)
+      (loop with cursor = 0
+            for opening = (search "```" text :start2 cursor)
+            while opening
+            for opening-end = (position #\Newline text :start (+ opening 3))
+            for closing = (and opening-end (search (format nil "~%```") text :start2 (1+ opening-end)))
+            do (if (and opening-end closing)
+                   (let* ((language (string-trim " " (subseq text (+ opening 3) opening-end)))
+                          (code (subseq text (1+ opening-end) closing))
+                          (closing-line-end (or (position #\Newline text :start (+ closing 4))
+                                                (length text))))
+                     (write-string text out :start cursor :end opening)
+                     (format out "<pre><code~@[ class=\"language-~a\"~]>~a</code></pre>"
+                             (and (plusp (length language)) (html-escape language))
+                             (html-escape code))
+                     (setf cursor (if (< closing-line-end (length text))
+                                      (1+ closing-line-end) closing-line-end)))
+                   (progn
+                     (write-string text out :start cursor)
+                     (setf cursor (length text))
+                     (loop-finish)))
+            finally (when (< cursor (length text)) (write-string text out :start cursor))))))
+
+(defun extract-fenced-code-blocks (text)
+  "Return Markdown with fence blocks replaced by inert markers, plus HTML.
+Markers prevent 3BMD from parsing either backticks or raw PRE markup."
+  (let ((text (normalize-inline-fenced-code text)) (blocks nil) (number 0))
+    (values
+     (with-output-to-string (out)
+       (loop with cursor = 0
+             do (let ((opening (search "```" text :start2 cursor)))
+                  (unless opening
+                    (write-string text out :start cursor)
+                    (return))
+                  (let* ((opening-end (position #\Newline text :start (+ opening 3)))
+                         (closing (and opening-end
+                                       (search (format nil "~%```") text :start2 (1+ opening-end)))))
+                    (unless (and opening-end closing)
+                      (write-string text out :start cursor)
+                      (return))
+                    (let* ((language (string-trim " " (subseq text (+ opening 3) opening-end)))
+                           (code (subseq text (1+ opening-end) closing))
+                           (closing-line-end (or (position #\Newline text :start (+ closing 4))
+                                                 (length text)))
+                           (marker (format nil "CLAGENT-CODE-BLOCK-~d" (incf number)))
+                           (html (format nil "<pre><code~@[ class=\"language-~a\"~]>~a</code></pre>"
+                                         (and (plusp (length language)) (html-escape language))
+                                         (html-escape code))))
+                      (write-string text out :start cursor :end opening)
+                      (write-string marker out)
+                      (push (cons marker html) blocks)
+                      (setf cursor (if (< closing-line-end (length text))
+                                       (1+ closing-line-end) closing-line-end)))))))
+     (nreverse blocks))))
+
+(defun replace-all-substrings (text needle replacement)
+  "Replace every literal NEEDLE in TEXT without introducing another dependency."
+  (with-output-to-string (out)
+    (loop with start = 0
+          for position = (search needle text :start2 start)
+          while position
+          do (write-string text out :start start :end position)
+             (write-string replacement out)
+             (setf start (+ position (length needle)))
+          finally (write-string text out :start start))))
+
 (defun web-markdown-html (text)
   "Render assistant Markdown for the web client.
 
@@ -90,10 +229,17 @@ before inserting this output into the document.  Keeping the Markdown source
   in the API as well makes that sanitization auditable and provides a graceful
 plain-text fallback if rendering fails."
   (handler-case
-      (let ((3bmd-tables:*tables* t))
-        (with-output-to-string (stream)
-          (3bmd:parse-string-and-print-to-stream
-           (normalize-compact-markdown-table (or text "")) stream)))
+      (multiple-value-bind (markdown blocks)
+          (extract-fenced-code-blocks
+           (normalize-compact-markdown-list
+            (normalize-compact-markdown-table (or text ""))))
+        (let* ((3bmd-tables:*tables* t)
+               (html (with-output-to-string (stream)
+                       (3bmd:parse-string-and-print-to-stream markdown stream))))
+          (dolist (block blocks html)
+            (setf html (replace-all-substrings html
+                                               (format nil "<p>~a</p>" (car block))
+                                               (cdr block))))))
     (error () "")))
 
 (defun web-frontend-status-json (frontend)
@@ -132,6 +278,7 @@ currently in flight, and the latest stats snapshot."
 <script>
 const messages=document.getElementById('messages'),form=document.getElementById('form'),input=document.getElementById('input'),send=document.getElementById('send'),stats=document.getElementById('stats'),jump=document.getElementById('jump'),copyAll=document.getElementById('copy-all');let signature='',sending=false,lastTranscript='';
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;').replace(/'/g,'&#39;');
+const commands=[['/help','Show available commands'],['/tools','List enabled tools'],['/model','List or select a model'],['/mode','Show or change orchestration mode'],['/stats','Show session statistics'],['/provider','Show or select a provider'],['/call','Call a tool with JSON arguments'],['/hooks','List installed hooks'],['/extensions','List extensions'],['/reload','Reload extensions'],['/mcp','Manage MCP servers'],['/exit','End this session']];let commandMatches=[],commandIndex=0;const suggestions=document.createElement('div');suggestions.hidden=true;suggestions.setAttribute('role','listbox');suggestions.style.cssText='position:absolute;z-index:3;left:11px;right:11px;bottom:100%;margin-bottom:8px;max-height:220px;overflow:auto;border:1px solid #3a4d70;border-radius:11px;background:#101a2d;box-shadow:0 12px 32px #0009;padding:5px';form.prepend(suggestions);function hideSuggestions(){suggestions.hidden=true;commandMatches=[]}function chooseCommand(command){const wasOnlyCommand=/^\/\S*$/.test(input.value);input.value=input.value.replace(/^\/\S*/,command)+(wasOnlyCommand?' ':'');input.setSelectionRange(input.value.length,input.value.length);hideSuggestions();input.focus()}function showSuggestions(){const token=input.value.match(/^\/\S*/);if(!token){hideSuggestions();return}commandMatches=commands.filter(c=>c[0].startsWith(token[0].toLowerCase()));if(!commandMatches.length){hideSuggestions();return}commandIndex=Math.min(commandIndex,commandMatches.length-1);suggestions.innerHTML=commandMatches.map((c,i)=>`<button type=\"button\" data-command=\"${c[0]}\" style=\"display:flex;width:100%;gap:12px;border:0;border-radius:7px;padding:8px 10px;background:${i===commandIndex?'#213451':'transparent'};color:#e7edf8;text-align:left;cursor:pointer;font:inherit\"><code style=\"color:#7dd3fc;font:600 12px ui-monospace,monospace\">${c[0]}</code><span style=\"color:#9aa8c2;font-size:12px\">${c[1]}</span></button>`).join('');suggestions.hidden=false}
 function nearBottom(){return messages.scrollHeight-messages.scrollTop-messages.clientHeight<56}function scrollLatest(){messages.scrollTop=messages.scrollHeight;jump.hidden=true}
 function cleanMarkdown(html){const allowed=new Set(['A','BLOCKQUOTE','BR','CODE','DEL','EM','H1','H2','H3','H4','H5','H6','HR','LI','OL','P','PRE','S','STRONG','TABLE','TBODY','TD','TH','THEAD','TR','UL']);const box=document.createElement('template');box.innerHTML=html;for(const node of [...box.content.querySelectorAll('*')]){if(!allowed.has(node.tagName)){node.replaceWith(document.createTextNode(node.textContent||''));continue}for(const attr of [...node.attributes]){if(node.tagName==='A'&&attr.name==='href'&&/^(https?:|mailto:|#)/i.test(attr.value))continue;node.removeAttribute(attr.name)}}return box.innerHTML}
 function card(role,label,content,markdown=false,extra=''){return `<article class=\"message role-${role} ${extra}\"><div class=\"badge\">${role==='assistant'?'AI':role==='user'?'YOU':role==='tool'?'⌘':'·'}</div><div class=\"card\"><div class=\"meta\">${label}</div><div class=\"${markdown?'markdown':'plain'}\">${markdown?cleanMarkdown(content):esc(content)}</div></div></article>`}
@@ -139,6 +286,8 @@ function copyControl(value){return `<button class=\"copy\" type=\"button\" data-
 function renderStats(s){stats.innerHTML=s?`<strong>${esc(s.provider)} · ${esc(s.model)}</strong><br>${s.requests} requests · ${s.tool_calls} tools${s.total_tokens?` · ${s.total_tokens} tokens`:''}`:'Ready'}
 async function poll(){try{const response=await fetch('/api/messages',{cache:'no-store'});if(!response.ok)throw Error(response.status);const data=await response.json();render(data);renderStats(data.stats)}catch(e){stats.textContent='Connection lost — retrying…'}setTimeout(poll,500)}
 async function copyText(text,button){try{await navigator.clipboard.writeText(text);const old=button.textContent;button.textContent='Copied';setTimeout(()=>button.textContent=old,1100)}catch(e){button.textContent='Copy failed'}}messages.addEventListener('scroll',()=>{jump.hidden=nearBottom()});messages.addEventListener('click',e=>{const button=e.target.closest('[data-copy]');if(button)copyText(decodeURIComponent(button.dataset.copy),button)});copyAll.onclick=()=>copyText(lastTranscript,copyAll);jump.onclick=scrollLatest;input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(input.scrollHeight,180)+'px'});input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();form.requestSubmit()}});form.onsubmit=async e=>{e.preventDefault();const text=input.value.trim();if(!text||sending)return;sending=true;send.disabled=true;input.value='';input.style.height='auto';try{await fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'text='+encodeURIComponent(text)});scrollLatest()}finally{sending=false;send.disabled=false;input.focus()}};poll();
+function decorateCopies(){for(const node of messages.querySelectorAll('.card,.activity-line')){const text=(node.querySelector('.markdown,.plain')||node).innerText;if(text)node.insertAdjacentHTML('afterbegin',copyControl(text))}for(const pre of messages.querySelectorAll('.markdown pre')){const code=pre.querySelector('code');if(!code)continue;const button=document.createElement('button');button.type='button';button.className='copy';button.dataset.copy=encodeURIComponent(code.innerText);button.textContent='Copy code';button.style.margin='0 0 8px 8px';pre.prepend(button)}}
+input.addEventListener('input',()=>{commandIndex=0;showSuggestions()});input.addEventListener('keydown',e=>{if(suggestions.hidden)return;if(e.key==='Tab'){e.preventDefault();chooseCommand(commandMatches[commandIndex][0]);return}if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();commandIndex=(commandIndex+(e.key==='ArrowDown'?1:-1)+commandMatches.length)%commandMatches.length;showSuggestions();return}if(e.key==='Escape'){e.preventDefault();hideSuggestions()}},true);suggestions.addEventListener('click',e=>{const button=e.target.closest('[data-command]');if(button)chooseCommand(button.dataset.command)});input.addEventListener('blur',()=>setTimeout(hideSuggestions,120));
 </script></body></html>"
   "The whole web frontend client, inline -- see this file's header
 comment on why that's an acceptable PoC simplification. Polls
