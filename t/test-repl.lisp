@@ -67,6 +67,14 @@
     (dispatch-slash-command session "/model alpha")
     (check-equal (provider-model (session-provider session)) "alpha")))
 
+(deftest slash-mode-selects-plan-and-direct ()
+  (let ((session (make-session (make-instance 'ollama-provider))))
+    (check-equal (session-orchestration-mode session) :direct)
+    (dispatch-slash-command session "/mode plan")
+    (check-equal (session-orchestration-mode session) :plan)
+    (dispatch-slash-command session "/mode direct")
+    (check-equal (session-orchestration-mode session) :direct)))
+
 ;;; --- stats tracking ---
 
 (deftest session-stats-snapshot-has-live-fields ()
@@ -223,6 +231,42 @@
     (session-submit-user-text session "hello there")
     (check-equal (getf (first (last (session-messages session))) :role) "user")
     (check-equal (getf (first (last (session-messages session))) :content) "hello there")))
+
+(deftest plan-mode-shows-and-submits-a-validated-execution-brief ()
+  (let* ((session (make-session (make-instance 'ollama-provider)
+                                :tools (list (find-tool "shell"))
+                                :orchestration-mode :plan))
+         (output (make-string-output-stream))
+         (original (symbol-function 'session-complete)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'session-complete)
+                 (lambda (prompt &key system model)
+                   (declare (ignore prompt system model))
+                   "{\"rewritten_prompt\":\"Inspect the source tree\",\"plan\":[\"List files\",\"Read relevant code\"],\"suggested_tools\":[\"shell\",\"not-a-tool\"],\"verification\":[\"Confirm the target files were read\"]}"))
+           (let ((*current-session* session) (*standard-output* output))
+             (session-submit-user-text session "look through the project")))
+      (setf (symbol-function 'session-complete) original))
+    (let ((visible (get-output-stream-string output))
+          (submitted (getf (first (last (session-messages session))) :content)))
+      (check (search "[plan]" visible))
+      (check (search "Inspect the source tree" submitted))
+      (check (search "shell" submitted))
+      (check (not (search "not-a-tool" submitted)))
+      (check (search "look through the project" submitted)))))
+
+(deftest malformed-planning-output-keeps-the-original-request ()
+  (let* ((session (make-session (make-instance 'ollama-provider) :orchestration-mode :plan))
+         (original (symbol-function 'session-complete)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'session-complete)
+                 (lambda (&rest arguments) (declare (ignore arguments)) "not json"))
+           (let ((*current-session* session))
+             (session-submit-user-text session "do the thing")))
+      (setf (symbol-function 'session-complete) original))
+    (check (search "Original request: do the thing"
+                   (getf (first (last (session-messages session))) :content)))))
 
 (deftest session-submit-user-text-hook-can-rewrite-the-text ()
   (let ((session (make-session (make-instance 'ollama-provider))))

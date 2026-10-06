@@ -53,6 +53,8 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
   :BASE-URL       string, overrides an OpenAI-compatible provider's
                    base URL (handy for a self-hosted/alternate endpoint).
   :SYSTEM-PROMPT  string, overrides the default system prompt.
+  :ORCHESTRATION-MODE  :DIRECT (default) submits user input directly;
+                   :PLAN makes an isolated planning request first.
   :EXTENSIONS     list of filenames (strings, relative to the
                    extensions directory) to load at startup, or the
                    keyword :ALL to load every *.lisp file found there.

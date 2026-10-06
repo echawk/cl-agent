@@ -95,6 +95,12 @@ agent can inspect the same list later with its `list-models` tool. In an
 interactive session, `/model` lists those IDs and `/model ID` (or `/model N`)
 switches the session to a listed model.
 
+Set `:orchestration-mode :plan` in config, or run `/mode plan`, to prepare
+each user task with an independent, tool-free planning call. The visible
+intermediate brief gives the main agent a rewritten task, a short plan,
+suggested registered tools, and verification criteria. `/mode direct` returns
+to the normal loop.
+
 **On tool-calling reliability with small local Ollama models**: cl-agent's
 default system prompt and tool set (7 tools) are correctly sent and
 correctly parsed regardless of model size -- verified directly against

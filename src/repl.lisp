@@ -150,6 +150,10 @@ I/O (see ui/frontend.lisp). Defaults to a CLI-FRONTEND so existing
 code (and tests) that doesn't care about UI can ignore this slot.")
    (messages :initarg :messages :initform nil :accessor session-messages)
    (tools :initarg :tools :initform (list-tools) :accessor session-tools)
+   (orchestration-mode :initarg :orchestration-mode :initform :direct
+                       :accessor session-orchestration-mode
+                       :documentation "How incoming user work is prepared: :DIRECT
+submits it normally; :PLAN first gets a tool-free planning brief.")
    (max-tool-iterations :initarg :max-tool-iterations :initform 25
                          :accessor session-max-tool-iterations)
    (start-time :initform (get-internal-real-time) :accessor session-start-time)
@@ -165,13 +169,73 @@ construction time (not always every currently-registered tool) so a
 hook or extension can curate a specific session's capabilities
 independently of the global registry."))
 
-(defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations)
+(defparameter *orchestration-modes* '(:direct :plan)
+  "Supported first-stage orchestration modes.")
+
+(defun normalize-orchestration-mode (mode)
+  "Return MODE as a supported keyword, accepting config keywords and slash
+command strings. Unknown or absent values safely select :DIRECT."
+  (let ((keyword (cond ((keywordp mode) mode)
+                       ((stringp mode) (intern (string-upcase mode) :keyword))
+                       (t :direct))))
+    (if (member keyword *orchestration-modes*) keyword :direct)))
+
+(defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode)
   (make-instance 'agent-session
                   :provider provider
                   :frontend (or frontend (make-frontend :cli))
                   :tools tools
+                  :orchestration-mode (normalize-orchestration-mode orchestration-mode)
                   :messages (list (list :role "system" :content (or system-prompt *default-system-prompt*)))
                   :max-tool-iterations (or max-tool-iterations 25)))
+
+(defun string-list (value)
+  "Keep only string entries from a JSON array-shaped VALUE."
+  (and (listp value) (remove-if-not #'stringp value)))
+
+(defun orchestration-tool-catalog (session)
+  "Compact planning-time view of SESSION's tools, omitting full schemas."
+  (sort (mapcar (lambda (tool) (format nil "~a — ~a" (tool-name tool) (tool-description tool)))
+                (session-tools session))
+        #'string<))
+
+(defun parse-planning-brief (response original-text session)
+  "Validate planner RESPONSE. Only registered tool names are retained; bad
+JSON conservatively falls back to the original request."
+  (let* ((decoded (handler-case (and (stringp response) (json-decode response))
+                    (error () nil)))
+         (rewritten (jget decoded "rewritten_prompt"))
+         (known-tools (mapcar #'tool-name (session-tools session)))
+         (suggested (remove-if-not (lambda (name) (member name known-tools :test #'string=))
+                                   (string-list (jget decoded "suggested_tools"))))
+         (plan (string-list (jget decoded "plan")))
+         (verification (string-list (jget decoded "verification"))))
+    (list :rewritten-prompt (if (and (stringp rewritten) (plusp (length (string-trim " " rewritten))))
+                                rewritten original-text)
+          :plan plan :suggested-tools suggested :verification verification)))
+
+(defun format-planning-brief (brief original-text)
+  "Render a validated planning BRIEF for the UI and main execution context."
+  (with-output-to-string (out)
+    (format out "[plan]~%Rewritten task: ~a" (getf brief :rewritten-prompt))
+    (when (getf brief :plan) (format out "~%Plan:~%~{  - ~a~%~}" (getf brief :plan)))
+    (when (getf brief :suggested-tools)
+      (format out "Suggested tools: ~{~a~^, ~}~%" (getf brief :suggested-tools)))
+    (when (getf brief :verification)
+      (format out "Verification:~%~{  - ~a~%~}" (getf brief :verification)))
+    (format out "~%Original request: ~a" original-text)))
+
+(defun plan-user-request (session text)
+  "Run phase one's isolated planner and return the execution brief sent to
+the main agent. The JSON contract makes intermediate planning inspectable."
+  (let* ((catalog (orchestration-tool-catalog session))
+         (response (session-complete
+                    (format nil "User request:~%~a~%~%Available tools:~%~{~a~%~}" text catalog)
+                    :system "You are the planning stage of a coding agent. Reply with JSON only, no Markdown: {\"rewritten_prompt\": string, \"plan\": [string], \"suggested_tools\": [exact tool-name strings], \"verification\": [string]}. Preserve user intent. Suggest only supplied tool names. Do not perform the task, call tools, or claim results."))
+         (brief (parse-planning-brief response text session))
+         (rendered (format-planning-brief brief text)))
+    (ui-system (session-frontend session) rendered)
+    rendered))
 
 (defun session-submit-user-text (session text)
   "The one place incoming user input (the initial task, or a line from
@@ -182,9 +246,13 @@ model is about to be asked before its own system prompt or any prior
 turn is involved -- then appends the (possibly changed) result.
 RUN-REPL calls this instead of appending a message directly; so should
 anything else that wants to feed the model a user turn."
-  (let ((ctx (run-hook-chain :user-message (list :text text))))
+  (let* ((ctx (run-hook-chain :user-message (list :text text)))
+         (prepared-text (getf ctx :text))
+         (execution-text (if (eq (session-orchestration-mode session) :plan)
+                             (plan-user-request session prepared-text)
+                             prepared-text)))
     (setf (session-messages session)
-          (append (session-messages session) (list (list :role "user" :content (getf ctx :text)))))))
+          (append (session-messages session) (list (list :role "user" :content execution-text))))))
 
 (defun session-stats-snapshot (session)
   "The plist UI-STATS-UPDATED (ui/frontend.lisp) and the /stats
@@ -480,6 +548,21 @@ rewritten behind the user's back."
                               (format nil "Unknown model ~s. Run /model to list valid models." choice)))))))
       (provider-error (c)
         (ui-error frontend c))))
+  t)
+
+(define-slash-command mode (session arg)
+  "Usage: /mode to show the pipeline mode, or /mode direct|plan. Plan mode
+makes a visible, isolated planning request before each user task."
+  (let* ((frontend (session-frontend session)) (choice (string-trim " " arg)))
+    (if (zerop (length choice))
+        (ui-system frontend (format nil "Orchestration mode: ~a. Available: ~{~(~a~)~^, ~}."
+                                   (session-orchestration-mode session) *orchestration-modes*))
+        (let ((requested (intern (string-upcase choice) :keyword)))
+          (if (member requested *orchestration-modes*)
+              (progn (setf (session-orchestration-mode session) requested)
+                     (ui-system frontend (format nil "Orchestration mode switched to ~a." requested)))
+              (ui-system frontend (format nil "Unknown mode ~s. Available: ~{~(~a~)~^, ~}."
+                                          choice *orchestration-modes*))))))
   t)
 
 (define-slash-command stats (session arg)
