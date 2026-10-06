@@ -27,6 +27,34 @@ CL_AGENT_UI env var > :ui in config.lisp > :cli."
       (config-value config :ui)
       :cli))
 
+(defun prompt-for-provider-model (provider)
+  "Offer PROVIDER's live /models result and return the selected model.
+Empty input, EOF, or an unavailable endpoint retains the provider default."
+  (let ((default (provider-model provider)))
+    (handler-case
+        (let ((models (provider-list-models provider)))
+          (if (null models)
+              default
+              (progn
+                (format *query-io* "~&No model is configured. Available models from ~a:~%"
+                        (provider-display-name provider))
+                (loop for model in models for index from 1
+                      do (format *query-io* "  ~d) ~a~%" index model))
+                (format *query-io* "Choose a number or exact model ID [~a]: " default)
+                (finish-output *query-io*)
+                (let ((choice (read-line *query-io* nil "")))
+                  (cond ((zerop (length (string-trim " " choice))) default)
+                        ((ignore-errors
+                           (let ((index (parse-integer choice :junk-allowed nil)))
+                             (and (<= 1 index (length models)) (nth (1- index) models)))))
+                        ((member choice models :test #'string=) choice)
+                        (t
+                         (format *query-io* "Unknown model choice ~s; using ~a.~%" choice default)
+                         default))))))
+      (provider-error (c)
+        (format *error-output* "~&[models] Could not list models: ~a~%Using default model ~a.~%" c default)
+        default))))
+
 (defun cli-command ()
   "The clingon command: declares cl-agent's command-line surface.
 Built fresh per call (not a DEFPARAMETER) since its :DESCRIPTION
@@ -70,11 +98,14 @@ message and a non-zero exit, not a Lisp backtrace."
         (let* ((provider-keyword (resolve-provider-keyword (let ((p (clingon:getopt cmd :provider)))
                                                               (and p (intern (string-upcase p) :keyword)))
                                                             config))
+               (configured-model (or (clingon:getopt cmd :model) (config-value config :model)))
                (provider (make-provider provider-keyword
-                                         :model (or (clingon:getopt cmd :model) (config-value config :model))
+                                         :model configured-model
                                          :base-url (config-value config :base-url)
                                          :api-key-env (config-value config :api-key-env)
                                          :ensure-ready t)))
+          (unless configured-model
+            (setf (provider-model provider) (prompt-for-provider-model provider)))
           (multiple-value-bind (loaded failed) (load-enabled-extensions)
             (declare (ignore loaded))
             (when failed

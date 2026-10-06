@@ -64,6 +64,17 @@
          (body (build-request-body p (list (list :role "user" :content "hi")) nil)))
     (check-equal (jget body "tools" :absent) :absent)))
 
+(deftest openai-model-identifiers-extracts-and-sorts-ids ()
+  (let ((response (json-decode "{\"data\":[{\"id\":\"z\"},{\"id\":\"a\"},{\"name\":\"fallback\"},{\"id\":\"a\"}]}")))
+    (check-equal (sort (openai-model-identifiers response) #'string<)
+                 '("a" "fallback" "z"))))
+
+(deftest provider-for-model-keeps-openai-provider-settings ()
+  (let* ((original (make-provider :ollama :model "first"))
+         (other (provider-for-model original "second")))
+    (check-equal (provider-model other) "second")
+    (check-equal (provider-base-url other) (provider-base-url original))))
+
 (deftest openai-parse-chat-response-plain-text ()
   (let* ((p (make-provider :ollama))
          (raw (json-decode "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hi there\"}}]}"))

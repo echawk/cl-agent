@@ -138,6 +138,23 @@
     (check-equal (getf (session-stats-snapshot session) :total-tokens) 7)
     (check-equal (length (session-messages session)) 1 "SESSION-COMPLETE does not touch the visible conversation (still just the initial system message)")))
 
+(deftest session-complete-model-does-not-change-main-session-model ()
+  (let* ((session (make-session (make-provider :ollama :model "main-model")))
+         (seen-model nil)
+         (orig (symbol-function 'chat)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'chat)
+                 (lambda (provider messages tools)
+                   (declare (ignore messages tools))
+                   (setf seen-model (provider-model provider))
+                   (list :role "assistant" :content "independent" :tool-calls nil)))
+           (let ((*current-session* session))
+             (check-equal (session-complete "question" :model "other-model") "independent")))
+      (setf (symbol-function 'chat) orig))
+    (check-equal seen-model "other-model")
+    (check-equal (provider-model (session-provider session)) "main-model")))
+
 (deftest run-agent-turn-binds-current-session-for-hooks-and-tools ()
   (let* ((session (make-session (make-instance 'ollama-provider)))
          (seen nil)

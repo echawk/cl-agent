@@ -138,3 +138,19 @@ whether a local Ollama server is reachable and, if not, launches
 separate manual step. Signal PROVIDER-ERROR if PROVIDER truly can't be
 made ready (e.g. the backing executable isn't installed at all).")
   (:method ((provider llm-provider)) (values)))
+
+(defgeneric provider-list-models (provider)
+  (:documentation "Return the model identifiers currently available from
+PROVIDER.  Providers that expose an OpenAI-style `GET /models` endpoint
+implement this; the default says discovery is unavailable rather than
+pretending that a hard-coded default is a complete list." )
+  (:method ((provider llm-provider)) nil))
+
+(defgeneric provider-for-model (provider model)
+  (:documentation "Return an independent provider configured exactly like
+PROVIDER except that it requests MODEL.  This lets an agent ask a second
+LLM instance with a selected model without changing its main session.")
+  (:method ((provider llm-provider) model)
+    (declare (ignore model))
+    (error "~a cannot create a second request with a selected model."
+           (provider-display-name provider))))

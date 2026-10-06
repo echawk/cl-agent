@@ -80,6 +80,7 @@
        (:file "quality-tool")
        (:file "asdf-tool")
        (:file "extensions-tool")
+       (:file "llm-tool")
        (:file "clspec-tool")
        (:file "apropos-tool")
        (:file "mcp-tool")))

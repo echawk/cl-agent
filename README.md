@@ -88,6 +88,11 @@ and its tool-calling is occasionally flaky, the same caveats Ollama's
 own tiny local models have -- see `src/providers/apfel.lisp`'s header
 comment.
 
+If neither `--model` nor `:model` in config is set, cl-agent calls the
+selected provider's `/models` endpoint at startup and presents the live list
+for a one-time selection. Press Enter to retain the provider default. The
+agent can inspect the same list later with its `list-models` tool.
+
 **On tool-calling reliability with small local Ollama models**: cl-agent's
 default system prompt and tool set (7 tools) are correctly sent and
 correctly parsed regardless of model size -- verified directly against
@@ -192,6 +197,11 @@ top of every message at once.
 See `src/extensions.lisp` and `src/hooks.lisp` for the full design --
 both are written with the expectation that an LLM, not just a human,
 is the one reading them and writing new code against them.
+
+For an explicit one-off second opinion, the built-in `ask-llm` tool sends a
+tool-free independent request. It accepts `prompt`, optional `system_prompt`,
+and optional `model`; call `list-models` first to obtain exact model IDs. A
+chosen model applies only to that independent request, not the main chat.
 
 ## Looking up the Common Lisp standard
 

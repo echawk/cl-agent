@@ -46,3 +46,26 @@ body is not valid JSON."
     (error (c)
       (error 'provider-error :provider url
              :message (format nil "HTTP request failed: ~a" c)))))
+
+(defun http-get-json (url &key headers (timeout 120))
+  "GET URL and return its decoded JSON body and HTTP status.  This is the
+read-only counterpart to HTTP-POST-JSON, used for provider discovery such
+as OpenAI-compatible `GET /models` endpoints."
+  (handler-case
+      (multiple-value-bind (raw-body status)
+          (drakma:http-request url :method :get :additional-headers headers
+                                    :connection-timeout timeout
+                                    :external-format-in :utf-8)
+        (let ((text (if (stringp raw-body)
+                        raw-body
+                        (flexi-streams:octets-to-string raw-body :external-format :utf-8))))
+          (values (handler-case (json-decode text)
+                    (error (c)
+                      (error 'provider-error :provider url
+                             :message (format nil "could not parse response as JSON: ~a~%body: ~a"
+                                               c (subseq text 0 (min 500 (length text)))))))
+                  status)))
+    (provider-error (c) (error c))
+    (error (c)
+      (error 'provider-error :provider url
+             :message (format nil "HTTP request failed: ~a" c)))))

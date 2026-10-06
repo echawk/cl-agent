@@ -84,6 +84,12 @@ to veto the call if it doesn't pass -- the tool never runs and the \
 model sees why. See config/example-llm-roundtrip-extension.lisp for \
 all three, worked.
 
+You can also ask a separate, independent LLM instance for advice with \
+the ask-llm tool. It gets only the prompt and optional system_prompt you \
+supply, never this conversation or any tools. Use list-models first when \
+you want a particular model, then pass one exact listed ID as ask-llm's \
+optional model argument; doing so never changes the main session's model.
+
 Before calling DEFINE-TOOL, ADD-HOOK, REGISTER-PROVIDER-CLASS, or any \
 other cl-agent macro/function you haven't just read the definition of \
 in this conversation, check its real calling convention with \
@@ -211,7 +217,7 @@ call) can reach back to the session it's running inside of, rather
 than needing its own separately-configured provider. NIL outside a
 running turn.")
 
-(defun session-complete (prompt &key system)
+(defun session-complete (prompt &key system model)
   "Run PROMPT through *CURRENT-SESSION*'s own provider as one
 independent, one-off completion -- SYSTEM (or a plain default) as the
 system message, PROMPT as the only user message, no tools -- and
@@ -234,12 +240,15 @@ Signals a plain error if called with no turn running (*CURRENT-SESSION*
 is NIL) -- there is no provider to borrow outside of one."
   (unless *current-session*
     (error "SESSION-COMPLETE needs a running turn (*CURRENT-SESSION* is NIL) -- call it from inside a hook or tool body, not standalone"))
-  (let ((message (chat (session-provider *current-session*)
+  (let ((provider (if model
+                      (provider-for-model (session-provider *current-session*) model)
+                      (session-provider *current-session*))))
+    (let ((message (chat provider
                         (list (list :role "system" :content (or system "You are a helpful assistant."))
                               (list :role "user" :content prompt))
                         nil)))
-    (session-note-request *current-session* message)
-    (getf message :content)))
+      (session-note-request *current-session* message)
+      (getf message :content))))
 
 (defun run-tool-call (session tool-call)
   "Run one normalized tool-call plist (:id :name :arguments), wrapped

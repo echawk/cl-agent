@@ -96,6 +96,34 @@ against a canned response with no network access.")
                        (list (cons "Authorization" (format nil "Bearer ~a" (provider-api-key provider)))))
                   (provider-extra-headers provider))))
 
+(defun openai-model-identifiers (response)
+  "Extract stable model names from the standard OpenAI `GET /models`
+response.  A few compatible servers use `name` rather than `id`, so accept
+that harmless variation too."
+  (remove-duplicates
+   (remove nil (mapcar (lambda (model) (or (jget model "id") (jget model "name")))
+                       (jget response "data")))
+   :test #'string=))
+
+(defmethod provider-list-models ((provider openai-compatible-provider))
+  (multiple-value-bind (chat-url headers) (openai-provider-url-and-headers provider)
+    (declare (ignore chat-url))
+    (multiple-value-bind (response status)
+        (http-get-json (concatenate 'string (provider-base-url provider) "/models") :headers headers)
+      (if (<= 200 status 299)
+          (sort (openai-model-identifiers response) #'string<)
+          (error 'provider-error :provider (provider-display-name provider)
+                 :message (format nil "GET /models returned HTTP ~a: ~a" status
+                                  (or (jpath response "error" "message") response)))))))
+
+(defmethod provider-for-model ((provider openai-compatible-provider) model)
+  (make-instance (class-name (class-of provider))
+                 :model model
+                 :base-url (provider-base-url provider)
+                 :api-key (provider-api-key provider)
+                 :extra-headers (provider-extra-headers provider)
+                 :system-role (provider-system-role provider)))
+
 (defmethod chat ((provider openai-compatible-provider) messages tools)
   (multiple-value-bind (url headers) (openai-provider-url-and-headers provider)
     (let ((body (build-request-body provider messages tools)))

@@ -42,6 +42,21 @@ request; override if 4096 is too small/large for your use."))
 (defmethod provider-display-name ((provider anthropic-provider)) "Anthropic")
 (defmethod provider-api-key-env-var ((provider anthropic-provider)) "ANTHROPIC_API_KEY")
 
+(defmethod provider-list-models ((provider anthropic-provider))
+  (let ((headers (list (cons "x-api-key" (or (provider-api-key provider) ""))
+                       (cons "anthropic-version" *anthropic-api-version*))))
+    (multiple-value-bind (response status)
+        (http-get-json (concatenate 'string (provider-base-url provider) "/models") :headers headers)
+      (if (<= 200 status 299)
+          (sort (remove nil (mapcar (lambda (model) (jget model "id")) (jget response "data"))) #'string<)
+          (error 'provider-error :provider (provider-display-name provider)
+                 :message (format nil "GET /models returned HTTP ~a: ~a" status
+                                  (or (jpath response "error" "message") response)))))))
+
+(defmethod provider-for-model ((provider anthropic-provider) model)
+  (make-instance 'anthropic-provider :model model :api-key (provider-api-key provider)
+                 :base-url (provider-base-url provider) :max-tokens (provider-max-tokens provider)))
+
 (defun anthropic-tool-schema (tool)
   (jobj "name" (tool-name tool)
         "description" (tool-description tool)
