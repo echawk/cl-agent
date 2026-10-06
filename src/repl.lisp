@@ -102,6 +102,19 @@ values, or edge-case behavior for a Lisp operator -- especially before \
 writing an extension with write-extension, since a wrong signature \
 there fails at the model's own expense, not just the user's.
 
+Every piece of Common Lisp you generate must make an explicit claim \
+about function types: use DEFSTAR forms (DEFUN*, DEFMETHOD*, etc.) or \
+a DECLAIM FTYPE before ordinary definitions. Before presenting Common \
+Lisp source in a reply, call review-lisp and revise toward the lowest \
+practical quality score. A nonzero score is allowed when the task \
+genuinely requires it, but compiler failures must be fixed. eval-lisp \
+and write-extension perform this review automatically and return \
+Mallet, type-claim, and compiler feedback.
+
+To load a Common Lisp dependency, call load-asdf-system with its ASDF \
+system name. The image's ASDF is connected to ocicl and will fetch a \
+missing system. Never curl an .asd file from the internet.
+
 Before writing a new tool or helper function with write-extension or \
 eval-lisp, use the lisp-apropos tool to check whether something that \
 already does it is already loaded -- this image already has alexandria, \
@@ -278,7 +291,11 @@ and fires UI-STATS-UPDATED after every request and tool call. Binds
 *CURRENT-SESSION* for the duration, so a hook or tool body running
 during this turn can call SESSION-COMPLETE."
   (let ((frontend (session-frontend session))
-        (*current-session* session))
+        (*current-session* session)
+        ;; One automatic revision is enough to make review feedback actionable
+        ;; without trapping a task whose least-bad solution retains a smell.
+        (lisp-review-retries 0)
+        (review-tool-used-p nil))
     (loop for iteration from 1
           do (let* ((ctx (run-hook-chain :before-request
                                           (list :messages (session-messages session)
@@ -298,24 +315,43 @@ during this turn can call SESSION-COMPLETE."
                 (setf assistant-message (run-hook-chain :after-response assistant-message))
                 (setf (session-messages session) (append (session-messages session) (list assistant-message)))
                 (session-note-request session assistant-message)
-                (when (getf assistant-message :content)
-                  (ui-assistant-text frontend (getf assistant-message :content)))
-                (ui-stats-updated frontend (session-stats-snapshot session))
-                (let ((tool-calls (getf assistant-message :tool-calls)))
-                  (cond
-                    ((null tool-calls) (return-from run-agent-turn assistant-message))
-                    ((>= iteration (session-max-tool-iterations session))
-                     (setf (session-messages session)
-                           (append (session-messages session)
-                                   (list (list :role "system"
-                                               :content (format nil "Stopped after ~d tool-call rounds in this turn; ~
-                                                                      continue if you'd like, but check whether you're ~
-                                                                      stuck in a loop." iteration)))))
-                     (ui-system frontend (format nil "[cl-agent] hit max-tool-iterations (~d); pausing this turn." iteration))
-                     (return-from run-agent-turn assistant-message))
-                    (t (dolist (tc tool-calls)
-                         (setf (session-messages session)
-                               (append (session-messages session) (list (run-tool-call session tc)))))))))))
+                (let* ((reviews (review-assistant-common-lisp (getf assistant-message :content)))
+                       (request-revision-p
+                         (and reviews
+                              (not review-tool-used-p)
+                              (zerop lisp-review-retries)
+                              (some #'lisp-review-needs-revision-p reviews))))
+                  (if request-revision-p
+                      (progn
+                        (incf lisp-review-retries)
+                        (setf (session-messages session)
+                              (append (session-messages session)
+                                      (list (list :role "system"
+                                                  :content (format-assistant-lisp-reviews reviews)))))
+                        (ui-system frontend "[cl-agent] generated Lisp had review findings; requesting one revision.")
+                        (ui-stats-updated frontend (session-stats-snapshot session)))
+                      (progn
+                        (when (getf assistant-message :content)
+                          (ui-assistant-text frontend (getf assistant-message :content)))
+                        (ui-stats-updated frontend (session-stats-snapshot session))
+                        (let ((tool-calls (getf assistant-message :tool-calls)))
+                          (cond
+                            ((null tool-calls) (return-from run-agent-turn assistant-message))
+                            ((>= iteration (session-max-tool-iterations session))
+                             (setf (session-messages session)
+                                   (append (session-messages session)
+                                           (list (list :role "system"
+                                                       :content (format nil "Stopped after ~d tool-call rounds in this turn; ~
+                                                                              continue if you'd like, but check whether you're ~
+                                                                              stuck in a loop." iteration)))))
+                             (ui-system frontend (format nil "[cl-agent] hit max-tool-iterations (~d); pausing this turn." iteration))
+                             (return-from run-agent-turn assistant-message))
+                            (t (dolist (tc tool-calls)
+                                 (when (string= (getf tc :name) "review-lisp")
+                                   (setf review-tool-used-p t))
+                                 (setf (session-messages session)
+                                       (append (session-messages session)
+                                               (list (run-tool-call session tc))))))))))))))
   )
 
 (defparameter *slash-commands* nil

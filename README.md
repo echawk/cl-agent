@@ -297,12 +297,18 @@ Code, Claude Desktop, or any other MCP client at
 `["/path/to/bin/cl-agent", "--mcp-serve"]` as a server command, and it
 can drive this exact running agent.
 
-`eval-lisp` also checks submitted code for balanced parentheses before
-evaluating it (and `write-extension` before writing a file), reporting
-specifically how many are unclosed and roughly where, rather than a
-bare reader end-of-file error -- a small, self-contained utility
-(`check-paren-balance` in `src/extensions.lisp`), not a dependency,
-since nothing freely available did exactly this.
+`eval-lisp` and `write-extension` run all submitted Lisp through the same
+quality gate before executing it: strict [Mallet](https://github.com/fukamachi/mallet)
+linting, an explicit type-claim check (DEFSTAR or `declaim ftype`), and an
+SBCL compile pass. The result includes a weighted score whose direction is
+simple—lower is better. Smells are advisory because occasionally awkward code
+is necessary; compiler failures prevent execution/writing and are returned to
+the model to fix. The `review-lisp` tool exposes that pipeline directly for
+code destined for a normal reply or another file.
+
+The `load-asdf-system` tool loads libraries by ASDF system name. `boot.lisp`
+installs ocicl's missing-system hook into ASDF, so a missing system is fetched
+through ocicl rather than by downloading `.asd` files manually.
 
 ## Emacs integration
 

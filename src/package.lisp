@@ -22,7 +22,10 @@
 
 (defpackage :cl-agent
   (:nicknames :agent)
-  (:use :cl)
+  ;; DEFSTAR's typed definition forms are deliberately available to
+  ;; extensions without a package prefix.  Generated code can therefore use
+  ;; DEFUN* directly after its usual (IN-PACKAGE :CL-AGENT) header.
+  (:use :cl :defstar)
   ;; MAIN is the only exported symbol: it's cl-agent.asd's :entry-point,
   ;; which ASDF reads with a package-qualified symbol (CL-AGENT:MAIN)
   ;; that must resolve to an external one. Nothing else needs exporting

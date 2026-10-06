@@ -153,6 +153,28 @@
       (setf (symbol-function 'chat-stream) orig))
     (check-equal seen session)))
 
+(deftest run-agent-turn-requests-one-revision-for-unreviewed-lisp ()
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (calls 0)
+         (orig (symbol-function 'chat-stream)))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'chat-stream)
+                 (lambda (provider messages tools on-delta)
+                   (declare (ignore provider tools on-delta))
+                   (incf calls)
+                   (if (= calls 1)
+                       (list :role "assistant"
+                             :content (format nil "```lisp~%(in-package :cl-agent)~%(defun generated-untyped (x) x)~%```~%")
+                             :tool-calls nil :usage nil)
+                       (progn
+                         (check (search "Automatic review of generated Common Lisp"
+                                        (getf (first (last messages)) :content)))
+                         (list :role "assistant" :content "revised" :tool-calls nil :usage nil)))))
+           (check-equal (getf (run-agent-turn session) :content) "revised"))
+      (setf (symbol-function 'chat-stream) orig))
+    (check-equal calls 2 "one automatic feedback round was requested")))
+
 ;;; --- SESSION-SUBMIT-USER-TEXT / :USER-MESSAGE ---
 
 (deftest session-submit-user-text-with-no-hooks-appends-as-is ()

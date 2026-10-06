@@ -19,7 +19,7 @@
   :author "Ethan"
   :license "MIT"
   :version "0.1.0"
-  :depends-on ("drakma" "shasht" "uiop"
+  :depends-on ("drakma" "shasht" "uiop" "mallet" "defstar"
                "cl-mcp" "cl-mcp/client" "bordeaux-threads"  ; src/mcp/*.lisp
                "clingon"                                     ; CLI parsing, src/main.lisp
                "tuition"                                     ; TUI frontend, src/ui/tui.lisp
@@ -63,6 +63,7 @@
        (:file "apfel")))
      (:file "clspec")
      (:file "apropos")
+     (:file "quality")
      (:file "extensions")
      (:module "ui"
       :serial t
@@ -76,6 +77,8 @@
       :serial t
       :components
       ((:file "shell")
+       (:file "quality-tool")
+       (:file "asdf-tool")
        (:file "extensions-tool")
        (:file "clspec-tool")
        (:file "apropos-tool")
@@ -101,6 +104,7 @@
    (:file "test-apfel-ensure-ready")
    (:file "test-config")
    (:file "test-extensions")
+   (:file "test-quality")
    (:file "test-clspec")
    (:file "test-apropos")
    (:file "test-repl")

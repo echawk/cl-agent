@@ -24,7 +24,7 @@
 (in-package :cl-agent)
 
 (define-tool eval-lisp (args)
-    (:description "Evaluate a Common Lisp form in the running agent's own image and return its printed result. Ephemeral: has full read/write access to the agent's own state (hooks, tools, providers, everything in the :cl-agent package) but is NOT saved -- it is gone if the process restarts. Use this to inspect current state (e.g. (list-tools), (list-hooks)) or to try something out before persisting it with the write-extension tool. The form is read with *package* bound to :cl-agent, so bare symbol names (chat, define-tool, add-hook, ...) resolve there."
+    (:description "Evaluate a Common Lisp form in the running agent's own image and return its printed result. Before evaluation, the form is automatically reviewed with Mallet, checked for DEFSTAR/DECLAIM type claims on definitions, and compiled; compilation failures prevent evaluation while advisory smells are returned with the value so you can improve the code. Ephemeral: has full read/write access to the agent's own state but is not saved. The form is read with *package* bound to :cl-agent."
      :parameters (jobj "type" "object"
                         "properties" (jobj "form" (jobj "type" "string"
                                                          "description" "A single Lisp form, as text, e.g. \"(list-tools)\"."))
@@ -33,13 +33,21 @@
          (imbalance (check-paren-balance text)))
     (if imbalance
         (paren-imbalance-message imbalance)
-        (handler-case
-            (let* ((*package* (find-package :cl-agent))
-                   (*read-eval* nil)
-                   (form (read-from-string text)))
-              (format nil "~{~a~^~%~}"
-                      (mapcar #'prin1-to-string (multiple-value-list (eval form)))))
-          (error (c) (format nil "Error: ~a" c))))))
+        (let* ((compilable-source (format nil "(in-package :cl-agent)~%~a~%" text))
+               (review (review-lisp-source compilable-source)))
+          (if (getf review :compile-failure-p)
+              (format nil "Not evaluated because compilation failed.~%~a"
+                      (format-lisp-review review))
+              (handler-case
+                  (let* ((*package* (find-package :cl-agent))
+                         (*read-eval* nil)
+                         (form (read-from-string text))
+                         (value-text
+                           (format nil "~{~a~^~%~}"
+                                   (mapcar #'prin1-to-string
+                                           (multiple-value-list (eval form))))))
+                    (format nil "~a~%~%~a" value-text (format-lisp-review review)))
+                (error (c) (format nil "Error: ~a~%~%~a" c (format-lisp-review review)))))))))
 
 (defun paren-imbalance-message (imbalance)
   "Turn a CHECK-PAREN-BALANCE result into a message telling the model
@@ -52,7 +60,7 @@ specifically what to fix, rather than a bare reader end-of-file error."
                 (- n) line))))
 
 (define-tool write-extension (args)
-    (:description "Write a named file of Common Lisp source code to the agent's own extensions directory (~/.config/cl-agent/extensions/), load it into the running image, and (unless told not to) enable it so it is automatically loaded on every future start -- this is how you permanently add a tool, a hook callback, a provider, or change the agent's own behavior. The file MUST start with (in-package :cl-agent). Prefer ADDING things (new DEFINE-TOOL forms, new ADD-HOOK calls, new DEFMETHODs on existing generic functions) over redefining existing functions from scratch, since a mistake in a wholesale redefinition can break the running agent until the file is fixed or disabled. If `load` is true and loading fails, the file is still written to disk (so it isn't lost) but NOT enabled, and the error is returned so it can be fixed and retried."
+    (:description "Write a named Common Lisp extension, load it, and optionally enable it for future starts. Source is automatically reviewed with strict Mallet, checked for a DEFSTAR or DECLAIM FTYPE claim on every function, and compiled first. Compilation failures are reported and are not written; nonzero smell scores are advisory and are returned after a successful write so you can minimize them. The file MUST start with (in-package :cl-agent). Prefer adding definitions/hooks/methods over replacing core functions."
      :parameters
      (jobj "type" "object"
            "properties"
@@ -72,16 +80,21 @@ specifically what to fix, rather than a bare reader end-of-file error."
          (imbalance (check-paren-balance source)))
     (if imbalance
         (format nil "Not written -- ~a" (paren-imbalance-message imbalance))
-        (let ((path (write-extension-file filename source)))
-          (if do-load
-              (handler-case
-                  (progn
-                    (load-extension-file path)
-                    (when do-enable (set-extension-enabled bare t))
-                    (format nil "Wrote and loaded ~a~:[ (not enabled for future sessions)~;, enabled for future sessions~]."
-                            path do-enable))
-                (extension-error (c)
-                  (format nil "Wrote ~a but it failed to load, so it was NOT enabled:~%~a~%~
-                                Fix the error and call write-extension again with the same filename to retry."
-                           path c)))
-              (format nil "Wrote ~a (not loaded or enabled; pass load=true to activate it)." path))))))
+        (let ((review (review-lisp-source source)))
+          (if (getf review :compile-failure-p)
+              (format nil "Not written because compilation failed. Fix the source and retry.~%~a"
+                      (format-lisp-review review))
+              (let* ((path (write-extension-file filename source))
+                     (outcome
+                       (if do-load
+                           (handler-case
+                               (progn
+                                 (load-extension-file path)
+                                 (when do-enable (set-extension-enabled bare t))
+                                 (format nil "Wrote and loaded ~a~:[ (not enabled for future sessions)~;, enabled for future sessions~]."
+                                         path do-enable))
+                             (extension-error (c)
+                               (format nil "Wrote ~a but it failed to load, so it was NOT enabled:~%~a~%Fix the error and retry."
+                                       path c)))
+                           (format nil "Wrote ~a (not loaded or enabled; pass load=true to activate it)." path))))
+                (format nil "~a~%~%~a" outcome (format-lisp-review review))))))))
