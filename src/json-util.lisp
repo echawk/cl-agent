@@ -31,6 +31,76 @@ arrays become lists; true/false/null become T/NIL/:NULL."
 numbers / T / NIL / :NULL, see JOBJ's docstring) to a JSON string."
   (shasht:write-json* value :stream nil :pretty pretty))
 
+(defun json-object-p (value)
+  "True when VALUE is a JSON object in cl-agent's hash-table representation."
+  (hash-table-p value))
+
+(defun decode-json-object (text)
+  "Decode TEXT as a JSON object.
+
+Returns two values: the decoded hash table and NIL on success, or a harmless
+empty object and a readable error on failure.  Tool-call arguments must be
+objects even though JSON itself also permits arrays and scalars."
+  (handler-case
+      (let ((value (json-decode text)))
+        (if (json-object-p value)
+            (values value nil)
+            (values (jobj) "expected a JSON object")))
+    (error (condition)
+      (values (jobj) (format nil "invalid JSON: ~a" condition)))))
+
+(defun json-schema-validation-error (value schema &optional (path "arguments"))
+  "Return NIL when VALUE conforms to the supported JSON-Schema subset.
+
+The agent's tool schemas use object properties, required fields, primitive
+types, arrays, and occasionally enum.  Validating that subset locally keeps
+malformed model tool calls from reaching a handler without pretending to
+implement all of JSON Schema.  The non-NIL return value is a model-readable
+description of the first violation."
+  (labels ((fail (format-control &rest arguments)
+             (apply #'format nil format-control arguments))
+           (matches-type-p (candidate type)
+             (cond ((null type) t)
+                   ((string= type "object") (json-object-p candidate))
+                   ((string= type "array") (listp candidate))
+                   ((string= type "string") (stringp candidate))
+                   ((string= type "integer") (integerp candidate))
+                   ((string= type "number") (numberp candidate))
+                   ((string= type "boolean") (or (eq candidate t) (null candidate)))
+                   ((string= type "null") (eq candidate :null))
+                   (t t)))
+           (validate (candidate current-schema current-path)
+             (let ((type (jget current-schema "type")))
+               (cond
+                 ((and type (not (matches-type-p candidate type)))
+                  (fail "~a must be a JSON ~a" current-path type))
+                 ((and (jget current-schema "enum")
+                       (not (member candidate (jget current-schema "enum") :test #'equal)))
+                  (fail "~a must be one of the values allowed by its enum" current-path))
+                 ((json-object-p candidate)
+                  (let ((required (jget current-schema "required"))
+                        (properties (jget current-schema "properties")))
+                    ;; :EMPTY-ARRAY is our JSON-encoding sentinel for [];
+                    ;; it denotes no required fields just like an empty list.
+                    (dolist (name (if (listp required) required nil))
+                      (unless (nth-value 1 (gethash name candidate))
+                        (return-from validate (fail "~a.~a is required" current-path name))))
+                    (when (json-object-p properties)
+                      (loop for name being the hash-keys of properties using (hash-value property-schema)
+                            do (multiple-value-bind (property presentp) (gethash name candidate)
+                                 (when presentp
+                                   (let ((problem (validate property property-schema
+                                                            (format nil "~a.~a" current-path name))))
+                                     (when problem (return-from validate problem)))))))))
+                 ((and (listp candidate) (jget current-schema "items"))
+                  (loop for item in candidate
+                        for index from 0
+                        for problem = (validate item (jget current-schema "items")
+                                                (format nil "~a[~d]" current-path index))
+                        when problem do (return problem)))))))
+    (when (json-object-p schema)
+      (validate value schema path))))
+
 (defun jobj (&rest plist)
   "Build a JSON object (a hash table with STRING keys) from PLIST,
 whose keys may be strings or symbols (symbols are converted with

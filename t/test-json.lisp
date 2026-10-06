@@ -66,3 +66,16 @@
          (round-tripped (jalist->hash (jhash->alist h))))
     (check-equal (jget round-tripped "a") 1)
     (check-equal (jget (jget round-tripped "b") "c") '(1 2 3))))
+
+(deftest json-schema-validation-checks-tool-argument-shapes ()
+  (let ((schema (jobj "type" "object"
+                      "properties" (jobj "count" (jobj "type" "integer"))
+                      "required" (list "count"))))
+    (check-equal (json-schema-validation-error (jobj "count" 3) schema) nil)
+    (check (search "arguments.count must be a JSON integer"
+                   (json-schema-validation-error (jobj "count" "three") schema)))
+    (check (search "arguments.count is required"
+                   (json-schema-validation-error (jobj) schema))))
+  (check-equal (json-schema-validation-error (jobj)
+                                            (jobj "type" "object" "required" :empty-array))
+               nil))

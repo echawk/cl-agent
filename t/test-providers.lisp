@@ -93,6 +93,14 @@
     (check-equal (jget (getf tc :arguments) "command") "ls"
                  "the double-JSON-encoded arguments string was decoded into a real object")))
 
+(deftest openai-parse-chat-response-preserves-invalid-tool-json ()
+  (let* ((p (make-provider :ollama))
+         (raw (json-decode "{\"choices\":[{\"message\":{\"role\":\"assistant\",\"tool_calls\":[{\"id\":\"c1\",\"function\":{\"name\":\"shell\",\"arguments\":\"{not json}\"}}]}}]}"))
+         (tc (first (getf (parse-chat-response p raw) :tool-calls))))
+    (check (getf tc :arguments-error))
+    (check (search "invalid JSON" (getf tc :arguments-error)))
+    (check (hash-table-p (getf tc :arguments)))))
+
 (deftest openai-message-json-round-trips-assistant-tool-call ()
   (let* ((msg (list :role "assistant" :content nil
                      :tool-calls (list (list :id "c1" :name "shell" :arguments (jobj "command" "ls")))))

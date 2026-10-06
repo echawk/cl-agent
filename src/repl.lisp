@@ -419,6 +419,26 @@ is NIL) -- there is no provider to borrow outside of one."
           (string-upcase (string (getf review :decision))) (getf review :reason)
           (getf review :missing-verification)))
 
+(defun tool-call-json-error (tool-call)
+  "Return a model-readable validation error for TOOL-CALL, or NIL.
+
+Providers preserve malformed argument JSON as :ARGUMENTS-ERROR rather than
+silently replacing it with {}, and this second check validates the decoded
+object against the exact schema sent to the model."
+  (or (getf tool-call :arguments-error)
+      (unless (json-object-p (getf tool-call :arguments))
+        "expected a JSON object")
+      (let ((tool (find-tool (getf tool-call :name))))
+        (and tool
+             (json-schema-validation-error (getf tool-call :arguments)
+                                           (tool-parameters tool))))))
+
+(defun invalid-tool-call-result (tool-call problem)
+  "Feedback returned to the model when it emits invalid tool-call JSON."
+  (format nil "Tool call was not run because its JSON arguments are invalid: ~a. ~
+               Call ~a again with a JSON object that matches the advertised schema."
+          problem (getf tool-call :name)))
+
 (defun run-tool-call (session tool-call)
   "Run one normalized tool-call plist (:id :name :arguments), wrapped
 in the :before-tool-call / :after-tool-call chain hooks and
@@ -434,15 +454,18 @@ refused and can adjust, the same as any other tool error (see
 CALL-TOOL), rather than the error propagating out of the turn
 entirely."
   (let* ((frontend (session-frontend session))
+         (validation-error (tool-call-json-error tool-call))
          (requested (list :tool-name (getf tool-call :name) :arguments (getf tool-call :arguments))))
     (multiple-value-bind (ctx veto)
-        (handler-case (values (run-hook-chain :before-tool-call requested) nil)
-          (error (c) (values requested c)))
+        (if validation-error
+            (values requested nil)
+            (handler-case (values (run-hook-chain :before-tool-call requested) nil)
+              (error (c) (values requested c))))
       (ui-tool-started frontend (getf ctx :tool-name) (getf ctx :arguments))
-      (let* ((result (if veto
-                          (format nil "Tool call vetoed by a :before-tool-call hook: ~a" veto)
-                          (call-tool (getf ctx :tool-name) (getf ctx :arguments))))
-             (after (if veto
+      (let* ((result (cond (validation-error (invalid-tool-call-result tool-call validation-error))
+                           (veto (format nil "Tool call vetoed by a :before-tool-call hook: ~a" veto))
+                           (t (call-tool (getf ctx :tool-name) (getf ctx :arguments)))))
+             (after (if (or validation-error veto)
                         (list* :result result ctx)
                         (run-hook-chain :after-tool-call
                                         (list :tool-name (getf ctx :tool-name)

@@ -147,6 +147,29 @@
              (check (not (search "original" (getf message :content))))))
       (remove-hook :before-tool-call 'test-mutate))))
 
+(deftest run-tool-call-rejects-invalid-model-json-and-alerts-the-model ()
+  (let ((called nil)
+        (name "json-validation-test"))
+    (unwind-protect
+         (progn
+           (register-tool
+            (make-instance 'tool :name name :description "test"
+                              :parameters (jobj "type" "object"
+                                                "properties" (jobj "count" (jobj "type" "integer"))
+                                                "required" (list "count"))
+                              :handler (lambda (arguments)
+                                         (declare (ignore arguments))
+                                         (setf called t)
+                                         "should not run")))
+           (let* ((session (make-session (make-instance 'ollama-provider)))
+                  (result (run-tool-call session
+                                         (list :id "bad-json" :name name
+                                               :arguments (jobj "count" "not an integer")))))
+             (check (not called))
+             (check (search "JSON arguments are invalid" (getf result :content)))
+             (check (search "arguments.count must be a JSON integer" (getf result :content)))))
+      (unregister-tool name))))
+
 ;;; --- SESSION-COMPLETE / *CURRENT-SESSION* ---
 
 (deftest session-complete-signals-without-a-running-session ()
