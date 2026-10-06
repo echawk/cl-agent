@@ -163,6 +163,9 @@ mode exposes the full catalog.")
                        :documentation "How incoming user work is prepared: :DIRECT
 submits it normally; :PLAN adds a planning brief; :PLAN-REVIEW also verifies
 the proposed final answer with an isolated reviewer.")
+   (active-plan :initform nil :accessor session-active-plan)
+   (task-record :initform nil :accessor session-task-record
+                :documentation "Durable journal entry for the current task.")
    (max-tool-iterations :initarg :max-tool-iterations :initform 25
                          :accessor session-max-tool-iterations)
    (start-time :initform (get-internal-real-time) :accessor session-start-time)
@@ -294,8 +297,65 @@ the main agent. The JSON contract makes intermediate planning inspectable."
          (brief (parse-planning-brief response text session))
          (rendered (format-planning-brief brief text)))
     (ui-system (session-frontend session) rendered)
+    (setf (session-active-plan session) brief)
     (activate-planned-tools session brief)
     rendered))
+
+;;; Phase 4: durable task records.  This is intentionally a journal before
+;;; introducing workers: every later scheduler/approval mechanism needs these
+;;; durable inputs and receipts first.
+(defvar *task-record-sequence* 0)
+
+(defun task-record-directory ()
+  (merge-pathnames "tasks/" *config-directory*))
+
+(defun persist-task-record (record)
+  (ensure-directories-exist (task-record-directory))
+  (with-open-file (out (merge-pathnames (format nil "~a.json" (jget record "id"))
+                                        (task-record-directory))
+                       :direction :output :if-exists :supersede :if-does-not-exist :create)
+    (write-string (json-encode record :pretty t) out))
+  record)
+
+(defun start-task-record (session original prepared execution)
+  "Start a durable record with plan, state, tool receipts, and approval space."
+  (let* ((plan (session-active-plan session))
+         (record (jobj "id" (format nil "task-~d-~d" (get-universal-time) (incf *task-record-sequence*))
+                       "created_at" (get-universal-time) "status" "executing"
+                       "original_request" original "prepared_request" prepared
+                       "execution_request" execution
+                       "plan" (or (and plan (getf plan :plan)) :empty-array)
+                       "verification" (or (and plan (getf plan :verification)) :empty-array)
+                       "tool_evidence" :empty-array "pending_approvals" :empty-array)))
+    (setf (session-task-record session) record (session-active-plan session) nil)
+    (persist-task-record record)))
+
+(defun record-task-tool-evidence (session tool-call result)
+  (let ((record (session-task-record session)))
+    (when record
+      (let ((evidence (jobj "tool" (getf tool-call :name)
+                            "arguments" (getf tool-call :arguments)
+                            "result" (subseq result 0 (min 12000 (length result))))))
+        (setf (gethash "tool_evidence" record)
+              (append (let ((old (jget record "tool_evidence"))) (if (listp old) old nil))
+                      (list evidence)))
+        (persist-task-record record)))))
+
+(defun set-task-record-status (session status &optional detail)
+  "Persist the terminal lifecycle STATUS for SESSION's current task.
+DETAIL records why a task stopped short of a verified completion."
+  (let ((record (session-task-record session)))
+    (when record
+      (setf (gethash "status" record) status
+            (gethash "finished_at" record) (get-universal-time))
+      (when detail
+        (setf (gethash "status_detail" record) detail))
+      (persist-task-record record))))
+
+(defun finish-agent-turn (session message status &optional detail)
+  "Record a terminal task state, then return MESSAGE for RUN-AGENT-TURN."
+  (set-task-record-status session status detail)
+  message)
 
 (defun session-submit-user-text (session text)
   "The one place incoming user input (the initial task, or a line from
@@ -312,7 +372,8 @@ anything else that wants to feed the model a user turn."
                              (plan-user-request session prepared-text)
                              prepared-text)))
     (setf (session-messages session)
-          (append (session-messages session) (list (list :role "user" :content execution-text))))))
+          (append (session-messages session) (list (list :role "user" :content execution-text))))
+    (start-task-record session text prepared-text execution-text)))
 
 (defun session-stats-snapshot (session)
   "The plist UI-STATS-UPDATED (ui/frontend.lisp) and the /stats
@@ -439,6 +500,49 @@ object against the exact schema sent to the model."
                Call ~a again with a JSON object that matches the advertised schema."
           problem (getf tool-call :name)))
 
+(defparameter *shell-command-inspection-enabled* t
+  "When true, inspect model-proposed shell commands before execution.
+
+The inspector is deliberately about relevance, scope, and evidence quality,
+not user authorization.  A rejected command is returned to the model as tool
+feedback so it can choose a narrower or more direct next step.")
+
+(defun parse-shell-command-inspection (response)
+  "Validate the JSON-only result from the isolated shell command inspector."
+  (let* ((decoded (handler-case (and (stringp response) (json-decode response))
+                    (error () nil)))
+         (decision (jget decoded "decision"))
+         (reason (jget decoded "reason"))
+         (alternative (jget decoded "alternative")))
+    (if (and (hash-table-p decoded)
+             (member decision '("allow" "reject") :test #'string=)
+             (stringp reason)
+             (or (null alternative) (stringp alternative)))
+        (list :decision (intern (string-upcase decision) :keyword)
+              :reason reason :alternative alternative)
+        ;; The inspector is a safety boundary: malformed output must not
+        ;; silently permit a command whose relevance was never assessed.
+        (list :decision :reject
+              :reason "The shell-command inspector returned unusable output."
+              :alternative "Choose a bounded command with a specific target."))))
+
+(defun inspect-shell-command (session command)
+  "Ask a tool-free reviewer whether COMMAND is a justified shell action.
+
+SESSION supplies the actual task and evidence, preventing the reviewer from
+judging a command in isolation.  It never asks the user for permission."
+  (parse-shell-command-inspection
+   (let ((*current-session* session))
+     (session-complete
+      (format nil "Current task and evidence:~%~a~%~%Proposed shell command:~%~a"
+              (current-turn-review-evidence session) command)
+      :system "You are a shell-command inspector for a coding agent. Decide whether the proposed command is a necessary, proportionate, and technically sound next step for the current task. Reject commands that gather information more broadly than the task/evidence justifies, have an unbounded or poorly targeted search space, duplicate available direct evidence, or are unlikely to answer the question. This is not a permission check: do not ask the user anything and do not consider authorization. Prefer the smallest command with a known target and bounded output. Reply JSON only: {\"decision\": \"allow\"|\"reject\", \"reason\": string, \"alternative\": string|null}."))))
+
+(defun rejected-shell-command-result (inspection)
+  "Feedback returned to the model when command inspection rejects a shell call."
+  (format nil "Shell command was not run: ~a~@[ Safer next step: ~a~]"
+          (getf inspection :reason) (getf inspection :alternative)))
+
 (defun run-tool-call (session tool-call)
   "Run one normalized tool-call plist (:id :name :arguments), wrapped
 in the :before-tool-call / :after-tool-call chain hooks and
@@ -455,23 +559,36 @@ CALL-TOOL), rather than the error propagating out of the turn
 entirely."
   (let* ((frontend (session-frontend session))
          (validation-error (tool-call-json-error tool-call))
+         (shell-inspection
+           (when (and (not validation-error)
+                      *shell-command-inspection-enabled*
+                      (string= (getf tool-call :name) "shell")
+                      *current-session*)
+             (inspect-shell-command session (jget (getf tool-call :arguments) "command"))))
+         (inspection-error (and shell-inspection
+                                (eq (getf shell-inspection :decision) :reject)
+                                (rejected-shell-command-result shell-inspection)))
          (requested (list :tool-name (getf tool-call :name) :arguments (getf tool-call :arguments))))
     (multiple-value-bind (ctx veto)
-        (if validation-error
+        (if (or validation-error inspection-error)
             (values requested nil)
             (handler-case (values (run-hook-chain :before-tool-call requested) nil)
               (error (c) (values requested c))))
       (ui-tool-started frontend (getf ctx :tool-name) (getf ctx :arguments))
+      (when inspection-error
+        (ui-system frontend (format nil "[shell inspector] ~a" (getf shell-inspection :reason))))
       (let* ((result (cond (validation-error (invalid-tool-call-result tool-call validation-error))
+                           (inspection-error inspection-error)
                            (veto (format nil "Tool call vetoed by a :before-tool-call hook: ~a" veto))
                            (t (call-tool (getf ctx :tool-name) (getf ctx :arguments)))))
-             (after (if (or validation-error veto)
+             (after (if (or validation-error inspection-error veto)
                         (list* :result result ctx)
                         (run-hook-chain :after-tool-call
                                         (list :tool-name (getf ctx :tool-name)
                                               :arguments (getf ctx :arguments)
                                               :result result)))))
       (ui-tool-finished frontend (getf ctx :tool-name) (getf ctx :arguments) (getf after :result))
+      (record-task-tool-evidence session tool-call (getf after :result))
       (incf (getf (session-raw-stats session) :tool-calls))
       (ui-stats-updated frontend (session-stats-snapshot session))
       (list :role "tool" :tool-call-id (getf tool-call :id) :content (getf after :result))))))
@@ -513,7 +630,8 @@ during this turn can call SESSION-COMPLETE."
                         (provider-error (c)
                           (run-hook :on-error c)
                           (ui-error frontend c)
-                          (return-from run-agent-turn nil)))))
+                          (return-from run-agent-turn
+                            (finish-agent-turn session nil "blocked" (princ-to-string c)))))))
                (setf assistant-message (run-hook-chain :after-response assistant-message))
                (setf (session-messages session) (append (session-messages session) (list assistant-message)))
                (session-note-request session assistant-message)
@@ -542,7 +660,8 @@ during this turn can call SESSION-COMPLETE."
                        (cond
                          ((null tool-calls)
                           (if (not (completion-review-mode-p session))
-                              (return-from run-agent-turn assistant-message)
+                              (return-from run-agent-turn
+                                (finish-agent-turn session assistant-message "completed"))
                               (let ((review (request-completion-review session assistant-message)))
                                 (ui-system frontend (format-completion-review review))
                                 (ui-stats-updated frontend (session-stats-snapshot session))
@@ -550,7 +669,8 @@ during this turn can call SESSION-COMPLETE."
                                   (:accept
                                    (when (getf assistant-message :content)
                                      (ui-assistant-text frontend (getf assistant-message :content)))
-                                   (return-from run-agent-turn assistant-message))
+                                   (return-from run-agent-turn
+                                     (finish-agent-turn session assistant-message "completed")))
                                   (:revise
                                    (if (zerop completion-review-retries)
                                        (progn
@@ -563,14 +683,18 @@ during this turn can call SESSION-COMPLETE."
                                                                                     (getf review :missing-verification)))))))
                                        (progn
                                          (ui-system frontend "[review] Revision budget exhausted; completion remains unverified.")
-                                         (return-from run-agent-turn assistant-message))))
+                                         (return-from run-agent-turn
+                                           (finish-agent-turn session assistant-message "blocked"
+                                                              "Completion review revision budget exhausted.")))))
                                   (:block
                                    (setf (session-messages session)
                                          (append (session-messages session)
                                                  (list (list :role "system"
                                                              :content (format nil "Completion blocked by independent review: ~a"
                                                                               (getf review :reason))))))
-                                   (return-from run-agent-turn assistant-message))))))
+                                   (return-from run-agent-turn
+                                     (finish-agent-turn session assistant-message "blocked"
+                                                        (getf review :reason))))))))
                          ((>= iteration (session-max-tool-iterations session))
                           (setf (session-messages session)
                                 (append (session-messages session)
@@ -579,7 +703,9 @@ during this turn can call SESSION-COMPLETE."
                                                                            continue if you'd like, but check whether you're ~
                                                                            stuck in a loop." iteration)))))
                           (ui-system frontend (format nil "[cl-agent] hit max-tool-iterations (~d); pausing this turn." iteration))
-                          (return-from run-agent-turn assistant-message))
+                          (return-from run-agent-turn
+                            (finish-agent-turn session assistant-message "blocked"
+                                               "Maximum tool-call iterations reached.")))
                          (t
                           (dolist (tc tool-calls)
                             (when (string= (getf tc :name) "review-lisp")

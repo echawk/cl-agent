@@ -46,7 +46,11 @@ one JSON object in OpenAI's `messages` array shape."
              "content" (or (getf message :content) "")))
       ((and (string= role "assistant") (getf message :tool-calls))
        (jobj "role" "assistant"
-             "content" (getf message :content)
+             ;; A tool-call-only assistant turn has no text content.  JSON
+             ;; null is the OpenAI wire representation; passing Lisp NIL to
+             ;; JOBJ would encode JSON false, which strict compatible APIs
+             ;; (including REALLMS) reject as an invalid message payload.
+             "content" (or (getf message :content) :null)
              "tool_calls"
              (mapcar (lambda (tc)
                        (jobj "id" (getf tc :id)

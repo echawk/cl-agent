@@ -106,6 +106,8 @@
                      :tool-calls (list (list :id "c1" :name "shell" :arguments (jobj "command" "ls")))))
          (wire (openai-message-json msg)))
     (check-equal (jget wire "role") "assistant")
+    (check-equal (gethash "content" wire) :null
+                 "tool-call-only assistant content must be JSON null, not false")
     (check-equal (jget (first (jget wire "tool_calls")) "id") "c1")
     (check-equal (jget (jget (first (jget wire "tool_calls")) "function") "name") "shell")))
 

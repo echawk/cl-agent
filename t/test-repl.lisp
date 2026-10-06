@@ -170,6 +170,31 @@
              (check (search "arguments.count must be a JSON integer" (getf result :content)))))
       (unregister-tool name))))
 
+(deftest shell-command-inspector-rejects-with-model-feedback ()
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (complete (symbol-function 'session-complete))
+         (called nil))
+    (setf (session-messages session)
+          (append (session-messages session) (list (list :role "user" :content "Explain a library"))))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'session-complete)
+                 (lambda (&rest ignored)
+                   (declare (ignore ignored))
+                   "{\"decision\":\"reject\",\"reason\":\"The search scope is not justified\",\"alternative\":\"Inspect the known project directory\"}"))
+           (let ((original (symbol-function 'call-tool)))
+             (unwind-protect
+                  (progn
+                    (setf (symbol-function 'call-tool)
+                          (lambda (&rest ignored) (declare (ignore ignored)) (setf called t) "ran"))
+                    (let ((*current-session* session))
+                      (let ((result (run-tool-call session (list :id "inspect" :name "shell"
+                                                                  :arguments (jobj "command" "some command")))))
+                        (check (not called))
+                        (check (search "Shell command was not run" (getf result :content))))))
+               (setf (symbol-function 'call-tool) original))))
+      (setf (symbol-function 'session-complete) complete))))
+
 ;;; --- SESSION-COMPLETE / *CURRENT-SESSION* ---
 
 (deftest session-complete-signals-without-a-running-session ()
@@ -343,6 +368,16 @@
     (session-submit-user-text session "hello there")
     (check-equal (getf (first (last (session-messages session))) :role) "user")
     (check-equal (getf (first (last (session-messages session))) :content) "hello there")))
+
+(deftest session-submit-user-text-creates-a-durable-task-record ()
+  (with-temp-config-dir ()
+    (let ((session (make-session (make-instance 'ollama-provider))))
+      (session-submit-user-text session "record this task")
+      (let ((record (session-task-record session)))
+        (check-equal (jget record "status") "executing")
+        (check-equal (jget record "original_request") "record this task")
+        (check (probe-file (merge-pathnames (format nil "~a.json" (jget record "id"))
+                                            (task-record-directory))))))))
 
 (deftest plan-mode-shows-and-submits-a-validated-execution-brief ()
   (let* ((session (make-session (make-instance 'ollama-provider)

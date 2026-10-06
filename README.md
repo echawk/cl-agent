@@ -109,6 +109,14 @@ available in plan mode; discovery respects the remaining budget.
 task evidence and proposed answer, then accepts it, requests one bounded
 evidence-focused revision, or visibly blocks an unverified completion.
 
+Every model-proposed `shell` call also receives an isolated, tool-free command
+inspection pass. It checks the command against the user task and accumulated
+evidence for necessity, scope, and technical sense; a rejected command is not
+run, and the agent receives a concise reason plus a safer next step. This is a
+sanity check, not a permission prompt. Task inputs, plans, tool receipts, and
+terminal state are recorded under `~/.config/cl-agent/tasks/` for later
+orchestration stages.
+
 **On tool-calling reliability with small local Ollama models**: cl-agent's
 default system prompt and tool set (7 tools) are correctly sent and
 correctly parsed regardless of model size -- verified directly against
