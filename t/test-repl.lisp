@@ -43,6 +43,30 @@
       (dispatch-slash-command session "/tools"))
     (check (search "shell" (get-output-stream-string output)))))
 
+(defclass test-model-menu-provider (llm-provider) ())
+(defmethod provider-default-model ((provider test-model-menu-provider))
+  (declare (ignore provider))
+  "alpha")
+(defmethod provider-list-models ((provider test-model-menu-provider))
+  (declare (ignore provider))
+  '("alpha" "beta"))
+
+(deftest slash-model-with-no-argument-lists-live-models ()
+  (let ((session (make-session (make-instance 'test-model-menu-provider :model "alpha")))
+        (output (make-string-output-stream)))
+    (let ((*standard-output* output))
+      (dispatch-slash-command session "/model"))
+    (let ((text (get-output-stream-string output)))
+      (check (search "1) alpha" text))
+      (check (search "2) beta" text)))))
+
+(deftest slash-model-selects-number-or-valid-id ()
+  (let ((session (make-session (make-instance 'test-model-menu-provider :model "alpha"))))
+    (dispatch-slash-command session "/model 2")
+    (check-equal (provider-model (session-provider session)) "beta")
+    (dispatch-slash-command session "/model alpha")
+    (check-equal (provider-model (session-provider session)) "alpha")))
+
 ;;; --- stats tracking ---
 
 (deftest session-stats-snapshot-has-live-fields ()

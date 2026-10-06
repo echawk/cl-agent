@@ -91,7 +91,9 @@ comment.
 If neither `--model` nor `:model` in config is set, cl-agent calls the
 selected provider's `/models` endpoint at startup and presents the live list
 for a one-time selection. Press Enter to retain the provider default. The
-agent can inspect the same list later with its `list-models` tool.
+agent can inspect the same list later with its `list-models` tool. In an
+interactive session, `/model` lists those IDs and `/model ID` (or `/model N`)
+switches the session to a listed model.
 
 **On tool-calling reliability with small local Ollama models**: cl-agent's
 default system prompt and tool set (7 tools) are correctly sent and

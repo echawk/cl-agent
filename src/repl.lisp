@@ -449,6 +449,39 @@ name is parsed as one JSON object and passed to the tool as-is."
                      (provider-model (session-provider session))))
   t)
 
+(define-slash-command model (session arg)
+  "Usage: /model to list live provider model IDs, or /model MODEL (or its
+number in that list) to select it for subsequent requests in this session.
+The choice is intentionally session-local; config and other sessions are not
+rewritten behind the user's back."
+  (let ((frontend (session-frontend session)))
+    (handler-case
+        (let ((models (provider-list-models (session-provider session)))
+              (choice (string-trim " " arg)))
+          (cond
+            ((null models)
+             (ui-system frontend "This provider does not expose any models through /models."))
+            ((zerop (length choice))
+             (ui-system frontend
+                        (format nil "Available models:~%~{~a~^~%~}"
+                                (loop for model in models for index from 1
+                                      collect (format nil "~d) ~a" index model)))))
+            (t
+             (let ((selected (or (ignore-errors
+                                   (let ((index (parse-integer choice :junk-allowed nil)))
+                                     (and (<= 1 index (length models)) (nth (1- index) models))))
+                                 (and (member choice models :test #'string=) choice))))
+               (if selected
+                   (progn
+                     (setf (provider-model (session-provider session)) selected)
+                     (ui-system frontend (format nil "Model switched to ~a." selected))
+                     (ui-stats-updated frontend (session-stats-snapshot session)))
+                   (ui-system frontend
+                              (format nil "Unknown model ~s. Run /model to list valid models." choice)))))))
+      (provider-error (c)
+        (ui-error frontend c))))
+  t)
+
 (define-slash-command stats (session arg)
   (declare (ignore arg))
   (ui-system (session-frontend session) (format-stats (session-stats-snapshot session)))
