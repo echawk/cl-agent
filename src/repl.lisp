@@ -1089,18 +1089,25 @@ without confusing a malformed response with a substantive rejection."
                     (error () nil)))
          (decision (jget decoded "decision"))
          (reason (jget decoded "reason"))
-         (alternative (jget decoded "alternative")))
+         (alternative (jget decoded "alternative"))
+         ;; Older inspector responses did not have this field.  Treat its
+         ;; absence as NIL so a provider upgrade cannot turn an otherwise
+         ;; useful review into a rejection solely because of the new advice.
+         (rewritten-command (jget decoded "rewritten_command")))
     (if (and (hash-table-p decoded)
              (member decision '("allow" "reject") :test #'string=)
              (stringp reason)
-             (or (null alternative) (stringp alternative)))
+             (or (null alternative) (stringp alternative))
+             (or (null rewritten-command) (stringp rewritten-command)))
         (list :decision (intern (string-upcase decision) :keyword)
-              :reason reason :alternative alternative :valid-p t)
+              :reason reason :alternative alternative
+              :rewritten-command rewritten-command :valid-p t)
         ;; The inspector is a safety boundary: malformed output must not
         ;; silently permit a command whose relevance was never assessed.
         (list :decision :reject
               :reason "The shell-command inspector returned unusable output."
               :alternative "Choose a bounded command with a specific target."
+              :rewritten-command nil
               :valid-p nil))))
 
 (defun inspect-shell-command (session command reason result-use)
@@ -1115,10 +1122,11 @@ answer.  It never asks the user for permission."
         ;; A model cannot override this: whole-host discovery has no bounded
         ;; evidence target, regardless of how confidently it proposes it.
         (list :decision :reject :reason whole-host-reason
-              :alternative "Inspect the package manager, language runtime, or another known location.")
+              :alternative "Inspect the package manager, language runtime, or another known location."
+              :rewritten-command nil)
         (let* ((prompt (format nil "Current task and evidence:~%~a~%~%Why the model needs this command:~%~a~%~%How the model will use the result:~%~a~%~%Proposed shell command:~%~a"
                                (current-turn-review-evidence session) reason result-use command))
-               (system "You are a shell-command inspector for a coding agent. Assess the proposed command as an intermediate step toward the user's goal, not as though it must itself be the final answer. The proposing model must state why it needs the command and how it will use the result. Allow bounded, read-only inspection of a specific project file or directory when that stated use plausibly and directly leads to the goal--for example, listing a known source directory to select a code file to read. Reject commands that gather information more broadly than the task/evidence justifies, have an unbounded or poorly targeted search space, duplicate available direct evidence, or whose stated reason or result use is vague, inconsistent, or unlikely to advance the goal. This is not a permission check: do not ask the user anything and do not consider authorization. Reply with exactly one JSON object and no surrounding prose: {\"decision\": \"allow\"|\"reject\", \"reason\": string, \"alternative\": string|null}."))
+               (system "You are a shell-command inspector for a coding agent. Assess the proposed command as an intermediate step toward the user's goal, not as though it must itself be the final answer. The proposing model must state why it needs the command and how it will use the result. Allow bounded, read-only inspection of a specific project file or directory when that stated use plausibly and directly leads to the goal--for example, listing a known source directory to select a code file to read. Reject commands that gather information more broadly than the task/evidence justifies, have an unbounded or poorly targeted search space, duplicate available direct evidence, or whose stated reason or result use is vague, inconsistent, or unlikely to advance the goal. When rejecting, use the stated reason and intended result use to propose one concrete, bounded replacement shell command that would make the same progress; set rewritten_command to null only if no safe command can be inferred. The replacement is advice for the proposing agent and is never executed automatically. This is not a permission check: do not ask the user anything and do not consider authorization. Reply with exactly one JSON object and no surrounding prose: {\"decision\": \"allow\"|\"reject\", \"reason\": string, \"alternative\": string|null, \"rewritten_command\": string|null}."))
           (labels ((review (review-prompt)
                      (let ((*current-session* session))
                        (parse-shell-command-inspection
@@ -1133,8 +1141,9 @@ answer.  It never asks the user for permission."
 
 (defun rejected-shell-command-result (inspection)
   "Feedback returned to the model when command inspection rejects a shell call."
-  (format nil "Shell command was not run: ~a~@[ Safer next step: ~a~]"
-          (getf inspection :reason) (getf inspection :alternative)))
+  (format nil "Shell command was not run: ~a~@[ Safer next step: ~a~]~@[ Suggested replacement command (review it, then call shell again): ~a~]"
+          (getf inspection :reason) (getf inspection :alternative)
+          (getf inspection :rewritten-command)))
 
 (defun run-tool-call (session tool-call)
   "Run one normalized tool-call plist (:id :name :arguments), wrapped

@@ -274,7 +274,7 @@
            (setf (symbol-function 'session-complete)
                  (lambda (&rest ignored)
                    (declare (ignore ignored))
-                   "{\"decision\":\"reject\",\"reason\":\"The search scope is not justified\",\"alternative\":\"Inspect the known project directory\"}"))
+                   "{\"decision\":\"reject\",\"reason\":\"The search scope is not justified\",\"alternative\":\"Inspect the known project directory\",\"rewritten_command\":\"rg -n \\\"library\\\" src\"}"))
            (let ((original (symbol-function 'call-tool)))
              (unwind-protect
                   (progn
@@ -286,7 +286,8 @@
                                                                                    "reason" "Obtain focused evidence."
                                                                                    "result_use" "Use it to answer the library question.")))))
                         (check (not called))
-                        (check (search "Shell command was not run" (getf result :content))))))
+                        (check (search "Shell command was not run" (getf result :content)))
+                        (check (search "rg -n \"library\" src" (getf result :content))))))
                (setf (symbol-function 'call-tool) original))))
       (setf (symbol-function 'session-complete) complete))))
 
@@ -363,6 +364,28 @@
            (check (search "ls src/" review-prompt) "command is sent to the inspector"))
       (setf (symbol-function 'session-complete) complete
             (symbol-function 'call-tool) original-call-tool))))
+
+(deftest shell-command-inspector-asks-for-a-rewrite-grounded-in-intent ()
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (complete (symbol-function 'session-complete))
+         (review-system nil))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'session-complete)
+                 (lambda (prompt &key system model)
+                   (declare (ignore prompt model))
+                   (setf review-system system)
+                   "{\"decision\":\"reject\",\"reason\":\"too broad\",\"alternative\":\"read the target file\",\"rewritten_command\":\"sed -n '1,80p' src/repl.lisp\"}"))
+           (let ((*current-session* session))
+             (let ((inspection (inspect-shell-command
+                                session "rg shell ."
+                                "Find the shell inspector implementation."
+                                "Read it before changing its review response.")))
+               (check-equal (getf inspection :rewritten-command)
+                            "sed -n '1,80p' src/repl.lisp")
+               (check (search "stated reason and intended result use" review-system))
+               (check (search "never executed automatically" review-system)))))
+      (setf (symbol-function 'session-complete) complete))))
 
 (deftest shell-command-inspector-rejects-whole-host-discovery-before-model-review ()
   (let* ((session (make-session (make-instance 'ollama-provider)))
