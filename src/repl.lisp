@@ -1383,9 +1383,11 @@ with a tool-free continuity summary. It is never invoked automatically."
   (declare (ignore arg))
   (handler-case
       (multiple-value-bind (compacted-p before after) (compact-session-history session)
-        (ui-system (session-frontend session)
-                   (if compacted-p
-                       (format nil "Context compacted on request: conversation estimate ~d -> ~d tokens. Run /context to inspect the next request." before after)
+        (if compacted-p
+            (ui-context-compacted (session-frontend session)
+                                  (getf (second (session-messages session)) :content)
+                                  before after)
+            (ui-system (session-frontend session)
                        "Context was not compacted: the summarizer returned no usable continuity note.")))
     (error (c) (ui-error (session-frontend session) c)))
   t)

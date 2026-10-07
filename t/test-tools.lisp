@@ -79,5 +79,45 @@
 (deftest shell-tool-rejects-missing-command-clearly ()
   (check (search "no \"command\" argument" (call-tool "shell" (jobj)))))
 
+(deftest direct-file-tools-read-and-write-project-files ()
+  (let ((path (merge-pathnames "cl-agent-file-tool-test.txt" (uiop:temporary-directory))))
+    (unwind-protect
+         (progn
+           (check (search "Wrote 17 characters" (call-tool "write-file" (jobj "path" (namestring path) "contents" "direct file write"))))
+           (check-equal (call-tool "read-file" (jobj "path" (namestring path))) "direct file write"))
+      (when (probe-file path) (delete-file path)))))
+
+(deftest file-range-tools-read-replace-insert-and-guard-precise-text ()
+  (let ((path (merge-pathnames "cl-agent-file-range-tool-test.txt" (uiop:temporary-directory))))
+    (unwind-protect
+         (progn
+           (call-tool "write-file" (jobj "path" (namestring path) "contents" (format nil "alpha~%beta~%gamma")))
+           (check-equal (call-tool "read-file-range"
+                                   (jobj "path" (namestring path)
+                                         "start_line" 2 "start_column" 1
+                                         "end_line" 2 "end_column" 5))
+                        "beta")
+           (check (search "replaced 4 characters"
+                          (call-tool "edit-file"
+                                     (jobj "path" (namestring path)
+                                           "start_line" 2 "start_column" 1
+                                           "end_line" 2 "end_column" 5
+                                           "replacement" "BETA" "expected_text" "beta"))))
+           ;; Equal endpoints are a precise insertion, with no special mode.
+           (call-tool "edit-file"
+                      (jobj "path" (namestring path)
+                            "start_line" 3 "start_column" 1
+                            "end_line" 3 "end_column" 1
+                            "replacement" "new-" "expected_text" ""))
+           (check-equal (call-tool "read-file" (jobj "path" (namestring path)))
+                        (format nil "alpha~%BETA~%new-gamma"))
+           (check (search "did not match"
+                          (call-tool "edit-file"
+                                     (jobj "path" (namestring path)
+                                           "start_line" 1 "start_column" 1
+                                           "end_line" 1 "end_column" 6
+                                           "replacement" "wrong" "expected_text" "stale")))))
+      (when (probe-file path) (delete-file path)))))
+
 (deftest find-tool-returns-nil-not-error ()
   (check-equal (find-tool "no-such-tool-xyz") nil))

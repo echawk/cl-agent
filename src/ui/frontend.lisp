@@ -93,6 +93,18 @@ wants to style them differently (a status line vs. the transcript,
 say) can.")
   (:method ((frontend agent-frontend) text) (format t "~&~a~%" text) (force-output)))
 
+(defgeneric ui-context-compacted (frontend summary before-tokens after-tokens)
+  (:documentation "Report a user-requested context compaction.
+
+The default keeps the generated continuity summary out of an ordinary terminal
+transcript and reports only the outcome. Frontends with richer disclosure UI
+may retain SUMMARY behind an explicit control.")
+  (:method ((frontend agent-frontend) summary before-tokens after-tokens)
+    (declare (ignore summary))
+    (ui-system frontend
+               (format nil "Context compacted on request: conversation estimate ~d -> ~d tokens. Run /context to inspect the next request."
+                       before-tokens after-tokens))))
+
 (defgeneric ui-error (frontend condition)
   (:documentation "A condition the agent loop caught and wants shown
 to the user (a provider error, a hook that misbehaved, ...).")

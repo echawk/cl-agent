@@ -77,6 +77,7 @@
       :serial t
       :components
       ((:file "shell")
+       (:file "file-tool")
        (:file "quality-tool")
        (:file "asdf-tool")
        (:file "extensions-tool")
