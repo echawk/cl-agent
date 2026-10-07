@@ -184,6 +184,10 @@ the proposed final answer with an isolated reviewer.")
                 :documentation "Durable journal entry for the current task.")
    (max-tool-iterations :initarg :max-tool-iterations :initform 25
                          :accessor session-max-tool-iterations)
+   (subagent-depth :initarg :subagent-depth :initform 0
+                   :accessor session-subagent-depth)
+   (max-subagent-depth :initarg :max-subagent-depth :initform 1
+                       :accessor session-max-subagent-depth)
    (start-time :initform (get-internal-real-time) :accessor session-start-time)
    (raw-stats :initform (list :requests 0 :tool-calls 0 :prompt-tokens 0 :completion-tokens 0 :total-tokens 0)
               :accessor session-raw-stats
@@ -216,7 +220,8 @@ command strings. Unknown or absent values safely select :DIRECT."
   "True only when final answers require phase-three verification."
   (eq (session-orchestration-mode session) :plan-review))
 
-(defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit)
+(defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit
+                              (subagent-depth 0) (max-subagent-depth 1))
   (make-instance 'agent-session
                   :provider provider
                   :frontend (or frontend (make-frontend :cli))
@@ -228,7 +233,11 @@ command strings. Unknown or absent values safely select :DIRECT."
                                                 orchestration-tool-limit
                                                 8)
                   :messages (list (list :role "system" :content (or system-prompt *default-system-prompt*)))
-                  :max-tool-iterations (or max-tool-iterations 25)))
+                  :max-tool-iterations (or max-tool-iterations 25)
+                  :subagent-depth subagent-depth
+                  :max-subagent-depth (if (and (integerp max-subagent-depth)
+                                               (not (minusp max-subagent-depth)))
+                                          max-subagent-depth 1)))
 
 (defun string-list (value)
   "Keep only string entries from a JSON array-shaped VALUE."
@@ -933,6 +942,42 @@ during this turn can call SESSION-COMPLETE."
                                   (append (session-messages session)
                                           (list (run-tool-call session tc))))))))))))
       (ui-thinking-stopped frontend))))
+
+(defclass silent-subagent-frontend (agent-frontend) ())
+(defmethod ui-assistant-text ((frontend silent-subagent-frontend) text)
+  (declare (ignore frontend text)) (values))
+(defmethod ui-system ((frontend silent-subagent-frontend) text)
+  (declare (ignore frontend text)) (values))
+(defmethod ui-tool-started ((frontend silent-subagent-frontend) tool-name arguments)
+  (declare (ignore frontend tool-name arguments)) (values))
+(defmethod ui-tool-finished ((frontend silent-subagent-frontend) tool-name arguments result)
+  (declare (ignore frontend tool-name arguments result)) (values))
+
+(defun run-subagent (parent task system tools &key (max-tool-iterations 8))
+  "Run one bounded worker and return its final report to PARENT.
+
+Workers have isolated histories and a silent frontend. Their only externally
+visible effect is this returned report; nesting is blocked once PARENT reaches
+its configured depth limit."
+  (when (>= (session-subagent-depth parent) (session-max-subagent-depth parent))
+    (return-from run-subagent
+      (format nil "Subagent was not started: nesting depth ~d has reached the configured limit."
+              (session-max-subagent-depth parent))))
+  (let* ((child (make-session (provider-for-model (session-provider parent)
+                                                (provider-model (session-provider parent)))
+                              :frontend (make-instance 'silent-subagent-frontend)
+                              :system-prompt system :tools tools
+                              :max-tool-iterations max-tool-iterations
+                              :subagent-depth (1+ (session-subagent-depth parent))
+                              :max-subagent-depth (session-max-subagent-depth parent))))
+    (setf (session-messages child)
+          (append (session-messages child) (list (list :role "user" :content task))))
+    (let ((result (run-agent-turn child)))
+      (format nil "Subagent report (depth ~d, ~d request~:p, ~d tool call~:p):~%~a"
+              (session-subagent-depth child)
+              (getf (session-raw-stats child) :requests)
+              (getf (session-raw-stats child) :tool-calls)
+              (or (getf result :content) "The subagent stopped without a final report.")))))
 
 (defparameter *slash-commands* nil
   "Alist of (\"name\" . function), populated by DEFINE-SLASH-COMMAND.

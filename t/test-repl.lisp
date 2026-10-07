@@ -10,6 +10,10 @@
                   "disconnect-mcp-server" "list-mcp-servers"))
     (check (find-tool name) (format nil "prompt promises registered tool ~a" name))))
 
+(deftest subagent-and-project-explorer-tools-are-registered ()
+  (check (find-tool "delegate-task"))
+  (check (find-tool "explore-project")))
+
 (deftest dispatch-slash-command-not-a-command-passthrough ()
   (let ((session (make-session (make-instance 'ollama-provider))))
     (check-equal (dispatch-slash-command session "hello there") :not-a-command)))
@@ -647,6 +651,30 @@
                           (getf (second (session-messages session)) :content)))
            (check (search "Context compacted on request" (get-output-stream-string output))))
       (setf (symbol-function 'session-complete) complete))))
+
+(deftest run-subagent-isolated-and-reports-to-its-parent ()
+  (let* ((parent (make-session (make-instance 'ollama-provider)))
+         (original (symbol-function 'run-agent-turn))
+         (child nil))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'run-agent-turn)
+                 (lambda (session)
+                   (setf child session)
+                   (list :role "assistant" :content "Found the relevant source file.")))
+           (let ((report (run-subagent parent "Locate the entry point." "Be a focused explorer."
+                                       (list (find-tool "shell")))))
+             (check (search "Found the relevant source file" report))
+             (check-equal (session-subagent-depth child) 1)
+             (check-equal (session-max-tool-iterations child) 8)
+             (check-equal (mapcar #'tool-name (session-tools child)) '("shell"))
+             (check-equal (length (session-messages parent)) 1)))
+      (setf (symbol-function 'run-agent-turn) original))))
+
+(deftest run-subagent-respects-configured-depth-limit ()
+  (let ((parent (make-session (make-instance 'ollama-provider)
+                              :subagent-depth 1 :max-subagent-depth 1)))
+    (check (search "not started" (run-subagent parent "task" "system" nil)))))
 
 ;;; --- RUN-AGENT-TURN uses CHAT-STREAM and fires the UI hooks ---
 

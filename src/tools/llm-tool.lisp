@@ -70,3 +70,27 @@
       (error "ask-llm requires a non-empty string prompt"))
     (or (session-complete prompt :system system :model model)
         "The independent LLM returned no text.")))
+
+(define-tool delegate-task (args)
+    (:description "Delegate a narrowly scoped investigation or review to an isolated subagent. The worker reports only to you; it never answers the user directly. State the task and a role-specific system prompt. Use this for bounded work that benefits from a separate context, not for routine shell commands. Nested delegation is disabled by default through a depth limit."
+     :parameters (jobj "type" "object"
+                       "properties" (jobj "task" (jobj "type" "string")
+                                          "system_prompt" (jobj "type" "string"))
+                       "required" (list "task" "system_prompt")))
+  (unless *current-session* (error "delegate-task is available only while an agent session is running"))
+  (run-subagent *current-session* (jget args "task") (jget args "system_prompt")
+                (list (find-tool "shell") (find-tool "lisp-apropos"))))
+
+(define-tool explore-project (args)
+    (:description "Ask a bounded explorer subagent to map the current project before answering a repository-structure or code-location question. It uses the same inspected shell tool, avoids dependency/build metadata by default, and returns a concise evidence-backed report to you."
+     :parameters (jobj "type" "object"
+                       "properties" (jobj "goal" (jobj "type" "string"
+                                                        "description" "What the parent needs to learn about this project."))
+                       "required" (list "goal")))
+  (unless *current-session* (error "explore-project is available only while an agent session is running"))
+  (run-subagent
+   *current-session*
+   (format nil "Parent goal: ~a~%~%Parent evidence so far:~%~a"
+           (jget args "goal") (current-turn-review-evidence *current-session*))
+   "You are a repository explorer working for a host agent. Explore only enough to answer the parent goal. Use shell commands purposefully, always supplying reason and result_use. Start from the current directory; exclude .git, ocicl, node_modules, caches, and build outputs unless the goal explicitly requires them. Read README/build metadata and a few relevant source files rather than dumping trees. Finish with a concise report containing: project purpose, relevant directories/files, evidence read, and recommended next file(s) for the host. Do not address the end user and do not modify files."
+   (list (find-tool "shell")) :max-tool-iterations 8))

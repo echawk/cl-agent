@@ -68,6 +68,9 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
   :MAX-TOOL-ITERATIONS  integer, caps how many tool-call round trips a
                    single turn may take before the agent gives up and
                    hands control back to the user (default 25).
+  :MAX-SUBAGENT-DEPTH  non-negative integer limiting delegation nesting
+                   (default 1: the host may create workers, but workers may
+                   not create further workers).
   :UI             keyword naming a registered UI frontend, e.g. :cli
                    (default), :tui, :web, or one an extension
                    registered (see ui/frontend.lisp). Overridden by

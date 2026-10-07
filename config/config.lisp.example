@@ -17,5 +17,6 @@
  ;; :system-prompt "..." ; optional; overrides cl-agent::*default-system-prompt*
  ;; :orchestration-mode :plan-review ; optional; :direct, :plan, or :plan-review
  ;; :orchestration-tool-limit 8 ; optional; plan-mode tool schema budget
+ ;; :max-subagent-depth 1 ; optional; 0 disables workers; 1 allows host -> worker only
  :extensions :all             ; :all, or a list like ("word-count.lisp")
  :max-tool-iterations 25)
