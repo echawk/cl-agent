@@ -80,6 +80,12 @@
          (progn
            (connect-mcp-server "self" (list "sbcl" "--script" (namestring fixture)))
            (check (find-tool "mcp__self__shell"))
-           (let ((result (call-tool "mcp__self__shell" (jobj "command" "echo mcp-self-test-marker"))))
+           ;; Exercise the remote schema exactly as an MCP client sees it:
+           ;; shell's inspection rationale became required after this test was
+           ;; originally written, and the server rightly validates it.
+           (let ((result (call-tool "mcp__self__shell"
+                                    (jobj "command" "echo mcp-self-test-marker"
+                                          "reason" "Verify cl-agent's MCP server shell round trip."
+                                          "result_use" "Check that the server executed the command."))))
              (check (search "mcp-self-test-marker" result))))
       (disconnect-mcp-server "self"))))
