@@ -50,13 +50,14 @@
     (check-equal (normalize-assistant-common-lisp content)
                  (format nil "```lisp~%(defun broken (x)~%```"))))
 
-(deftest assistant-common-lisp-is-automatically-reviewed ()
+(deftest assistant-common-lisp-review-keeps-type-claims-advisory ()
   (let ((reviews
           (review-assistant-common-lisp
            (format nil "```lisp~%(in-package :cl-agent)~%(defun reply-fixture (x) x)~%```~%"))))
     (check-equal (length reviews) 1)
     (check (member "REPLY-FIXTURE" (getf (first reviews) :missing-type-claims)
-                   :test #'string=))))
+                   :test #'string=))
+    (check (not (lisp-review-needs-revision-p (first reviews))))))
 
 (deftest load-asdf-system-tool-is-registered-and-loads-known-system ()
   (check (find-tool "load-asdf-system"))

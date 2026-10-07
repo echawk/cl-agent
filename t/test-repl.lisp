@@ -357,7 +357,7 @@
       (setf (symbol-function 'chat-stream) orig))
     (check-equal seen session)))
 
-(deftest run-agent-turn-requests-one-revision-for-unreviewed-lisp ()
+(deftest run-agent-turn-does-not-revise-user-lisp-for-missing-type-claims ()
   (let* ((session (make-session (make-instance 'ollama-provider)))
          (calls 0)
          (orig (symbol-function 'chat-stream)))
@@ -367,17 +367,12 @@
                  (lambda (provider messages tools on-delta)
                    (declare (ignore provider tools on-delta))
                    (incf calls)
-                   (if (= calls 1)
-                       (list :role "assistant"
-                             :content (format nil "```lisp~%(in-package :cl-agent)~%(defun generated-untyped (x) x)~%```~%")
-                             :tool-calls nil :usage nil)
-                       (progn
-                         (check (search "Automatic review of generated Common Lisp"
-                                        (getf (first (last messages)) :content)))
-                         (list :role "assistant" :content "revised" :tool-calls nil :usage nil)))))
-           (check-equal (getf (run-agent-turn session) :content) "revised"))
+                   (list :role "assistant"
+                         :content (format nil "```lisp~%(in-package :cl-agent)~%(defun generated-untyped (x) x)~%```~%")
+                         :tool-calls nil :usage nil)))
+           (check (search "generated-untyped" (getf (run-agent-turn session) :content))))
       (setf (symbol-function 'chat-stream) orig))
-    (check-equal calls 2 "one automatic feedback round was requested")))
+    (check-equal calls 1 "missing type claims stay advisory for user code")))
 
 (deftest plan-review-accepts-a-verified-final-answer ()
   (let* ((session (make-session (make-instance 'ollama-provider) :orchestration-mode :plan-review))

@@ -292,15 +292,18 @@ the user and reviewed by Mallet."
         collect (review-lisp-source source)))
 
 (defun lisp-review-needs-revision-p (review)
-  "True when REVIEW offers any concrete opportunity to lower its score."
-  (or (plusp (getf review :score))
-      (getf review :compile-failure-p)
-      (getf review :missing-type-claims)))
+  "True only when a user-facing Lisp block fails to compile.
+
+Mallet findings and absent type claims remain useful review information, but
+they are not a reason to force a revision of ordinary code written for users.
+The eval-lisp and write-extension tools keep their own stricter gate because
+that code executes inside the agent itself."
+  (getf review :compile-failure-p))
 
 (defun format-assistant-lisp-reviews (reviews)
   "Render numbered REVIEWS as feedback for the generating model."
   (with-output-to-string (out)
-    (format out "Automatic review of generated Common Lisp found issues. Revise the code to lower the score and fix all compilation/type-claim failures while preserving the requested behavior. A justified advisory smell may remain if necessary.~%")
+    (format out "Automatic review found a Common Lisp compilation failure. Revise the code to compile while preserving the requested behavior. Mallet findings and type claims are advisory for user-facing code.~%")
     (loop for review in reviews
           for index from 1
           do (format out "~%Code block ~d:~%~a" index (format-lisp-review review)))))

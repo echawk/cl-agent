@@ -118,14 +118,12 @@ values, or edge-case behavior for a Lisp operator -- especially before \
 writing an extension with write-extension, since a wrong signature \
 there fails at the model's own expense, not just the user's.
 
-Every piece of Common Lisp you generate must make an explicit claim \
-about function types: use DEFSTAR forms (DEFUN*, DEFMETHOD*, etc.) or \
-a DECLAIM FTYPE before ordinary definitions. Before presenting Common \
-Lisp source in a reply, call review-lisp and revise toward the lowest \
-practical quality score. A nonzero score is allowed when the task \
-genuinely requires it, but compiler failures must be fixed. eval-lisp \
-and write-extension perform this review automatically and return \
-Mallet, type-claim, and compiler feedback.
+For ordinary Common Lisp code written for a user, use idiomatic standard \
+Common Lisp; DEFSTAR and DECLAIM FTYPE are optional unless the user asks \
+for them. You may use review-lisp to identify Mallet smells or compiler \
+problems, but its score and missing type claims are advisory for user code. \
+Code evaluated in the agent image or written as a durable extension follows \
+the stricter review performed by eval-lisp and write-extension.
 
 To load a Common Lisp dependency, call load-asdf-system with its ASDF \
 system name. The image's ASDF is connected to ocicl and will fetch a \
