@@ -45,6 +45,22 @@ Type /help for commands, Ctrl-D to exit.
 > what files are in this directory?
 ```
 
+### Session snapshots
+
+The REPL can save named local conversation snapshots under
+`~/.config/cl-agent/sessions/`:
+
+```text
+/session save before-refactor
+/session list
+/session restore before-refactor
+```
+
+`/session save` without a name generates a timestamped name. A snapshot restores
+the normalized conversation history, current model, compatible active tools,
+orchestration mode, and usage counters; it deliberately retains the current
+frontend, provider implementation, and credentials.
+
 ## Requirements
 
 - [SBCL](https://www.sbcl.org/) and [ocicl](https://github.com/ocicl/ocicl)

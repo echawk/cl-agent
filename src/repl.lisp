@@ -550,6 +550,202 @@ DETAIL records why a task stopped short of a verified completion."
   (set-task-record-status session status detail)
   message)
 
+;;; Explicit saved-session snapshots.  These are intentionally small, named
+;;; checkpoints for interactive use, not the event/replay store proposed in
+;;; INTROSPECTABLE-AGENT-ROADMAP.md.  They preserve normalized provider-facing
+;;; history as JSON, so they do not depend on readable printing of hash tables.
+(defvar *saved-session-sequence* 0)
+
+(defun saved-sessions-directory ()
+  "Directory containing explicit /SESSION SAVE snapshots."
+  (merge-pathnames "sessions/" *config-directory*))
+
+(defun normalize-saved-session-name (name)
+  "Validate and return NAME as a safe snapshot basename.
+
+Names are deliberately restricted to a small portable filename subset.  This
+keeps saved sessions under SAVED-SESSIONS-DIRECTORY instead of allowing a slash
+command to address arbitrary files."
+  (let ((trimmed (and (stringp name) (string-trim " " name))))
+    (unless (and trimmed (plusp (length trimmed)) (<= (length trimmed) 80)
+                 (every (lambda (character)
+                          (or (alphanumericp character)
+                              (member character '(#\- #\_ #\.))))
+                        trimmed)
+                 (not (member trimmed '("." "..") :test #'string=)))
+      (error "Session name must be 1-80 letters, digits, dots, hyphens, or underscores"))
+    trimmed))
+
+(defun saved-session-path (name)
+  "Return the JSON snapshot pathname for validated session NAME."
+  (merge-pathnames (format nil "~a.json" (normalize-saved-session-name name))
+                   (saved-sessions-directory)))
+
+(defun next-saved-session-name ()
+  "Generate a non-conflicting default snapshot name for /SESSION SAVE."
+  (let ((base (format nil "session-~d-~d" (get-universal-time)
+                      (incf *saved-session-sequence*))))
+    (loop for suffix from 1
+          for candidate = (if (= suffix 1) base (format nil "~a-~d" base suffix))
+          unless (probe-file (saved-session-path candidate)) return candidate)))
+
+(defun session-usage->json (usage)
+  (and usage
+       (jobj "prompt_tokens" (or (getf usage :prompt-tokens) :null)
+             "completion_tokens" (or (getf usage :completion-tokens) :null)
+             "total_tokens" (or (getf usage :total-tokens) :null))))
+
+(defun json->session-usage (usage)
+  (and (hash-table-p usage)
+       (list :prompt-tokens (or (jget usage "prompt_tokens") 0)
+             :completion-tokens (or (jget usage "completion_tokens") 0)
+             :total-tokens (or (jget usage "total_tokens") 0))))
+
+(defun session-tool-call->json (tool-call)
+  (jobj "id" (or (getf tool-call :id) :null)
+        "name" (or (getf tool-call :name) :null)
+        "arguments" (or (getf tool-call :arguments) (jobj))
+        "arguments_error" (or (getf tool-call :arguments-error) :null)))
+
+(defun json->session-tool-call (tool-call)
+  (unless (hash-table-p tool-call)
+    (error "Saved session contains a non-object tool call"))
+  (list :id (jget tool-call "id")
+        :name (jget tool-call "name")
+        :arguments (or (jget tool-call "arguments") (jobj))
+        :arguments-error (jget tool-call "arguments_error")))
+
+(defun session-message->json (message)
+  "Serialize one normalized provider message without losing tool arguments."
+  (jobj "role" (or (getf message :role) :null)
+        "content" (or (getf message :content) :null)
+        "tool_call_id" (or (getf message :tool-call-id) :null)
+        "tool_calls" (or (mapcar #'session-tool-call->json (getf message :tool-calls))
+                         :empty-array)
+        "usage" (or (session-usage->json (getf message :usage)) :null)))
+
+(defun json->session-message (message)
+  "Deserialize one saved normalized provider message."
+  (unless (and (hash-table-p message) (stringp (jget message "role")))
+    (error "Saved session contains a message without a string role"))
+  (let ((tool-calls (jget message "tool_calls"))
+        (usage (json->session-usage (jget message "usage"))))
+    (list :role (jget message "role")
+          :content (jget message "content")
+          :tool-call-id (jget message "tool_call_id")
+          :tool-calls (mapcar #'json->session-tool-call (or tool-calls nil))
+          :usage usage)))
+
+(defun session-snapshot-record (session name)
+  "Return the JSON-ready record persisted by SAVE-SESSION-SNAPSHOT."
+  (jobj "format_version" 1
+        "name" name
+        "saved_at" (get-universal-time)
+        "provider" (provider-display-name (session-provider session))
+        "model" (provider-model (session-provider session))
+        "orchestration_mode" (string-downcase (symbol-name (session-orchestration-mode session)))
+        "orchestration_tool_limit" (session-orchestration-tool-limit session)
+        "max_tool_iterations" (session-max-tool-iterations session)
+        "tool_names" (or (mapcar #'tool-name (session-tools session)) :empty-array)
+        "raw_stats" (jobj "requests" (getf (session-raw-stats session) :requests)
+                          "tool_calls" (getf (session-raw-stats session) :tool-calls)
+                          "prompt_tokens" (getf (session-raw-stats session) :prompt-tokens)
+                          "completion_tokens" (getf (session-raw-stats session) :completion-tokens)
+                          "total_tokens" (getf (session-raw-stats session) :total-tokens))
+        "messages" (or (mapcar #'session-message->json (session-messages session)) :empty-array)))
+
+(defun save-session-snapshot (session &optional name)
+  "Write SESSION to a named JSON snapshot and return its record.
+
+When NAME is NIL, generate a timestamped name.  Saving the same explicit name
+replaces that snapshot; this makes a named checkpoint convenient to refresh."
+  (let* ((snapshot-name (normalize-saved-session-name (or name (next-saved-session-name))))
+         (record (session-snapshot-record session snapshot-name))
+         (path (saved-session-path snapshot-name)))
+    (ensure-directories-exist path)
+    (with-open-file (out path :direction :output :if-exists :supersede
+                           :if-does-not-exist :create)
+      (write-string (json-encode record :pretty t) out))
+    record))
+
+(defun read-saved-session (name)
+  "Read saved session NAME, validating its minimal versioned JSON envelope."
+  (let ((path (saved-session-path name)))
+    (unless (probe-file path)
+      (error "No saved session named ~s" name))
+    (let ((record (with-open-file (in path :direction :input)
+                    (json-decode (uiop:slurp-stream-string in)))))
+      (unless (and (hash-table-p record) (= (or (jget record "format_version") 0) 1)
+                   (listp (jget record "messages")))
+        (error "Saved session ~s has an unsupported or invalid format" name))
+      record)))
+
+(defun list-saved-sessions ()
+  "Return summary records for every readable named saved-session snapshot."
+  (ensure-directories-exist (saved-sessions-directory))
+  (sort
+   (loop for path in (directory (merge-pathnames "*.json" (saved-sessions-directory)))
+         for name = (pathname-name path)
+         collect
+         (handler-case
+             (let ((record (read-saved-session name)))
+               (list :name (jget record "name")
+                     :saved-at (jget record "saved_at")
+                     :provider (jget record "provider")
+                     :model (jget record "model")
+                     :message-count (length (jget record "messages"))))
+           (error (condition)
+             (list :name name :error (princ-to-string condition)))))
+   #'string< :key (lambda (entry) (or (getf entry :name) ""))))
+
+(defun saved-session-mode (record)
+  (let ((mode (jget record "orchestration_mode")))
+    (unless (member mode '("direct" "plan" "plan-review") :test #'string=)
+      (error "Saved session has an invalid orchestration mode"))
+    (intern (string-upcase mode) :keyword)))
+
+(defun saved-session-positive-integer (record key fallback)
+  (let ((value (jget record key)))
+    (if (and (integerp value) (plusp value)) value fallback)))
+
+(defun restore-session-snapshot (session name)
+  "Replace SESSION's restorable conversation state from saved session NAME.
+
+The current frontend, provider implementation, and credentials remain live.
+The saved model is selected only when it is a string, and saved tool names are
+reconciled with tools available in the current image.  Returns two values: the
+record and tool names that are no longer available."
+  (let* ((record (read-saved-session name))
+         (messages (mapcar #'json->session-message (jget record "messages")))
+         (catalog (list-tools))
+         (saved-tool-names (remove-if-not #'stringp (jget record "tool_names")))
+         (available-tools (remove nil (mapcar (lambda (tool-name)
+                                                (find tool-name catalog :key #'tool-name :test #'string=))
+                                              saved-tool-names)))
+         (available-names (mapcar #'tool-name available-tools))
+         (missing-tools (remove-if (lambda (tool-name) (member tool-name available-names :test #'string=))
+                                   saved-tool-names))
+         (stats (jget record "raw_stats")))
+    (setf (session-messages session) messages
+          (session-tool-catalog session) catalog
+          (session-tools session) available-tools
+          (session-orchestration-mode session) (saved-session-mode record)
+          (session-orchestration-tool-limit session)
+          (saved-session-positive-integer record "orchestration_tool_limit" 8)
+          (session-max-tool-iterations session)
+          (saved-session-positive-integer record "max_tool_iterations" 1000)
+          (session-active-plan session) nil
+          (session-task-record session) nil
+          (session-raw-stats session)
+          (list :requests (or (and (hash-table-p stats) (jget stats "requests")) 0)
+                :tool-calls (or (and (hash-table-p stats) (jget stats "tool_calls")) 0)
+                :prompt-tokens (or (and (hash-table-p stats) (jget stats "prompt_tokens")) 0)
+                :completion-tokens (or (and (hash-table-p stats) (jget stats "completion_tokens")) 0)
+                :total-tokens (or (and (hash-table-p stats) (jget stats "total_tokens")) 0)))
+    (when (stringp (jget record "model"))
+      (setf (provider-model (session-provider session)) (jget record "model")))
+    (values record missing-tools)))
+
 (defun session-submit-user-text (session text)
   "The one place incoming user input (the initial task, or a line from
 SESSION-FRONTEND) turns into a \"user\" role message on SESSION. Threads
@@ -1401,6 +1597,66 @@ with a tool-free continuity summary. It is never invoked automatically."
             (ui-system (session-frontend session)
                        "Context was not compacted: the summarizer returned no usable continuity note.")))
     (error (c) (ui-error (session-frontend session) c)))
+  t)
+
+(defun split-session-command-argument (argument)
+  "Return two values: the /SESSION action and its remaining argument."
+  (let* ((trimmed (string-trim " " argument))
+         (separator (position-if (lambda (character)
+                                   (member character '(#\Space #\Tab)))
+                                 trimmed)))
+    (values (string-downcase (if separator (subseq trimmed 0 separator) trimmed))
+            (if separator (string-trim " " (subseq trimmed separator)) ""))))
+
+(defun format-saved-session-list (sessions)
+  "Render LIST-SAVED-SESSIONS summaries for every frontend."
+  (if sessions
+      (format nil "Saved sessions:~%~{~a~^~%~}"
+              (mapcar (lambda (entry)
+                        (if (getf entry :error)
+                            (format nil "  ~a — unreadable: ~a" (getf entry :name) (getf entry :error))
+                            (format nil "  ~a — ~d message~:p, ~a / ~a, saved ~a"
+                                    (getf entry :name) (getf entry :message-count)
+                                    (or (getf entry :provider) "unknown provider")
+                                    (or (getf entry :model) "unknown model")
+                                    (or (getf entry :saved-at) "unknown time"))))
+                      sessions))
+      "No saved sessions. Use /session save NAME to create one."))
+
+(define-slash-command session (session arg)
+  "Usage: /session save [NAME], /session restore NAME, or /session list.
+
+SAVE writes a named local JSON snapshot (or a generated timestamped name when
+NAME is omitted). RESTORE replaces the current conversation and compatible
+session settings; LIST displays every saved snapshot."
+  (multiple-value-bind (action name) (split-session-command-argument arg)
+    (handler-case
+        (cond
+          ((string= action "save")
+           (let ((record (save-session-snapshot session
+                                                (and (plusp (length name)) name))))
+             (ui-system (session-frontend session)
+                        (format nil "Saved session ~a (~d message~:p)."
+                                (jget record "name") (length (jget record "messages"))))))
+          ((string= action "restore")
+           (if (zerop (length name))
+               (ui-system (session-frontend session) "Usage: /session restore NAME")
+               (multiple-value-bind (record missing-tools)
+                   (restore-session-snapshot session name)
+                 (ui-stats-updated (session-frontend session) (session-stats-snapshot session))
+                 (ui-system (session-frontend session)
+                            (format nil "Restored session ~a (~d message~:p)~@[. Unavailable tools were skipped: ~{~a~^, ~}~]."
+                                    (jget record "name") (length (jget record "messages"))
+                                    missing-tools)))))
+          ((string= action "list")
+           (when (plusp (length name))
+             (error "Usage: /session list"))
+           (ui-system (session-frontend session) (format-saved-session-list (list-saved-sessions))))
+          (t
+           (ui-system (session-frontend session)
+                      "Usage: /session save [NAME], /session restore NAME, or /session list.")))
+      (error (condition)
+        (ui-error (session-frontend session) condition))))
   t)
 
 (define-slash-command mcp (session arg)

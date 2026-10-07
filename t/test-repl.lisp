@@ -101,6 +101,57 @@
     (dispatch-slash-command session "/mode plan-review")
     (check-equal (session-orchestration-mode session) :plan-review)))
 
+(deftest slash-session-saves-restores-and-lists-named-snapshots ()
+  (with-temp-config-dir ()
+    (let* ((session (make-session (make-instance 'ollama-provider :model "saved-model")
+                                  :tools (list (find-tool "shell"))))
+           (output (make-string-output-stream))
+           (arguments (jobj "path" "src/repl.lisp" "line" 1)))
+      (setf (session-orchestration-mode session) :plan-review
+            (session-max-tool-iterations session) 17
+            (session-raw-stats session)
+            (list :requests 3 :tool-calls 2 :prompt-tokens 11
+                  :completion-tokens 7 :total-tokens 18)
+            (session-messages session)
+            (list (list :role "system" :content "Saved system instructions.")
+                  (list :role "user" :content "Inspect the session feature.")
+                  (list :role "assistant" :content nil
+                        :tool-calls (list (list :id "call-1" :name "read-file"
+                                                :arguments arguments :arguments-error nil))
+                        :usage (list :prompt-tokens 4 :completion-tokens 2 :total-tokens 6))
+                  (list :role "tool" :tool-call-id "call-1" :content "source text")))
+      (let ((*standard-output* output))
+        (check (dispatch-slash-command session "/session save demo-session")))
+      (check (probe-file (saved-session-path "demo-session")))
+      (check (search "Saved session demo-session" (get-output-stream-string output)))
+      ;; Damage all restorable state, then prove RESTORE replaces it from the
+      ;; JSON snapshot rather than relying on in-memory aliases.
+      (setf (session-messages session) (list (list :role "system" :content "different"))
+            (session-tools session) nil
+            (session-orchestration-mode session) :direct
+            (session-max-tool-iterations session) 1
+            (session-raw-stats session) (list :requests 0 :tool-calls 0
+                                              :prompt-tokens 0 :completion-tokens 0 :total-tokens 0)
+            (provider-model (session-provider session)) "different-model")
+      (let ((*standard-output* output))
+        (check (dispatch-slash-command session "/session restore demo-session")))
+      (check-equal (session-orchestration-mode session) :plan-review)
+      (check-equal (session-max-tool-iterations session) 17)
+      (check-equal (provider-model (session-provider session)) "saved-model")
+      (check-equal (getf (session-raw-stats session) :requests) 3)
+      (check-equal (mapcar #'tool-name (session-tools session)) '("shell"))
+      (check-equal (length (session-messages session)) 4)
+      (let* ((call (first (getf (third (session-messages session)) :tool-calls)))
+             (restored-arguments (getf call :arguments)))
+        (check-equal (getf call :id) "call-1")
+        (check-equal (jget restored-arguments "path") "src/repl.lisp")
+        (check-equal (jget restored-arguments "line") 1))
+      (check (some (lambda (entry) (string= (getf entry :name) "demo-session"))
+                   (list-saved-sessions)))
+      (let ((*standard-output* output))
+        (check (dispatch-slash-command session "/session list")))
+      (check (search "demo-session" (get-output-stream-string output))))))
+
 ;;; --- stats tracking ---
 
 (deftest session-stats-snapshot-has-live-fields ()
