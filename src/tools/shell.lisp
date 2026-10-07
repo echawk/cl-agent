@@ -1,37 +1,96 @@
-;;;; tools/shell.lisp -- the one tool the task this project started
-;;;; from requires: run a shell command and show the model what
-;;;; happened. Modeled directly on class-ref/agent-repl.rhm's `shell`
-;;;; tool (same contract: one fresh shell per call, your permissions,
-;;;; no sandbox, no confirmation prompt -- same tradeoff the reference
-;;;; Python/Racket/Rhombus agents make, see class-ref/*).
-
+;;;; tools/shell.lisp -- bounded shell execution and managed background jobs.
 (in-package :cl-agent)
 
+(defclass shell-job ()
+  ((id :initarg :id :reader shell-job-id) (process :initarg :process :reader shell-job-process)
+   (output :initarg :output :reader shell-job-output) (error-output :initarg :error-output :reader shell-job-error-output)
+   (started-at :initarg :started-at :reader shell-job-started-at) (expected :initarg :expected :reader shell-job-expected)
+   (finished-p :initform nil :accessor shell-job-finished-p) (result :initform nil :accessor shell-job-result)))
+
+(defvar *shell-jobs* (make-hash-table :test 'equal))
+(defvar *shell-job-counter* 0)
+(defvar *shell-job-lock* (bordeaux-threads:make-lock "shell jobs"))
+;; TCP-style EWMA error model: agents' estimates improve through feedback.
+(defparameter *shell-duration-bias* 0d0)
+(defparameter *shell-duration-deviation* 1d0)
+(defparameter *shell-default-expected-seconds* 10)
+(defparameter *shell-maximum-seconds* 300)
+
+(defun shell-now () (/ (get-internal-real-time) internal-time-units-per-second))
+(defun shell-elapsed (job) (- (shell-now) (shell-job-started-at job)))
+(defun shell-learn (expected actual)
+  (let* ((error (- actual expected)) (old *shell-duration-bias*))
+    (setf *shell-duration-deviation* (+ (* .75d0 *shell-duration-deviation*) (* .25d0 (abs (- error old))))
+          *shell-duration-bias* (+ (* .875d0 old) (* .125d0 error)))))
+(defun shell-warning-delay (expected explicit)
+  (min *shell-maximum-seconds* (or explicit (ceiling (+ expected (max 1d0 *shell-duration-deviation*))))))
+
+(defun launch-shell-job (command expected)
+  (unless (and (stringp command) (plusp (length (string-trim " " command))))
+    (error "shell command must be a non-empty string"))
+  (unless (and (integerp expected) (plusp expected)) (error "expected_seconds must be a positive integer"))
+  (bordeaux-threads:with-lock-held (*shell-job-lock*)
+    (let* ((id (format nil "shell-~d" (incf *shell-job-counter*)))
+           ;; Pass an argv rather than asking UIOP for an additional wrapper
+           ;; shell. This makes the tracked process the command shell itself,
+           ;; so normal simple commands (including `sleep`) are reaped when a
+           ;; managed timeout terminates it.
+           (process (uiop:launch-program (list "/bin/sh" "-c" command) :output :stream :error-output :stream))
+           (job (make-instance 'shell-job :id id :process process :output (uiop:process-info-output process)
+                               :error-output (uiop:process-info-error-output process) :started-at (shell-now) :expected expected)))
+      (setf (gethash id *shell-jobs*) job) job)))
+(defun find-shell-job (id) (or (gethash id *shell-jobs*) (error "No managed shell job named ~s" id)))
+
+(defun finish-shell-job (job &key interrupted)
+  (unless (shell-job-finished-p job)
+    (let* ((code (uiop:wait-process (shell-job-process job)))
+           (out (or (ignore-errors (uiop:slurp-stream-string (shell-job-output job))) ""))
+           (err (or (ignore-errors (uiop:slurp-stream-string (shell-job-error-output job))) ""))
+           (elapsed (shell-elapsed job)))
+      (ignore-errors (close (shell-job-output job))) (ignore-errors (close (shell-job-error-output job)))
+      (shell-learn (shell-job-expected job) elapsed)
+      (setf (shell-job-finished-p job) t
+            (shell-job-result job)
+            (format nil "~:[~;INTERRUPTED: command exceeded its deadline and was terminated. Check for an infinite loop; use start-shell-job for intentional long work.~%~]Job: ~a~%Elapsed: ~,2fs (estimate ~ds; learned deviation ~,2fs)~%Exit code: ~d~%~a"
+                    interrupted (shell-job-id job) elapsed (shell-job-expected job) *shell-duration-deviation* code
+                    (concatenate 'string out err)))))
+  (shell-job-result job))
+(defun stop-shell-job (id &key urgent)
+  (let ((job (find-shell-job id)))
+    (if (shell-job-finished-p job) (shell-job-result job)
+        (progn (uiop:terminate-process (shell-job-process job) :urgent urgent) (finish-shell-job job :interrupted t)))))
+(defun shell-job-status (id)
+  (let ((job (find-shell-job id)))
+    (if (shell-job-finished-p job) (format nil "Job ~a finished.~%~a" id (shell-job-result job))
+        (format nil "Job ~a is running for ~,2fs (estimate ~ds)." id (shell-elapsed job) (shell-job-expected job)))))
+(defun wait-for-shell-job (job deadline)
+  (loop while (uiop:process-alive-p (shell-job-process job))
+        when (>= (shell-elapsed job) deadline) do (return (stop-shell-job (shell-job-id job)))
+        do (sleep .05))
+  (finish-shell-job job))
+
 (define-tool shell (args)
-    (:description "Run a shell command in the current directory. State why this command is needed and how its result will be used to advance the user's goal; those fields let the command inspector distinguish a justified intermediate discovery step from unfocused exploration. Each call starts a fresh shell; state (cwd, env vars) does not persist between calls, so chain related steps with && in one command."
-     :parameters (jobj "type" "object"
-                        "properties" (jobj "command" (jobj "type" "string"
-                                                            "description" "The shell command to run.")
-                                           "reason" (jobj "type" "string"
-                                                          "description" "Why this command is needed now, in relation to the user's goal and available evidence.")
-                                           "result_use" (jobj "type" "string"
-                                                              "description" "What you will do with this command's result to advance the user's goal."))
-                        "required" (list "command" "reason" "result_use")))
-  (let ((command (jget args "command")))
-    (unless command (error "shell tool called with no \"command\" argument"))
-    (unless (stringp command)
-      ;; A small/weak model will occasionally send a nested object or
-      ;; a number instead of a plain string here; without this check
-      ;; UIOP:RUN-PROGRAM's own ETYPECASE failure reaches the model as
-      ;; an opaque implementation-detail message ("fell through
-      ;; ETYPECASE... wanted one of (STRING LIST)") it has no way to
-      ;; act on -- this gives it something it can actually fix and retry.
-      (error "shell tool's \"command\" argument must be a plain string, e.g. \"ls -la\" -- got ~a: ~s"
-             (string-downcase (type-of command)) command))
-    (multiple-value-bind (output error-output exit-code)
-        (uiop:run-program command :force-shell t
-                                   :output :string
-                                   :error-output :string
-                                   :ignore-error-status t)
-      (let ((combined (concatenate 'string output error-output)))
-        (format nil "Exit code: ~d~%~a" exit-code combined)))))
+    (:description "Run a shell command with loop detection. Supply expected_seconds whenever possible. Commands are interrupted at one learned standard deviation past that estimate, or at explicit warning_after_seconds. An interruption is feedback to inspect for a loop; use managed background jobs for intentional long work."
+     :parameters (jobj "type" "object" "properties"
+                       (jobj "command" (jobj "type" "string") "reason" (jobj "type" "string") "result_use" (jobj "type" "string")
+                              "expected_seconds" (jobj "type" "integer" "minimum" 1) "warning_after_seconds" (jobj "type" "integer" "minimum" 1))
+                       "required" (list "command" "reason" "result_use")))
+  (let* ((expected (jget args "expected_seconds" *shell-default-expected-seconds*))
+         (job (launch-shell-job (jget args "command") expected)))
+    (wait-for-shell-job job (shell-warning-delay expected (jget args "warning_after_seconds")))))
+
+(define-tool start-shell-job (args)
+    (:description "Start a managed background shell job. Then use shell-job-status, collect-shell-job, or stop-shell-job instead of ps/kill."
+     :parameters (jobj "type" "object" "properties" (jobj "command" (jobj "type" "string") "expected_seconds" (jobj "type" "integer" "minimum" 1)) "required" (list "command" "expected_seconds")))
+  (let ((job (launch-shell-job (jget args "command") (jget args "expected_seconds"))))
+    (format nil "Started managed shell job ~a." (shell-job-id job))))
+(define-tool shell-job-status (args)
+    (:description "Check a managed background shell job by id." :parameters (jobj "type" "object" "properties" (jobj "id" (jobj "type" "string")) "required" (list "id")))
+  (shell-job-status (jget args "id")))
+(define-tool collect-shell-job (args)
+    (:description "Collect output from a finished managed job; report status without blocking if it still runs." :parameters (jobj "type" "object" "properties" (jobj "id" (jobj "type" "string")) "required" (list "id")))
+  (let ((job (find-shell-job (jget args "id"))))
+    (if (uiop:process-alive-p (shell-job-process job)) (shell-job-status (shell-job-id job)) (finish-shell-job job))))
+(define-tool stop-shell-job (args)
+    (:description "Terminate a managed background job by id instead of using ps/kill." :parameters (jobj "type" "object" "properties" (jobj "id" (jobj "type" "string") "urgent" (jobj "type" "boolean")) "required" (list "id")))
+  (stop-shell-job (jget args "id") :urgent (jget args "urgent" nil)))

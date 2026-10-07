@@ -67,6 +67,17 @@
   (let ((result (call-tool "shell" (jobj "command" "exit 7"))))
     (check (search "Exit code: 7" result))))
 
+(deftest shell-tool-interrupts-an-overdue-command ()
+  (let ((result (call-tool "shell" (jobj "command" "sleep 2" "reason" "timeout test" "result_use" "verify loop warning" "expected_seconds" 1 "warning_after_seconds" 1))))
+    (check (search "INTERRUPTED" result))))
+
+(deftest managed-shell-jobs-can-be-stopped-without-ps-or-kill ()
+  (let* ((started (call-tool "start-shell-job" (jobj "command" "sleep 5" "expected_seconds" 5)))
+         (id (subseq started (length "Started managed shell job ") (1- (length started))))
+         (result (call-tool "stop-shell-job" (jobj "id" id))))
+    (check (search "INTERRUPTED" result))
+    (check (find-tool "shell-job-status"))))
+
 (deftest shell-tool-rejects-non-string-command-clearly ()
   ;; A weak model occasionally sends a nested object instead of a
   ;; string; without an explicit check this reached the model as a
