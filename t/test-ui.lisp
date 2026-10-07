@@ -132,6 +132,19 @@ suite that only ever runs one of these at a time.")
       (check (search "MathJax-script" body))
       (check (search "typesetMath" body)))))
 
+(deftest web-frontend-uses-next-port-when-preferred-port-is-occupied ()
+  (let* ((port 14699)
+         (first (make-frontend :web :port port))
+         (second nil))
+    (unwind-protect
+         (progn
+           (ui-start first)
+           (setf second (make-frontend :web :port (web-frontend-port first)))
+           (ui-start second)
+           (check-equal (web-frontend-port second) (1+ (web-frontend-port first))))
+      (when second (ui-stop second))
+      (ui-stop first))))
+
 (deftest web-frontend-renders-assistant-markdown-in-status-payload ()
   (with-test-web-frontend (frontend)
     (ui-assistant-text frontend (format nil "# Heading~%~%A **formatted** reply."))

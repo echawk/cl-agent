@@ -325,11 +325,32 @@ reasonably live without any new transport.")
   (when *web-frontend* (trivial-channels:sendmsg (web-frontend-input-channel *web-frontend*) nil))
   "{}")
 
+(defun web-port-in-use-p (condition)
+  "True when CONDITION is the platform's report of an occupied listen port."
+  (let ((text (string-downcase (princ-to-string condition))))
+    (or (search "address already in use" text)
+        (search "address in use" text)
+        (search "address-in-use" text)
+        (search "eaddrinuse" text))))
+
+(defun start-web-acceptor (frontend)
+  "Start FRONTEND on its preferred port or one of the next 100 ports."
+  (loop for port from (web-frontend-port frontend) below (+ (web-frontend-port frontend) 100)
+        do (handler-case
+               (let ((acceptor (make-instance 'hunchentoot:easy-acceptor
+                                               :port port :address "127.0.0.1")))
+                 (hunchentoot:start acceptor)
+                 (setf (web-frontend-port frontend) port)
+                 (return acceptor))
+             (error (condition)
+               (unless (web-port-in-use-p condition)
+                 (error condition))))
+        finally (error "Could not find a free web UI port starting at ~d."
+                       (web-frontend-port frontend))))
+
 (defmethod ui-start ((frontend web-frontend))
-  (setf *web-frontend* frontend)
-  (setf (web-frontend-acceptor frontend)
-        (make-instance 'hunchentoot:easy-acceptor :port (web-frontend-port frontend) :address "127.0.0.1"))
-  (hunchentoot:start (web-frontend-acceptor frontend))
+  (setf (web-frontend-acceptor frontend) (start-web-acceptor frontend)
+        *web-frontend* frontend)
   (format t "~&cl-agent web UI: http://127.0.0.1:~d/~%" (web-frontend-port frontend)))
 
 (defmethod ui-stop ((frontend web-frontend))
