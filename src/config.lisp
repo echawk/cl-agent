@@ -71,6 +71,9 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
   :MAX-SUBAGENT-DEPTH  non-negative integer limiting delegation nesting
                    (default 1: the host may create workers, but workers may
                    not create further workers).
+  :SUBAGENT-MODEL-PROFILES  list of plists, each (:NAME STRING :MODEL STRING
+                   :DESCRIPTION STRING), defining user-owned defaults for
+                   routing subagent work to available provider model IDs.
   :UI             keyword naming a registered UI frontend, e.g. :cli
                    (default), :tui, :web, or one an extension
                    registered (see ui/frontend.lisp). Overridden by

@@ -194,6 +194,8 @@ the proposed final answer with an isolated reviewer.")
                    :accessor session-subagent-depth)
    (max-subagent-depth :initarg :max-subagent-depth :initform 1
                        :accessor session-max-subagent-depth)
+   (subagent-model-profiles :initarg :subagent-model-profiles :initform nil
+                            :accessor session-subagent-model-profiles)
    (start-time :initform (get-internal-real-time) :accessor session-start-time)
    (raw-stats :initform (list :requests 0 :tool-calls 0 :prompt-tokens 0 :completion-tokens 0 :total-tokens 0)
               :accessor session-raw-stats
@@ -227,7 +229,7 @@ command strings. Unknown or absent values safely select :DIRECT."
   (eq (session-orchestration-mode session) :plan-review))
 
 (defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit
-                              (subagent-depth 0) (max-subagent-depth 1))
+                              (subagent-depth 0) (max-subagent-depth 1) subagent-model-profiles)
   (make-instance 'agent-session
                   :provider provider
                   :frontend (or frontend (make-frontend :cli))
@@ -241,9 +243,27 @@ command strings. Unknown or absent values safely select :DIRECT."
                   :messages (list (list :role "system" :content (or system-prompt *default-system-prompt*)))
                   :max-tool-iterations (or max-tool-iterations 25)
                   :subagent-depth subagent-depth
+                  :subagent-model-profiles subagent-model-profiles
                   :max-subagent-depth (if (and (integerp max-subagent-depth)
                                                (not (minusp max-subagent-depth)))
                                           max-subagent-depth 1)))
+
+(defun find-subagent-model-profile (session name)
+  "Find a session-local subagent model profile by NAME."
+  (find name (session-subagent-model-profiles session) :key (lambda (profile) (getf profile :name))
+        :test #'string=))
+
+(defun set-subagent-model-profile (session name model description)
+  "Add or replace a model-routing profile for this SESSION only."
+  (unless (and (stringp name) (plusp (length (string-trim " " name)))
+               (stringp model) (plusp (length (string-trim " " model))))
+    (error "subagent model profile name and model must be non-empty strings"))
+  (let ((profile (list :name name :model model :description (or description ""))))
+    (setf (session-subagent-model-profiles session)
+          (append (remove name (session-subagent-model-profiles session)
+                          :key (lambda (entry) (getf entry :name)) :test #'string=)
+                  (list profile)))
+    profile))
 
 (defun string-list (value)
   "Keep only string entries from a JSON array-shaped VALUE."
@@ -344,25 +364,28 @@ JSON conservatively falls back to the original request."
                                  (stringp (jget task "task"))
                                  (stringp (jget task "system_prompt")))
                          collect (list :role (jget task "role") :task (jget task "task")
-                                       :system-prompt (jget task "system_prompt"))))))
+                                       :system-prompt (jget task "system_prompt")
+                                       :profile (jget task "profile"))))))
 
 (defun plan-subagent-delegation (session brief)
   "Ask whether the already-planned task benefits from bounded workers.
 
 This only returns recommendations; it never starts a subagent itself."
-  (declare (ignore session))
   (let ((response
           (session-complete
-           (format nil "User execution request:~%~a~%~%Plan:~%~{~a~%~}"
-                   (getf brief :rewritten-prompt) (getf brief :plan))
-           :system "You advise a host coding agent whether it should delegate bounded work. Reply with exactly one JSON object, no Markdown: {\"needed\":true|false,\"tasks\":[{\"role\":string,\"task\":string,\"system_prompt\":string}]}. Recommend workers only when isolated exploration, review, or research materially improves this task; otherwise use needed=false and tasks=[]. At most 3 tasks. Each task must be independently scoped, report findings to the host, and never address the user. This is planning only: do not perform or start work.")))
+           (format nil "User execution request:~%~a~%~%Plan:~%~{~a~%~}~%Available model profiles:~%~{~a~%~}"
+                   (getf brief :rewritten-prompt) (getf brief :plan)
+                   (mapcar (lambda (p) (format nil "~a — ~a" (getf p :name) (getf p :description)))
+                           (session-subagent-model-profiles session)))
+           :system "You advise a host coding agent whether it should delegate bounded work. Reply with exactly one JSON object, no Markdown: {\"needed\":true|false,\"tasks\":[{\"role\":string,\"task\":string,\"system_prompt\":string,\"profile\":string|null}]}. Recommend workers only when isolated exploration, review, or research materially improves this task; otherwise use needed=false and tasks=[]. At most 3 tasks. Each task must be independently scoped, report findings to the host, and never address the user. Use only a listed profile name or null. This is planning only: do not perform or start work.")))
     (parse-subagent-delegation-brief response)))
 
 (defun format-subagent-delegation-brief (delegation)
   (when (getf delegation :needed-p)
     (format nil "[delegation plan] Suggested ~d worker(s) (not started):~%~:{  - ~a: ~a~%~}"
             (length (getf delegation :tasks))
-            (mapcar (lambda (task) (list (getf task :role) (getf task :task)))
+            (mapcar (lambda (task) (list (getf task :role)
+                                          (format nil "~a~@[ (profile: ~a)~]" (getf task :task) (getf task :profile))))
                     (getf delegation :tasks)))))
 
 (defun plan-user-request (session text)
@@ -1008,7 +1031,7 @@ during this turn can call SESSION-COMPLETE."
 (defmethod ui-tool-finished ((frontend silent-subagent-frontend) tool-name arguments result)
   (declare (ignore frontend tool-name arguments result)) (values))
 
-(defun run-subagent (parent task system tools &key (max-tool-iterations 8))
+(defun run-subagent (parent task system tools &key (max-tool-iterations 8) profile)
   "Run one bounded worker and return its final report to PARENT.
 
 Workers have isolated histories and a silent frontend. Their only externally
@@ -1018,18 +1041,22 @@ its configured depth limit."
     (return-from run-subagent
       (format nil "Subagent was not started: nesting depth ~d has reached the configured limit."
               (session-max-subagent-depth parent))))
-  (let* ((child (make-session (provider-for-model (session-provider parent)
-                                                (provider-model (session-provider parent)))
+  (let* ((selected-profile (and profile (find-subagent-model-profile parent profile)))
+         (model (or (and selected-profile (getf selected-profile :model))
+                    (provider-model (session-provider parent))))
+         (child (make-session (provider-for-model (session-provider parent) model)
                               :frontend (make-instance 'silent-subagent-frontend)
                               :system-prompt system :tools tools
                               :max-tool-iterations max-tool-iterations
                               :subagent-depth (1+ (session-subagent-depth parent))
+                              :subagent-model-profiles (session-subagent-model-profiles parent)
                               :max-subagent-depth (session-max-subagent-depth parent))))
     (setf (session-messages child)
           (append (session-messages child) (list (list :role "user" :content task))))
     (let ((result (run-agent-turn child)))
-      (format nil "Subagent report (depth ~d, ~d request~:p, ~d tool call~:p):~%~a"
+      (format nil "Subagent report (depth ~d, model ~a~@[ via profile ~a~], ~d request~:p, ~d tool call~:p):~%~a"
               (session-subagent-depth child)
+              model (and selected-profile (getf selected-profile :name))
               (getf (session-raw-stats child) :requests)
               (getf (session-raw-stats child) :tool-calls)
               (or (getf result :content) "The subagent stopped without a final report.")))))

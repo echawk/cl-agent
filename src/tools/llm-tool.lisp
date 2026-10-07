@@ -75,11 +75,25 @@
     (:description "Delegate a narrowly scoped investigation or review to an isolated subagent. The worker reports only to you; it never answers the user directly. State the task and a role-specific system prompt. Use this for bounded work that benefits from a separate context, not for routine shell commands. Nested delegation is disabled by default through a depth limit."
      :parameters (jobj "type" "object"
                        "properties" (jobj "task" (jobj "type" "string")
-                                          "system_prompt" (jobj "type" "string"))
+                                          "system_prompt" (jobj "type" "string")
+                                          "profile" (jobj "type" "string" "description" "Optional named session model profile for this worker."))
                        "required" (list "task" "system_prompt")))
   (unless *current-session* (error "delegate-task is available only while an agent session is running"))
   (run-subagent *current-session* (jget args "task") (jget args "system_prompt")
-                (list (find-tool "shell") (find-tool "lisp-apropos"))))
+                (list (find-tool "shell") (find-tool "lisp-apropos")) :profile (jget args "profile")))
+
+(define-tool set-subagent-model-profile (args)
+    (:description "Create or update a named model-routing profile for subagents in the current session. Use a profile name, an exact model identifier available from the current provider, and a short description of the work it suits. Profiles are session-local; users can make persistent defaults in config.lisp."
+     :parameters (jobj "type" "object"
+                       "properties" (jobj "name" (jobj "type" "string")
+                                          "model" (jobj "type" "string")
+                                          "description" (jobj "type" "string"))
+                       "required" (list "name" "model")))
+  (unless *current-session* (error "set-subagent-model-profile is available only while an agent session is running"))
+  (let ((profile (set-subagent-model-profile *current-session* (jget args "name")
+                                             (jget args "model") (jget args "description"))))
+    (format nil "Set subagent model profile ~a: ~a~@[ — ~a~]."
+            (getf profile :name) (getf profile :model) (getf profile :description))))
 
 (define-tool explore-project (args)
     (:description "Ask a bounded explorer subagent to map the current project before answering a repository-structure or code-location question. It uses the same inspected shell tool, avoids dependency/build metadata by default, and returns a concise evidence-backed report to you."

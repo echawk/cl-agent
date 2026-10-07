@@ -18,5 +18,6 @@
  ;; :orchestration-mode :plan-review ; optional; :direct, :plan, or :plan-review
  ;; :orchestration-tool-limit 8 ; optional; plan-mode tool schema budget
  ;; :max-subagent-depth 1 ; optional; 0 disables workers; 1 allows host -> worker only
+ ;; :subagent-model-profiles ((:name "fast-shell" :model "your-fast-model" :description "bounded shell exploration"))
  :extensions :all             ; :all, or a list like ("word-count.lisp")
  :max-tool-iterations 25)
