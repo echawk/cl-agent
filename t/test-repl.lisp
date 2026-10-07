@@ -525,6 +525,13 @@
     (check (getf brief :valid-p))
     (check-equal (getf brief :rewritten-prompt) "Inspect the project")))
 
+(deftest subagent-delegation-plan-is-structured-and-does-not-start-workers ()
+  (let ((brief (parse-subagent-delegation-brief
+                "{\"needed\":true,\"tasks\":[{\"role\":\"explorer\",\"task\":\"Map source files\",\"system_prompt\":\"Inspect bounded project files.\"}]}")))
+    (check (getf brief :needed-p))
+    (check-equal (getf (first (getf brief :tasks)) :role) "explorer")
+    (check (search "not started" (format-subagent-delegation-brief brief)))))
+
 (deftest plan-mode-curates-to-planned-tools-and-discovery ()
   (let* ((shell (find-tool "shell"))
          (discover (find-tool "discover-tools"))

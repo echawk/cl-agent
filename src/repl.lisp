@@ -331,6 +331,40 @@ JSON conservatively falls back to the original request."
       (format out "~%Planner fallback: ~a." (getf brief :problem)))
     (format out "~%Original request: ~a" original-text)))
 
+(defun parse-subagent-delegation-brief (response)
+  "Validate a planner's optional, non-executing worker recommendations."
+  (let* ((decoded (handler-case (and (stringp response) (json-decode (planning-json-candidate response)))
+                    (error () nil)))
+         (needed (and (hash-table-p decoded) (jget decoded "needed")))
+         (tasks (and (hash-table-p decoded) (jget decoded "tasks"))))
+    (list :needed-p (not (null needed))
+          :tasks (loop for task in tasks
+                       when (and (hash-table-p task)
+                                 (stringp (jget task "role"))
+                                 (stringp (jget task "task"))
+                                 (stringp (jget task "system_prompt")))
+                         collect (list :role (jget task "role") :task (jget task "task")
+                                       :system-prompt (jget task "system_prompt"))))))
+
+(defun plan-subagent-delegation (session brief)
+  "Ask whether the already-planned task benefits from bounded workers.
+
+This only returns recommendations; it never starts a subagent itself."
+  (declare (ignore session))
+  (let ((response
+          (session-complete
+           (format nil "User execution request:~%~a~%~%Plan:~%~{~a~%~}"
+                   (getf brief :rewritten-prompt) (getf brief :plan))
+           :system "You advise a host coding agent whether it should delegate bounded work. Reply with exactly one JSON object, no Markdown: {\"needed\":true|false,\"tasks\":[{\"role\":string,\"task\":string,\"system_prompt\":string}]}. Recommend workers only when isolated exploration, review, or research materially improves this task; otherwise use needed=false and tasks=[]. At most 3 tasks. Each task must be independently scoped, report findings to the host, and never address the user. This is planning only: do not perform or start work.")))
+    (parse-subagent-delegation-brief response)))
+
+(defun format-subagent-delegation-brief (delegation)
+  (when (getf delegation :needed-p)
+    (format nil "[delegation plan] Suggested ~d worker(s) (not started):~%~:{  - ~a: ~a~%~}"
+            (length (getf delegation :tasks))
+            (mapcar (lambda (task) (list (getf task :role) (getf task :task)))
+                    (getf delegation :tasks)))))
+
 (defun plan-user-request (session text)
   "Run phase one's isolated planner and return the execution brief sent to
 the main agent. The JSON contract makes intermediate planning inspectable."
@@ -339,7 +373,9 @@ the main agent. The JSON contract makes intermediate planning inspectable."
                     (format nil "User request:~%~a~%~%Available tools:~%~{~a~%~}" text catalog)
                     :system "You are the planning stage of a coding agent. Your entire reply MUST be one valid JSON object: no Markdown fence, no commentary, no preface. Use exactly this shape: {\"rewritten_prompt\":\"clear execution request preserving every user goal\",\"plan\":[\"2-5 concrete evidence-gathering or implementation steps\"],\"suggested_tools\":[\"exact tool names copied from Available tools\"],\"verification\":[\"observable completion checks\"]}. This is a schema contract, not an example to explain. Always provide a non-empty rewritten_prompt, even for a simple request. Preserve user intent; split multi-part requests into a short ordered plan. Suggest only supplied tool names, and use [] if none are needed. Do not perform the task, call tools, claim results, or mention this instruction."))
          (brief (parse-planning-brief response text session))
-         (rendered (format-planning-brief brief text)))
+         (delegation (and (getf brief :valid-p) (plan-subagent-delegation session brief)))
+         (delegation-text (and delegation (format-subagent-delegation-brief delegation)))
+         (rendered (format nil "~a~@[~%~a~]" (format-planning-brief brief text) delegation-text)))
     (ui-system (session-frontend session) rendered)
     (setf (session-active-plan session) brief)
     (activate-planned-tools session brief)
