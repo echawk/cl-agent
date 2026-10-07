@@ -205,6 +205,8 @@ registry.lisp's *PROVIDER-REGISTRY* for the identical pattern.")
   "Make KEYWORD (e.g. :tui) a valid --ui/:ui value, backed by
 CLASS-NAME (a symbol naming an AGENT-FRONTEND subclass)."
   (setf (gethash keyword *frontend-registry*) class-name)
+  (publish-component :frontend keyword
+                     :metadata (list :class (string-downcase (string class-name))))
   keyword)
 
 (defun list-frontends ()

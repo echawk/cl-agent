@@ -75,23 +75,31 @@ subprocess can't be started or the handshake fails."
       (let* ((client (cl-mcp.client:make-client :name "cl-agent" :command command))
              (remote-tools (progn (cl-mcp.client:connect client) (cl-mcp.client:list-tools client)))
              (tool-names
-               (mapcar
-                (lambda (rt)
-                  (let ((remote-name (getf rt :name))
-                        (wire-name (mcp-remote-tool-name name (getf rt :name))))
-                    (register-tool
-                     (make-instance 'tool
-                                     :name wire-name
-                                     :description (format nil "[MCP server ~a] ~a" name (or (getf rt :description) ""))
-                                     :parameters (jalist->hash (or (getf rt :input-schema) (list (cons "type" "object"))))
-                                     :handler (lambda (args)
-                                                (mcp-content-blocks->text
-                                                 (getf (cl-mcp.client:call-tool client remote-name (jhash->alist args))
-                                                       :content)))))
-                    wire-name))
-                remote-tools)))
+               (let ((*registration-origin* (list :mcp name))
+                     (*registration-owner* (format nil "mcp:~a" name)))
+                 (mapcar
+                  (lambda (rt)
+                    (let ((remote-name (getf rt :name))
+                          (wire-name (mcp-remote-tool-name name (getf rt :name))))
+                      (register-tool
+                       (make-instance 'tool
+                                      :name wire-name
+                                      :description (format nil "[MCP server ~a] ~a" name (or (getf rt :description) ""))
+                                      :parameters (jalist->hash (or (getf rt :input-schema) (list (cons "type" "object"))))
+                                      :metadata (list :remote-name remote-name :server name)
+                                      :handler (lambda (args)
+                                                 (mcp-content-blocks->text
+                                                  (getf (cl-mcp.client:call-tool client remote-name (jhash->alist args))
+                                                        :content)))))
+                      wire-name))
+                  remote-tools))))
         (setf (gethash name *mcp-connections*)
               (make-instance 'mcp-connection :name name :client client :tool-names tool-names))
+        (publish-component :mcp-connection name
+                           :owner (format nil "mcp:~a" name)
+                           :origin (list :mcp name)
+                           :provides tool-names
+                           :metadata (list :command command))
         (length tool-names))
     (error (c)
       (error 'mcp-error :server-name name :message (princ-to-string c)))))
@@ -103,6 +111,8 @@ connection to tear down, NIL if NAME wasn't connected."
   (let ((conn (gethash name *mcp-connections*)))
     (when conn
       (dolist (tool-name (mcp-connection-tool-names conn)) (unregister-tool tool-name))
+      (unpublish-component :mcp-connection name)
+      (retire-components-owned-by (format nil "mcp:~a" name))
       (ignore-errors (cl-mcp.client:disconnect (mcp-connection-client conn)))
       (remhash name *mcp-connections*)
       t)))

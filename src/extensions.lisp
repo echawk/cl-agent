@@ -171,7 +171,12 @@ agent just wrote and is about to try loading) is reported clearly
 without taking down the whole process."
   (run-hook :before-extension-load path)
   (handler-case
-      (progn (load path) (run-hook :after-extension-load path) t)
+      (let* ((resolved (or (probe-file path) path))
+             (*registration-origin* (list :extension (namestring resolved)))
+             (*registration-owner* (format nil "extension:~a" (file-namestring resolved))))
+        (load resolved)
+        (run-hook :after-extension-load resolved)
+        t)
     (error (c)
       (error 'extension-error :path path :original-condition c))))
 

@@ -61,6 +61,15 @@ the normalized conversation history, current model, compatible active tools,
 orchestration mode, and usage counters; it deliberately retains the current
 frontend, provider implementation, and credentials.
 
+### Component reflection
+
+`/components` lists the active tools, providers, frontends, hook points,
+commands, skills, and MCP connections from one common catalog. Use
+`/components tool` to filter by kind or `/components tool:read-file` to inspect
+one component's origin, owner, version, dependencies, and declared effects.
+The model can use the read-only `list-components` and `describe-component`
+tools for the same information.
+
 ## Requirements
 
 - [SBCL](https://www.sbcl.org/) and [ocicl](https://github.com/ocicl/ocicl)

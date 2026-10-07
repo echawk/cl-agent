@@ -16,6 +16,8 @@
   "Make KEYWORD (e.g. :ollama) a valid :PROVIDER value, backed by
 CLASS-NAME (a symbol naming an LLM-PROVIDER subclass)."
   (setf (gethash keyword *provider-registry*) class-name)
+  (publish-component :provider keyword
+                     :metadata (list :class (string-downcase (string class-name))))
   keyword)
 
 (defun list-providers ()

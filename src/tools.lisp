@@ -41,7 +41,13 @@ t/test-tools.lisp's regression test for it).")
             :documentation "A function of one argument -- a hash table
 of parsed call arguments, as returned by JSON-DECODE -- that performs
 the tool's effect and returns a STRING to show the model as the
-result. May signal any condition; CALL-TOOL catches it (see below)."))
+result. May signal any condition; CALL-TOOL catches it (see below).")
+   (effects :initarg :effects :reader tool-effects :initform nil
+            :documentation "Declared effects for future deterministic policy.")
+   (requires :initarg :requires :reader tool-requires :initform nil
+             :documentation "Dependencies or capabilities required by this tool.")
+   (owner :initarg :owner :reader tool-owner :initform nil)
+   (metadata :initarg :metadata :reader tool-metadata :initform nil))
   (:documentation "A capability exposed to the LLM. See DEFINE-TOOL for
 the usual way to create one; see REGISTER-TOOL to add an instance you
 built some other way (e.g. one whose handler needs to close over some
@@ -61,11 +67,19 @@ or tools/shell.lisp) makes a capability available to the model;
 registering a tool does NOT by itself make every provider send it on
 every request -- see SESSION-TOOLS in repl.lisp if you want to curate
 which tools are offered."
-  (setf (gethash (tool-name tool) *tools*) tool))
+  (setf (gethash (tool-name tool) *tools*) tool)
+  (publish-component :tool (tool-name tool)
+                     :owner (or (tool-owner tool) *registration-owner* "core")
+                     :effects (tool-effects tool) :requires (tool-requires tool)
+                     :metadata (append (list :description (tool-description tool))
+                                       (tool-metadata tool)))
+  tool)
 
 (defun unregister-tool (name)
   "Remove the tool named NAME (a string) from the registry, if present."
-  (remhash name *tools*))
+  (let ((removed (remhash name *tools*)))
+    (when removed (unpublish-component :tool name))
+    removed))
 
 (defun find-tool (name)
   "Look up a registered tool by NAME (a string). Returns NIL, not an
@@ -77,7 +91,7 @@ signalled instead."
   "Return all registered TOOL instances, in no particular order."
   (loop for tool being the hash-values of *tools* collect tool))
 
-(defmacro define-tool (name (args-var) (&key description parameters) &body body)
+(defmacro define-tool (name (args-var) (&key description parameters effects requires owner metadata) &body body)
   "Define and register a tool in one step. NAME is a symbol; its
 STRING-DOWNCASEd name is used as the wire name. Inside BODY, ARGS-VAR
 is bound to the hash table of parsed call arguments (use JGET to pull
@@ -102,6 +116,10 @@ Example:
                       :name ,wire-name
                       :description ,description
                       ,@(when parameters `(:parameters ,parameters))
+                      ,@(when effects `(:effects ,effects))
+                      ,@(when requires `(:requires ,requires))
+                      ,@(when owner `(:owner ,owner))
+                      ,@(when metadata `(:metadata ,metadata))
                       :handler (lambda (,args-var)
                                  (declare (ignorable ,args-var))
                                  (let ((.result. (progn ,@body)))

@@ -93,6 +93,10 @@ Functions run in registration order (oldest first) unless :append nil
 was passed to ADD-HOOK, in which case the function is pushed to the
 front instead.")
 
+(dolist (hook-point *hook-points*)
+  (publish-component :hook-point (car hook-point)
+                     :metadata (list :description (cdr hook-point))))
+
 (defun add-hook (hook-point name function &key (append t))
   "Register FUNCTION under NAME (any EQL-comparable designator, usually
 a symbol or keyword -- re-adding the same NAME replaces the previous
@@ -104,7 +108,13 @@ pass :APPEND NIL to run it first instead."
     (setf (gethash hook-point *hooks*)
           (if append
               (append without (list (cons name function)))
-              (cons (cons name function) without))))
+              (cons (cons name function) without)))
+    (publish-component :hook (format nil "~(~a~)/~(~a~)" hook-point name)
+                       :owner (or *registration-owner* "core")
+                       :requires (list (component-id :hook-point hook-point))
+                       :metadata (list :hook-point hook-point
+                                       :order (position name (mapcar #'car (gethash hook-point *hooks*))
+                                                        :test #'eql))))
   name)
 
 (defun remove-hook (hook-point name)
@@ -114,6 +124,7 @@ Returns T if something was removed, NIL if NAME was not registered."
     (if (assoc name existing :test #'eql)
         (progn (setf (gethash hook-point *hooks*)
                      (remove name existing :key #'car :test #'eql))
+               (unpublish-component :hook (format nil "~(~a~)/~(~a~)" hook-point name))
                t)
         nil)))
 

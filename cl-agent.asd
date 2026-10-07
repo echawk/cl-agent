@@ -40,6 +40,8 @@
     :components
     ((:file "package")
      (:file "conditions")
+     (:file "events")
+     (:file "components")
      (:file "hooks")
      (:file "json-util")
      (:file "http")
@@ -91,7 +93,8 @@
        (:file "llm-tool")
        (:file "clspec-tool")
        (:file "apropos-tool")
-       (:file "mcp-tool")))
+       (:file "mcp-tool")
+       (:file "components-tool")))
      (:file "repl")
      (:file "main")))))
 
@@ -120,6 +123,7 @@
    (:file "test-quality")
    (:file "test-clspec")
    (:file "test-apropos")
+   (:file "test-components")
    (:file "test-repl")
    (:file "test-mcp")
    (:file "test-ui"))

@@ -20,6 +20,8 @@
   (unless (find-package :cl-agent)
     (defpackage :cl-agent (:use :cl)))
   (dolist (source '("src/conditions.lisp"
+                    "src/events.lisp"
+                    "src/components.lisp"
                     "src/json-util.lisp"
                     "src/tools.lisp"
                     "src/tools/shell.lisp"

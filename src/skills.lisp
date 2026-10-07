@@ -19,7 +19,15 @@ The catalog is deliberately metadata-only until READ-SKILL asks cl-skills to
 re-open the selected, validated source. Discovery is read-only: merely listing
 Skills must work even where a config directory cannot be created."
   (setf *skill-catalog*
-        (cl-skills:skill-catalog-discover (skill-discovery-roots))))
+        (cl-skills:skill-catalog-discover (skill-discovery-roots)))
+  ;; Skills are metadata-only at this stage; publishing them does not read their
+  ;; instruction bodies or alter their normal on-demand loading behaviour.
+  (dolist (row (list-skills))
+    (destructuring-bind (name description path) row
+      (publish-component :skill name :owner "skills"
+                         :origin (list :skill path)
+                         :metadata (list :description description :path path))))
+  *skill-catalog*)
 
 (defun ensure-skill-catalog () (or *skill-catalog* (initialize-skills)))
 

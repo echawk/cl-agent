@@ -1448,9 +1448,13 @@ from BODY to end the REPL (used by /exit); any other value keeps it
 running. Use (ui-system (session-frontend SESSION-VAR) text) for
 output, not FORMAT T directly, so the command works under any
 frontend, not just the CLI."
-  `(setf *slash-commands*
-         (cons (cons ,(string-downcase (string name)) (lambda (,session-var ,arg-var) ,@body))
-               (remove ,(string-downcase (string name)) *slash-commands* :key #'car :test #'string=))))
+  `(progn
+     (setf *slash-commands*
+           (cons (cons ,(string-downcase (string name)) (lambda (,session-var ,arg-var) ,@body))
+                 (remove ,(string-downcase (string name)) *slash-commands* :key #'car :test #'string=)))
+     (publish-component :slash-command ,(string-downcase (string name))
+                        :owner (or *registration-owner* "core"))
+     ,(string-downcase (string name))))
 
 (define-slash-command help (session arg)
   (declare (ignore arg))
@@ -1582,6 +1586,30 @@ Plan mode makes a visible planning request; plan-review also verifies finals."
   (if (plusp (length (string-trim " " arg)))
       (ui-system (session-frontend session) "Usage: /doctor")
       (ui-system (session-frontend session) (format-doctor-report (run-doctor))))
+  t)
+
+(define-slash-command components (session arg)
+  "Usage: /components [KIND|ID].  With no argument lists all active
+components; a kind (such as tool or hook) filters the list; an ID shows its
+complete data-only descriptor."
+  (let ((query (string-trim " " arg)))
+    (cond
+      ((zerop (length query))
+       (ui-system (session-frontend session)
+                  (format nil "~{~a~^~%~}" (mapcar #'component-summary (list-components)))))
+      ((describe-component query)
+       (ui-system (session-frontend session)
+                  (with-output-to-string (out)
+                    (let ((*print-pretty* t))
+                      (pprint (component->plist (describe-component query)) out)))))
+      (t
+       (let ((kind (intern (string-upcase query) :keyword))
+             (components nil))
+         (setf components (list-components :kind kind))
+         (ui-system (session-frontend session)
+                    (if components
+                        (format nil "~{~a~^~%~}" (mapcar #'component-summary components))
+                        (format nil "No active component or component kind named ~s." query)))))))
   t)
 
 (define-slash-command context (session arg)
