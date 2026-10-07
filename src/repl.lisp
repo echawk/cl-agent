@@ -505,10 +505,16 @@ the main agent. The JSON contract makes intermediate planning inspectable."
 ;;; Phase 4: durable task records.  This is intentionally a journal before
 ;;; introducing workers: every later scheduler/approval mechanism needs these
 ;;; durable inputs and receipts first.
-(defvar *task-record-sequence* 0)
-
 (defun task-record-directory ()
   (merge-pathnames "tasks/" *config-directory*))
+
+(defun allocate-task-record-id ()
+  "Allocate a short timestamped task ID whose on-disk name is unoccupied."
+  (idsmall:identifier-generate
+   :namespace :cl-agent-task
+   :occupied-p (lambda (identifier)
+                 (probe-file (merge-pathnames (format nil "~a.json" identifier)
+                                              (task-record-directory))))))
 
 (defun persist-task-record (record)
   (write-string-atomically
@@ -520,7 +526,7 @@ the main agent. The JSON contract makes intermediate planning inspectable."
 (defun start-task-record (session original prepared execution)
   "Start a durable record with plan, state, tool receipts, and approval space."
   (let* ((plan (session-active-plan session))
-         (record (jobj "id" (format nil "task-~d-~d" (get-universal-time) (incf *task-record-sequence*))
+         (record (jobj "id" (allocate-task-record-id)
                        "created_at" (get-universal-time) "status" "executing"
                        "original_request" original "prepared_request" prepared
                        "execution_request" execution

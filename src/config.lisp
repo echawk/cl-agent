@@ -29,6 +29,12 @@ point somewhere else entirely.")
 (defparameter *config-file-name* "config.lisp"
   "Filename, relative to *CONFIG-DIRECTORY*, of the user's config plist.")
 
+(defparameter *user-config-grammar*
+  (sexp-config:make-source-grammar
+   :label "cl-agent config.lisp" :maximum-depth 32 :maximum-nodes 4096
+   :maximum-string-characters 262144 :block-comments-permitted-p t)
+  "Bounded inert-data grammar for the user configuration file.")
+
 (defun config-file-path ()
   (merge-pathnames *config-file-name* *config-directory*))
 
@@ -116,10 +122,8 @@ EVAL, and binds *READ-EVAL* to NIL while doing so -- config.lisp is
 meant to be inert data, even though extensions/*.lisp (deliberately)
 is not. If you want code to run at startup, write an extension."
   (when (probe-file path)
-    (with-open-file (in path :direction :input)
-      (let ((*read-eval* nil)
-            (*package* (find-package :cl-agent)))
-        (read in nil nil)))))
+    (sexp-config:read-source-file path *user-config-grammar*
+                                  :maximum-octets 1048576)))
 
 (defun config-value (config key &optional default)
   "GETF with a DEFAULT, for readability at call sites: (config-value
