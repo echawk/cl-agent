@@ -446,6 +446,42 @@ capacity percentage."
             total
             (getf stats :prompt-tokens) (getf stats :completion-tokens) (getf stats :requests))))
 
+(defun session-history-transcript (session)
+  "Render SESSION's full history for a user-requested compaction summary."
+  (with-output-to-string (out)
+    (dolist (message (session-messages session))
+      (format out "~a: ~a~%"
+              (string-upcase (or (getf message :role) "unknown"))
+              (or (getf message :content) ""))
+      (dolist (call (getf message :tool-calls))
+        (format out "ASSISTANT TOOL CALL: ~a ~a~%"
+                (getf call :name) (json-encode (getf call :arguments)))))))
+
+(defun compact-session-history (session)
+  "Replace prior conversation history with a model-written continuity summary.
+
+This function is intentionally called only by the /COMPACT slash command.
+It does not run as part of the agent loop and therefore cannot cause a model
+to compact its own context autonomously."
+  (let* ((before (approximate-token-count
+                  (loop for message in (session-messages session)
+                        sum (message-context-characters message))))
+         (summary (session-complete
+                   (format nil "Summarize this coding-agent conversation for a future continuation. Preserve the user's goals and constraints, decisions made, files and code changed, exact commands or tool evidence that matter, unresolved work, and the next useful step. Do not address the user, do not add speculation, and do not call tools. Write a concise factual continuity note in plain text.~%~%Conversation:~%~a"
+                           (session-history-transcript session))
+                   :system "You compact coding-agent conversation history. Return only a precise continuity summary.")))
+    (if (or (null summary) (zerop (length (string-trim " " summary))))
+        (values nil before before)
+        (let* ((initial-system (first (session-messages session)))
+               (compacted-message
+                 (list :role "system"
+                       :content (format nil "[User-requested context compaction]~%~a" summary))))
+          (setf (session-messages session) (list initial-system compacted-message))
+          (values t before
+                  (approximate-token-count
+                   (loop for message in (session-messages session)
+                         sum (message-context-characters message))))))))
+
 (defun session-note-request (session assistant-message)
   "Fold one CHAT-STREAM/CHAT round trip into SESSION's running stats:
 always counts the request; adds token counts only if ASSISTANT-MESSAGE
@@ -1050,6 +1086,21 @@ offered to the model. It is an estimate because providers use model-specific
 tokenizers and do not currently expose their context-window size here."
   (declare (ignore arg))
   (ui-system (session-frontend session) (session-context-report session))
+  t)
+
+(define-slash-command compact (session arg)
+  "Compact conversation history only when the user explicitly requests it.
+
+This preserves the initial system prompt and replaces the remaining history
+with a tool-free continuity summary. It is never invoked automatically."
+  (declare (ignore arg))
+  (handler-case
+      (multiple-value-bind (compacted-p before after) (compact-session-history session)
+        (ui-system (session-frontend session)
+                   (if compacted-p
+                       (format nil "Context compacted on request: conversation estimate ~d -> ~d tokens. Run /context to inspect the next request." before after)
+                       "Context was not compacted: the summarizer returned no usable continuity note.")))
+    (error (c) (ui-error (session-frontend session) c)))
   t)
 
 (define-slash-command mcp (session arg)

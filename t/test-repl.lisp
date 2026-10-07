@@ -624,6 +624,30 @@
       (check (search "tool schemas:" text))
       (check (search "not advertised" text)))))
 
+(deftest slash-compact-replaces-history-only-on-user-command ()
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (output (make-string-output-stream))
+         (complete (symbol-function 'session-complete))
+         (initial-system (first (session-messages session))))
+    (setf (session-messages session)
+          (append (session-messages session)
+                  (list (list :role "user" :content "Change the command inspector.")
+                        (list :role "assistant" :content "I will add context."))))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'session-complete)
+                 (lambda (&rest ignored)
+                   (declare (ignore ignored))
+                   "Goal: improve command inspection. Changed: add rationale context. Next: test it."))
+           (let ((*current-session* session) (*standard-output* output))
+             (dispatch-slash-command session "/compact"))
+           (check-equal (length (session-messages session)) 2)
+           (check-equal (first (session-messages session)) initial-system)
+           (check (search "User-requested context compaction"
+                          (getf (second (session-messages session)) :content)))
+           (check (search "Context compacted on request" (get-output-stream-string output))))
+      (setf (symbol-function 'session-complete) complete))))
+
 ;;; --- RUN-AGENT-TURN uses CHAT-STREAM and fires the UI hooks ---
 
 (defclass recording-frontend (agent-frontend)
