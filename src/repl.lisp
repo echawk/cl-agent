@@ -186,7 +186,7 @@ the proposed final answer with an isolated reviewer.")
    (active-plan :initform nil :accessor session-active-plan)
    (task-record :initform nil :accessor session-task-record
                 :documentation "Durable journal entry for the current task.")
-   (max-tool-iterations :initarg :max-tool-iterations :initform 25
+   (max-tool-iterations :initarg :max-tool-iterations :initform 1000
                          :accessor session-max-tool-iterations)
    (subagent-depth :initarg :subagent-depth :initform 0
                    :accessor session-subagent-depth)
@@ -226,9 +226,87 @@ command strings. Unknown or absent values safely select :DIRECT."
   "True only when final answers require phase-three verification."
   (eq (session-orchestration-mode session) :plan-review))
 
+(defun subagent-profile-name-string (name)
+  "Return NAME in the stable string form used for model-profile lookup."
+  (typecase name
+    (string name)
+    (symbol (string-downcase (symbol-name name)))
+    (t nil)))
+
+(defun normalize-subagent-model-profile (spec)
+  "Normalize one user-owned model profile SPEC.
+
+The long-standing plist form is accepted:
+  (:name DEEP-RESEARCH :model GLM-5.2 :description ...)
+
+For concise configuration, the first two elements may instead be a profile
+name and model:
+  (:deep-research GLM-5.2 :description ...)
+
+Additional plist keys are preserved.  :MAX-TOOL-ITERATIONS and
+:SYSTEM-PROMPT are understood by RUN-SUBAGENT, making profiles useful for
+more than merely choosing a model."
+  (unless (listp spec)
+    (error "Subagent model profile must be a list, got ~s" spec))
+  (let* ((long-form-p (eq (first spec) :name))
+         (name (if long-form-p (getf spec :name) (first spec)))
+         (model (if long-form-p (getf spec :model) (second spec)))
+         (tail (if long-form-p (cddr spec) (cddr spec)))
+         (name-string (subagent-profile-name-string name)))
+    (unless (and name-string (plusp (length (string-trim " " name-string)))
+                 (stringp model) (plusp (length (string-trim " " model))))
+      (error "Subagent model profile needs a non-empty name and model, got ~s" spec))
+    ;; Compact specs retain optional plist metadata after their model.  Long
+    ;; specs are rebuilt too, so callers always receive one canonical shape.
+    (let ((metadata (if long-form-p
+                        (loop for (key value) on spec by #'cddr
+                              unless (member key '(:name :model)) append (list key value))
+                        tail)))
+      (list* :name name-string :model model
+             :description (or (getf metadata :description) name-string)
+             metadata))))
+
+(defun normalize-subagent-model-profiles (profiles)
+  "Return PROFILES as validated canonical profile plists.
+
+Profile names are unique case-insensitively; a later entry replaces an
+earlier one.  Failing early here makes a typo in inert config data visible at
+startup rather than silently falling back to the host model."
+  (unless (or (null profiles) (listp profiles))
+    (error ":SUBAGENT-MODEL-PROFILES must be a list, got ~s" profiles))
+  (let ((normalized nil))
+    (dolist (spec profiles (nreverse normalized))
+      (let ((profile (normalize-subagent-model-profile spec)))
+        (setf normalized
+              (cons profile
+                    (remove (getf profile :name) normalized
+                            :key (lambda (entry) (getf entry :name))
+                            :test #'string-equal)))))))
+
+(defun subagent-profile-catalog (session)
+  "Render the configured routing choices for the host model's system prompt."
+  (when (session-subagent-model-profiles session)
+    (format nil "~:{  - ~a → ~a~@[ — ~a~]~%~}"
+            (mapcar (lambda (profile)
+                      (list (getf profile :name) (getf profile :model)
+                            (getf profile :description)))
+                    (session-subagent-model-profiles session)))))
+
+(defun subagent-profile-guidance (profiles)
+  "Return host-facing routing instructions for normalized PROFILES."
+  (when profiles
+    (format nil "~%~%Subagent model-routing profiles available in this session:~%~aUse these names in delegate-task or explore-project when a bounded worker would help. Choose based on the profile descriptions and the task; do not delegate routine one-step tool calls merely to change models. A configured profile named `tool` is the default for explore-project."
+            (format nil "~:{  - ~a → ~a~@[ — ~a~]~%~}"
+                    (mapcar (lambda (profile)
+                              (list (getf profile :name) (getf profile :model)
+                                    (getf profile :description)))
+                            profiles)))))
+
 (defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit
                               (subagent-depth 0) (max-subagent-depth 1) subagent-model-profiles)
-  (make-instance 'agent-session
+  (let* ((profiles (normalize-subagent-model-profiles subagent-model-profiles))
+         (base-prompt (or system-prompt *default-system-prompt*)))
+    (make-instance 'agent-session
                   :provider provider
                   :frontend (or frontend (make-frontend :cli))
                   :tools tools
@@ -238,28 +316,33 @@ command strings. Unknown or absent values safely select :DIRECT."
                                                      (<= 1 orchestration-tool-limit))
                                                 orchestration-tool-limit
                                                 8)
-                  :messages (list (list :role "system" :content (or system-prompt *default-system-prompt*)))
-                  :max-tool-iterations (or max-tool-iterations 25)
+                  :messages (list (list :role "system" :content
+                                        (concatenate 'string base-prompt
+                                                     (or (subagent-profile-guidance profiles) ""))))
+                  :max-tool-iterations (or max-tool-iterations 1000)
                   :subagent-depth subagent-depth
-                  :subagent-model-profiles subagent-model-profiles
+                  :subagent-model-profiles profiles
                   :max-subagent-depth (if (and (integerp max-subagent-depth)
                                                (not (minusp max-subagent-depth)))
-                                          max-subagent-depth 1)))
+                                          max-subagent-depth 1))))
 
 (defun find-subagent-model-profile (session name)
   "Find a session-local subagent model profile by NAME."
-  (find name (session-subagent-model-profiles session) :key (lambda (profile) (getf profile :name))
-        :test #'string=))
+  (let ((name-string (subagent-profile-name-string name)))
+    (and name-string
+         (find name-string (session-subagent-model-profiles session)
+               :key (lambda (profile) (getf profile :name)) :test #'string-equal))))
 
 (defun set-subagent-model-profile (session name model description)
   "Add or replace a model-routing profile for this SESSION only."
   (unless (and (stringp name) (plusp (length (string-trim " " name)))
                (stringp model) (plusp (length (string-trim " " model))))
     (error "subagent model profile name and model must be non-empty strings"))
-  (let ((profile (list :name name :model model :description (or description ""))))
+  (let ((profile (normalize-subagent-model-profile
+                  (list :name name :model model :description (or description "")))))
     (setf (session-subagent-model-profiles session)
-          (append (remove name (session-subagent-model-profiles session)
-                          :key (lambda (entry) (getf entry :name)) :test #'string=)
+          (append (remove (getf profile :name) (session-subagent-model-profiles session)
+                          :key (lambda (entry) (getf entry :name)) :test #'string-equal)
                   (list profile)))
     profile))
 
@@ -381,7 +464,8 @@ This only returns recommendations; it never starts a subagent itself."
           (session-complete
            (format nil "User execution request:~%~a~%~%Plan:~%~{~a~%~}~%Available model profiles:~%~{~a~%~}"
                    (getf brief :rewritten-prompt) (getf brief :plan)
-                   (mapcar (lambda (p) (format nil "~a — ~a" (getf p :name) (getf p :description)))
+                   (mapcar (lambda (p) (format nil "~a → ~a — ~a"
+                                                (getf p :name) (getf p :model) (getf p :description)))
                            (session-subagent-model-profiles session)))
            :system "You advise a host coding agent whether it should delegate bounded work. Reply with exactly one JSON object, no Markdown: {\"needed\":true|false,\"tasks\":[{\"role\":string,\"task\":string,\"system_prompt\":string,\"profile\":string|null}]}. Recommend workers only when isolated exploration, review, or research materially improves this task; otherwise use needed=false and tasks=[]. At most 3 tasks. Each task must be independently scoped, report findings to the host, and never address the user. Use only a listed profile name or null. This is planning only: do not perform or start work.")))
     (parse-subagent-delegation-brief response)))
@@ -673,7 +757,18 @@ is NIL) -- there is no provider to borrow outside of one."
           (string-upcase (string (getf review :decision))) (getf review :reason)
           (getf review :missing-verification)))
 
-(defun parse-tool-budget-review (response)
+(defparameter *planned-work-budget-extension-limit* 4
+  "Maximum planner-approved extensions for plan-mode and worker turns.
+
+Each approved extension may grant up to 1000 further tool rounds.  This keeps
+long-running, evidence-backed work possible without making an accidental tool
+loop literally unbounded.")
+
+(defun completion-oriented-budget-p (session)
+  "Whether SESSION's budget review should favor finishing scoped work."
+  (or (planning-mode-p session) (plusp (session-subagent-depth session))))
+
+(defun parse-tool-budget-review (response max-extra-rounds)
   "Validate the isolated tool-budget review. Invalid output conservatively
 declines an extension so a malformed reviewer cannot create open-ended work."
   (let* ((decoded (handler-case (and (stringp response) (json-decode response))
@@ -685,7 +780,7 @@ declines an extension so a malformed reviewer cannot create open-ended work."
              (member decision '("extend" "finish") :test #'string=)
              (stringp reason)
              (or (string= decision "finish")
-                 (and (integerp extra-rounds) (<= 1 extra-rounds 3))))
+                 (and (integerp extra-rounds) (<= 1 extra-rounds max-extra-rounds))))
         (list :decision (intern (string-upcase decision) :keyword)
               :reason reason
               :extra-rounds (if (string= decision "extend") extra-rounds 0))
@@ -693,13 +788,28 @@ declines an extension so a malformed reviewer cannot create open-ended work."
               :reason "The tool-budget reviewer returned unusable output; preserving a timely response."
               :extra-rounds 0))))
 
-(defun request-tool-budget-review (session iteration limit)
-  "Ask a tool-free reviewer whether a small, one-time extension benefits the user."
+(defun request-tool-budget-review (session iteration limit assistant-message tool-calls)
+  "Ask a tool-free planner whether the model's continuation request should run.
+
+The current assistant reply supplies its stated remaining work and the exact
+tool calls it wants next.  In plan mode and workers, the reviewer is biased
+toward completing concrete scoped work; direct sessions retain the smaller
+anti-loop allowance."
+  (let* ((completion-oriented-p (completion-oriented-budget-p session))
+         (max-extra-rounds (if completion-oriented-p 1000 3))
+         (requested-calls
+           (mapcar (lambda (call)
+                     (list :name (getf call :name) :arguments (getf call :arguments)))
+                   tool-calls)))
   (parse-tool-budget-review
    (session-complete
-    (format nil "The agent reached its tool-round limit (~d) at round ~d.~%~%Task evidence so far:~%~a"
-            limit iteration (current-turn-review-evidence session))
-    :system "You are a conservative tool-budget reviewer for an agent. Protect the user's time and attention: approve a small extension only when evidence shows concrete progress and a clear, near-term path to materially improve the answer. Do not approve exploratory, repetitive, or speculative work, and do not ask the user a question. If additional work is unlikely to finish promptly, require a timely final answer that states what is known and what remains. Reply with JSON only: {\"decision\": \"extend\"|\"finish\", \"reason\": string, \"extra_rounds\": integer}. For extend, extra_rounds must be 1, 2, or 3; it is a one-time bounded extension. For finish, use 0.")))
+    (format nil "The agent reached its tool-round limit (~d) at round ~d.~%~%The agent's continuation request:~%Remaining work: ~a~%Requested next tool calls: ~a~%~%Task evidence so far:~%~a"
+            limit iteration (or (getf assistant-message :content) "No prose supplied; infer scope from requested calls.")
+            (json-encode requested-calls) (current-turn-review-evidence session))
+    :system (if completion-oriented-p
+                "You are the completion planner for a scoped coding task. The agent has stated remaining work and exact next tool calls. Favor completing the user's task: approve a proportionate extension whenever the calls are concrete, non-repetitive, and plausibly advance the documented plan or produce needed verification. Reject only loops, speculation, or work disconnected from the request. Do not ask the user a question. Reply with JSON only: {\"decision\": \"extend\"|\"finish\", \"reason\": string, \"extra_rounds\": integer}. For extend, grant the number of rounds genuinely needed, from 1 through 1000; for finish use 0."
+                "You are a conservative tool-budget reviewer for an agent. Protect the user's time and attention: approve a small extension only when evidence shows concrete progress and a clear, near-term path to materially improve the answer. Do not approve exploratory, repetitive, or speculative work, and do not ask the user a question. If additional work is unlikely to finish promptly, require a timely final answer that states what is known and what remains. Reply with JSON only: {\"decision\": \"extend\"|\"finish\", \"reason\": string, \"extra_rounds\": integer}. For extend, extra_rounds must be 1, 2, or 3; for finish use 0."))
+   max-extra-rounds)))
 
 (defun tool-budget-skipped-results (tool-calls reason)
   "Produce protocol-valid synthetic tool results when the budget declines work.
@@ -903,7 +1013,7 @@ during this turn can call SESSION-COMPLETE."
         (review-tool-used-p nil)
         (completion-review-retries 0)
         (tool-iteration-limit (session-max-tool-iterations session))
-        (tool-budget-extension-used-p nil)
+        (tool-budget-extensions-used 0)
         (tool-budget-finalization-p nil))
     ;; A tool-using turn can make several model requests.  Keep one stable
     ;; activity indicator across the whole turn rather than flashing it off
@@ -1003,19 +1113,23 @@ during this turn can call SESSION-COMPLETE."
                                      (finish-agent-turn session assistant-message "blocked"
                                                         (getf review :reason))))))))
                          ((>= iteration tool-iteration-limit)
-                          (let ((review (if tool-budget-extension-used-p
+                          (let ((review (if (>= tool-budget-extensions-used
+                                                (if (completion-oriented-budget-p session)
+                                                    *planned-work-budget-extension-limit* 1))
                                             (list :decision :finish :extra-rounds 0
-                                                  :reason "The one-time tool-budget extension has already been used.")
-                                            (request-tool-budget-review session iteration tool-iteration-limit))))
+                                                  :reason "The configured tool-budget extension allowance has been used.")
+                                            (request-tool-budget-review session iteration tool-iteration-limit
+                                                                        assistant-message tool-calls))))
                             (if (eq (getf review :decision) :extend)
                                 (progn
-                                  (setf tool-budget-extension-used-p t)
-                                  ;; Include this proposed round, plus the bounded
-                                  ;; number of follow-up rounds the reviewer approved.
+                                  (incf tool-budget-extensions-used)
+                                  ;; Include this proposed round, plus the number
+                                  ;; of follow-up rounds the completion planner approved.
                                   (incf tool-iteration-limit (1+ (getf review :extra-rounds)))
                                   (ui-system frontend
-                                             (format nil "[tool budget] Extended through round ~d: ~a"
-                                                     tool-iteration-limit (getf review :reason)))
+                                             (format nil "[tool budget] Extension ~d approved through round ~d: ~a"
+                                                     tool-budget-extensions-used tool-iteration-limit
+                                                     (getf review :reason)))
                                   (dolist (tc tool-calls)
                                     (when (string= (getf tc :name) "review-lisp")
                                       (setf review-tool-used-p t))
@@ -1054,7 +1168,7 @@ during this turn can call SESSION-COMPLETE."
 (defmethod ui-tool-finished ((frontend silent-subagent-frontend) tool-name arguments result)
   (declare (ignore frontend tool-name arguments result)) (values))
 
-(defun run-subagent (parent task system tools &key (max-tool-iterations 8) profile)
+(defun run-subagent (parent task system tools &key (max-tool-iterations 1000) profile)
   "Run one bounded worker and return its final report to PARENT.
 
 Workers have isolated histories and a silent frontend. Their only externally
@@ -1064,25 +1178,48 @@ its configured depth limit."
     (return-from run-subagent
       (format nil "Subagent was not started: nesting depth ~d has reached the configured limit."
               (session-max-subagent-depth parent))))
-  (let* ((selected-profile (and profile (find-subagent-model-profile parent profile)))
-         (model (or (and selected-profile (getf selected-profile :model))
-                    (provider-model (session-provider parent))))
-         (child (make-session (provider-for-model (session-provider parent) model)
+  (let ((selected-profile (and profile (find-subagent-model-profile parent profile))))
+    (when (and profile (not selected-profile))
+      (return-from run-subagent
+        (format nil "Subagent was not started: unknown model profile ~s. Configured profiles: ~{~a~^, ~}."
+                profile (mapcar (lambda (entry) (getf entry :name))
+                                 (session-subagent-model-profiles parent)))))
+    (let* ((profile-limit (and selected-profile (getf selected-profile :max-tool-iterations)))
+           (model (or (and selected-profile (getf selected-profile :model))
+                      (provider-model (session-provider parent))))
+           (profile-system-prompt (and selected-profile (getf selected-profile :system-prompt)))
+           (child (make-session (provider-for-model (session-provider parent) model)
                               :frontend (make-instance 'silent-subagent-frontend)
-                              :system-prompt system :tools tools
-                              :max-tool-iterations max-tool-iterations
+                              :system-prompt (if (and (stringp profile-system-prompt)
+                                                      (plusp (length (string-trim " " profile-system-prompt))))
+                                                 (format nil "~a~%~%Profile guidance:~%~a"
+                                                         system profile-system-prompt)
+                                                 system)
+                              :tools tools
+                              :max-tool-iterations (if (and (integerp profile-limit)
+                                                            (plusp profile-limit))
+                                                       profile-limit max-tool-iterations)
                               :subagent-depth (1+ (session-subagent-depth parent))
                               :subagent-model-profiles (session-subagent-model-profiles parent)
                               :max-subagent-depth (session-max-subagent-depth parent))))
-    (setf (session-messages child)
-          (append (session-messages child) (list (list :role "user" :content task))))
-    (let ((result (run-agent-turn child)))
-      (format nil "Subagent report (depth ~d, model ~a~@[ via profile ~a~], ~d request~:p, ~d tool call~:p):~%~a"
-              (session-subagent-depth child)
-              model (and selected-profile (getf selected-profile :name))
-              (getf (session-raw-stats child) :requests)
-              (getf (session-raw-stats child) :tool-calls)
-              (or (getf result :content) "The subagent stopped without a final report.")))))
+      (setf (session-messages child)
+            (append (session-messages child) (list (list :role "user" :content task))))
+      (let ((result (run-agent-turn child)))
+        (format nil "Subagent report (depth ~d, model ~a~@[ via profile ~a~], ~d request~:p, ~d tool call~:p):~%~a"
+                (session-subagent-depth child)
+                model (and selected-profile (getf selected-profile :name))
+                (getf (session-raw-stats child) :requests)
+                (getf (session-raw-stats child) :tool-calls)
+                (or (getf result :content) "The subagent stopped without a final report."))))))
+
+(defun default-explorer-profile (session)
+  "Return the configured lightweight explorer profile, if the user supplied one.
+
+The compact (:TOOL MODEL) form is intentionally conventional rather than
+mandatory: callers can always pass an explicit profile, while ordinary project
+exploration gets the cheaper worker only when the user opted into it."
+  (or (find-subagent-model-profile session "tool")
+      (find-subagent-model-profile session "explore")))
 
 (defparameter *slash-commands* nil
   "Alist of (\"name\" . function), populated by DEFINE-SLASH-COMMAND.

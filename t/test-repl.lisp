@@ -752,10 +752,43 @@
                                        (list (find-tool "shell")))))
              (check (search "Found the relevant source file" report))
              (check-equal (session-subagent-depth child) 1)
-             (check-equal (session-max-tool-iterations child) 8)
+             (check-equal (session-max-tool-iterations child) 1000)
              (check-equal (mapcar #'tool-name (session-tools child)) '("shell"))
              (check-equal (length (session-messages parent)) 1)))
       (setf (symbol-function 'run-agent-turn) original))))
+
+(deftest compact-subagent-model-profiles-route-and-guide-workers ()
+  (let* ((parent (make-session
+                  (make-instance 'ollama-provider :model "host-model")
+                  :subagent-model-profiles
+                  '((:tool "fast-model" :description "quick inspection"
+                            :max-tool-iterations 3 :system-prompt "Be terse.")
+                    (:deep-research "glm-5.2" :description "hard analysis"))))
+         (original (symbol-function 'run-agent-turn))
+         (child nil))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'run-agent-turn)
+                 (lambda (session)
+                   (setf child session)
+                   (list :role "assistant" :content "worker report")))
+           (check (search "deep-research → glm-5.2"
+                          (getf (first (session-messages parent)) :content)))
+           (check (search "worker report"
+                          (run-subagent parent "inspect" "Inspect carefully." nil
+                                        :profile "tool")))
+           (check-equal (provider-model (session-provider child)) "fast-model")
+           (check-equal (session-max-tool-iterations child) 3)
+           (check (search "Profile guidance:" (getf (first (session-messages child)) :content)))
+           (check-equal (getf (find-subagent-model-profile parent :deep-research) :model)
+                        "glm-5.2"))
+      (setf (symbol-function 'run-agent-turn) original))))
+
+(deftest unknown-subagent-model-profile-does-not-fall-back-silently ()
+  (let ((parent (make-session (make-instance 'ollama-provider)
+                              :subagent-model-profiles '((:tool "fast-model")))))
+    (check (search "unknown model profile"
+                   (run-subagent parent "inspect" "Inspect." nil :profile "typo")))))
 
 (deftest run-subagent-respects-configured-depth-limit ()
   (let ((parent (make-session (make-instance 'ollama-provider)
@@ -850,3 +883,13 @@ round: the UI must not flicker between individual provider calls."
             (symbol-function 'session-complete) complete)
       (unregister-tool "test-tool-budget-probe"))
     (check-equal calls 2)))
+
+(deftest plan-budget-review-can-approve-a-large-completion-extension ()
+  (let ((review (parse-tool-budget-review
+                 "{\"decision\":\"extend\",\"reason\":\"Two concrete verification steps remain\",\"extra_rounds\":1000}"
+                 1000)))
+    (check-equal (getf review :decision) :extend)
+    (check-equal (getf review :extra-rounds) 1000))
+  (let ((session (make-session (make-instance 'ollama-provider)
+                               :orchestration-mode :plan)))
+    (check (completion-oriented-budget-p session))))

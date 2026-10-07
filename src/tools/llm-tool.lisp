@@ -72,7 +72,7 @@
         "The independent LLM returned no text.")))
 
 (define-tool delegate-task (args)
-    (:description "Delegate a narrowly scoped investigation or review to an isolated subagent. The worker reports only to you; it never answers the user directly. State the task and a role-specific system prompt. Use this for bounded work that benefits from a separate context, not for routine shell commands. Nested delegation is disabled by default through a depth limit."
+    (:description "Delegate a narrowly scoped investigation or review to an isolated subagent. The worker reports only to you; it never answers the user directly. State the task and a role-specific system prompt. When session model-routing profiles are configured, select the best named profile for the task; use no profile to keep the host model. Use this for bounded work that benefits from a separate context, not for routine shell commands. Nested delegation is disabled by default through a depth limit."
      :parameters (jobj "type" "object"
                        "properties" (jobj "task" (jobj "type" "string")
                                           "system_prompt" (jobj "type" "string")
@@ -107,10 +107,12 @@ instead of forcing every investigation through shell commands."
             (getf profile :name) (getf profile :model) (getf profile :description))))
 
 (define-tool explore-project (args)
-    (:description "Ask a bounded explorer subagent to map the current project before answering a repository-structure or code-location question. It uses the same inspected shell tool, avoids dependency/build metadata by default, and returns a concise evidence-backed report to you."
+    (:description "Ask a bounded explorer subagent to map the current project before answering a repository-structure or code-location question. It uses the same inspected shell tool, avoids dependency/build metadata by default, and returns a concise evidence-backed report to you. It defaults to configured `tool` (then `explore`) profile when present; provide profile to override that routing."
      :parameters (jobj "type" "object"
                        "properties" (jobj "goal" (jobj "type" "string"
-                                                        "description" "What the parent needs to learn about this project."))
+                                                        "description" "What the parent needs to learn about this project.")
+                                          "profile" (jobj "type" "string"
+                                                           "description" "Optional configured model-routing profile name."))
                        "required" (list "goal")))
   (unless *current-session* (error "explore-project is available only while an agent session is running"))
   (run-subagent
@@ -118,4 +120,8 @@ instead of forcing every investigation through shell commands."
    (format nil "Parent goal: ~a~%~%Parent evidence so far:~%~a"
            (jget args "goal") (current-turn-review-evidence *current-session*))
    "You are a repository explorer working for a host agent. Explore only enough to answer the parent goal. Use shell commands purposefully, always supplying reason and result_use. Start from the current directory; exclude .git, ocicl, node_modules, caches, and build outputs unless the goal explicitly requires them. Read README/build metadata and a few relevant source files rather than dumping trees. Finish with a concise report containing: project purpose, relevant directories/files, evidence read, and recommended next file(s) for the host. Do not address the end user and do not modify files."
-   (subagent-investigation-tools) :max-tool-iterations 8))
+   (subagent-investigation-tools)
+   :max-tool-iterations (session-max-tool-iterations *current-session*)
+   :profile (or (jget args "profile")
+                (let ((default (default-explorer-profile *current-session*)))
+                  (and default (getf default :name))))))

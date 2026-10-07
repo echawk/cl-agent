@@ -67,13 +67,23 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
                    see extensions.lisp.
   :MAX-TOOL-ITERATIONS  integer, caps how many tool-call round trips a
                    single turn may take before the agent gives up and
-                   hands control back to the user (default 25).
+                   hands control back to the user (default 1000).
   :MAX-SUBAGENT-DEPTH  non-negative integer limiting delegation nesting
                    (default 1: the host may create workers, but workers may
                    not create further workers).
-  :SUBAGENT-MODEL-PROFILES  list of plists, each (:NAME STRING :MODEL STRING
-                   :DESCRIPTION STRING), defining user-owned defaults for
-                   routing subagent work to available provider model IDs.
+  :SUBAGENT-MODEL-PROFILES  list of named routing profiles for bounded
+                   subagent work. Both of these inert-data forms work:
+                     ((:deep-research \"glm-5.2\" :DESCRIPTION \"architecture\"
+                                        :MAX-TOOL-ITERATIONS 16)
+                      (:tool \"small-fast-model\" :DESCRIPTION \"quick inspection\"))
+                     ((:NAME \"deep-research\" :MODEL \"glm-5.2\"
+                                                 :DESCRIPTION \"architecture\"))
+                   The host model sees each name, model, and description and
+                   selects a profile when it delegates. No profile means the
+                   worker retains the host model. A :TOOL profile is the
+                   default for EXPLORE-PROJECT. Optional :SYSTEM-PROMPT adds
+                   profile-specific worker guidance; optional positive
+                   :MAX-TOOL-ITERATIONS overrides that worker's tool budget.
   :UI             keyword naming a registered UI frontend, e.g. :cli
                    (default), :tui, :web, or one an extension
                    registered (see ui/frontend.lisp). Overridden by

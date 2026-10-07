@@ -104,6 +104,10 @@ to the normal loop. In plan mode only validated suggested tools and
 full session catalog and enables a small matching set for the next request.
 Set `:orchestration-tool-limit` (default `8`) to cap the number of schemas
 available in plan mode; discovery respects the remaining budget.
+This is a context-window safeguard, not a cap on work: tool-call execution
+rounds default to `1000` (`:max-tool-iterations`), including plan-mode work
+and unprofiled subagents. Set that key lower in config when a deployment needs
+a stricter cost or time bound.
 
 `/mode plan-review` adds a final, tool-free verification stage. It receives the
 task evidence and proposed answer, then accepts it, requests one bounded

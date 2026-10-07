@@ -18,6 +18,14 @@
  ;; :orchestration-mode :plan-review ; optional; :direct, :plan, or :plan-review
  ;; :orchestration-tool-limit 8 ; optional; plan-mode tool schema budget
  ;; :max-subagent-depth 1 ; optional; 0 disables workers; 1 allows host -> worker only
- ;; :subagent-model-profiles ((:name "fast-shell" :model "your-fast-model" :description "bounded shell exploration"))
+ ;; :subagent-model-profiles
+ ;; ((:tool "your-fast-model" :description "quick, bounded repository inspection" :max-tool-iterations 4)
+ ;;  (:deep-research "glm-5.2" :description "multi-file research, architecture, and difficult diagnosis" :max-tool-iterations 16)
+ ;;  (:review "your-careful-model" :description "independent code review"))
+ ;; Profile names are choices given to the host model when it delegates a
+ ;; bounded task. It selects the best fitting named profile; absent a profile,
+ ;; a worker uses the host model. `tool` is automatically used by
+ ;; explore-project, if configured. Long form remains supported:
+ ;; (:name "fast-shell" :model "your-fast-model" :description "...")
  :extensions :all             ; :all, or a list like ("word-count.lisp")
- :max-tool-iterations 25)
+ :max-tool-iterations 1000)
