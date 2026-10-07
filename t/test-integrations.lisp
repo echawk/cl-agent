@@ -1,0 +1,23 @@
+(in-package :cl-agent)
+
+(deftest sandbox-adapter-builds-a-restricted-workspace-policy ()
+  (let ((policy (make-agent-sandbox-policy :workspace-roots (list (uiop:getcwd)))))
+    (check (typep policy 'cl-exec-sandbox:sandbox-policy))
+    (check-equal (cl-exec-sandbox:sandbox-policy-network policy) :isolated)))
+
+(deftest optional-integrations-load-their-public-packages ()
+  (check (find-package :cl-exec-sandbox))
+  (check (find-package :daphne)))
+
+(deftest sandbox-and-dap-integrations-are-exposed-as-tools ()
+  (let ((sandbox (find-tool "sandbox-shell"))
+        (connect (find-tool "connect-dap-adapter"))
+        (list-adapters (find-tool "list-dap-adapters"))
+        (disconnect (find-tool "disconnect-dap-adapter")))
+    (check sandbox)
+    (check-equal (tool-effects sandbox) '(:process :write-workspace))
+    (check connect)
+    (check list-adapters)
+    (check disconnect)
+    (check-equal (call-tool "list-dap-adapters" (jobj))
+                 "No DAP adapters are connected.")))

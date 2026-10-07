@@ -21,6 +21,7 @@
   :version "0.1.0"
   :depends-on ("drakma" "shasht" "uiop" "mallet" "defstar"
                "cl-mcp" "cl-mcp/client" "bordeaux-threads"  ; src/mcp/*.lisp
+               "cl-exec-sandbox" "daphne"                      ; sandboxed processes; DAP client
                "cl-lsp" "cl-skills"                           ; agent LSP + Skills
                "clingon" "3bmd" "3bmd-ext-tables"           ; CLI parsing; Markdown web rendering
                "tuition"                                     ; TUI frontend, src/ui/tui.lisp
@@ -55,6 +56,8 @@
       :components
       ((:file "client")
        (:file "server")))
+     (:file "sandbox")
+     (:file "dap")
      (:module "providers"
       :serial t
       :components
@@ -87,10 +90,11 @@
        (:file "tui")
        (:file "web")))
      (:module "tools-builtin"
-      :pathname "tools"
-      :serial t
-      :components
+     :pathname "tools"
+     :serial t
+     :components
      ((:file "shell")
+       (:file "sandbox-tool")
        (:file "file-tool")
        (:file "lsp-tool")
        (:file "skills-tool")
@@ -101,7 +105,8 @@
        (:file "clspec-tool")
        (:file "apropos-tool")
        (:file "mcp-tool")
-       (:file "components-tool")))
+       (:file "components-tool")
+       (:file "dap-tool")))
      (:file "repl")
      (:file "main")))))
 
@@ -134,6 +139,7 @@
    (:file "test-components")
    (:file "test-repl")
    (:file "test-mcp")
+   (:file "test-integrations")
    (:file "test-ui"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))

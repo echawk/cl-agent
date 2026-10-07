@@ -70,13 +70,32 @@ one component's origin, owner, version, dependencies, and declared effects.
 The model can use the read-only `list-components` and `describe-component`
 tools for the same information.
 
+### Sandboxed execution and debugging
+
+Two Autolith-compatible libraries are included and pinned through OCICL:
+[`cl-exec-sandbox`](https://github.com/lambda-symbolics/cl-exec-sandbox) and
+[`daphne`](https://github.com/lambda-symbolics/daphne). The model-facing
+`sandbox-shell` tool executes one bounded command under a workspace-write
+policy: it has isolated network access, can write only the current workspace,
+and preserves agent/repository metadata. The established `shell` tool remains
+available for managed background jobs while execution policy work continues.
+
+`connect-dap-adapter`, `list-dap-adapters`, and `disconnect-dap-adapter` own
+the lifecycle of Debug Adapter Protocol servers through Daphne. Each live
+adapter is published in the component catalog as `dap-connection:NAME`, with
+its command and current session state visible through `/components`. The
+initial integration intentionally provides connection management rather than
+pretending to offer a complete breakpoint/stack-frame debugger interface; DAP
+request-level tools can build on the owned session next.
+
 ## Requirements
 
 - [SBCL](https://www.sbcl.org/) and [ocicl](https://github.com/ocicl/ocicl)
   (`./check-env.sh` checks for both). Dependencies -- `drakma` (HTTP),
   `shasht` (JSON), `clingon` (CLI parsing), `cl-mcp`/`cl-mcp/client`
   (MCP client+server), `tuition` (TUI), `hunchentoot` (web UI),
-  `bordeaux-threads`, `3bmd` (Markdown rendering) -- are pinned in the committed `ocicl.csv`; `make
+  `bordeaux-threads`, `3bmd` (Markdown rendering), `cl-exec-sandbox`
+  (policy-enforced command execution), and `daphne` (DAP client) -- are pinned in the committed `ocicl.csv`; `make
   install-deps` (or plain `ocicl install`) fetches them. One of
   `cl-mcp`'s own dependencies, `opsis/conditions`, isn't published
   anywhere ocicl/Quicklisp can fetch it from; `third-party/opsis-
