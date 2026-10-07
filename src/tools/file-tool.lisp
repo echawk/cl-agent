@@ -86,9 +86,7 @@ and end positions express insertion without a separate operation."
     (unless (and (stringp path) (plusp (length (string-trim " " path))))
       (error "write-file requires a non-empty string path"))
     (unless (stringp contents) (error "write-file contents must be a string"))
-    (ensure-directories-exist path)
-    (with-open-file (out path :direction :output :if-exists :supersede :if-does-not-exist :create)
-      (write-string contents out))
+    (write-string-atomically path contents)
     (format nil "Wrote ~d character~:p to ~a." (length contents) path)))
 
 (define-tool read-file-range (args)
@@ -133,10 +131,12 @@ and end positions express insertion without a separate operation."
       (let ((actual (subseq contents start end)))
         (when (and (not (eq expected :missing)) (not (string= expected actual)))
           (error "edit-file expected_text did not match the selected range; re-read it before editing"))
-        (with-open-file (out resolved :direction :output :if-exists :supersede)
-          (write-string contents out :end start)
-          (write-string replacement out)
-          (write-string contents out :start end))
+        (call-with-atomic-output-file
+         resolved
+         (lambda (out)
+           (write-string contents out :end start)
+           (write-string replacement out)
+           (write-string contents out :start end)))
         (format nil "Edited ~a at ~d:~d through ~d:~d; replaced ~d character~:p with ~d character~:p."
                 path (jget args "start_line") (jget args "start_column")
                 (jget args "end_line") (jget args "end_column")

@@ -110,9 +110,7 @@ to retrieve later; use WRITE-EXTENSION-FILE only for durable agent behavior."
     (error "Scratch filename must be a non-empty basename, not a path: ~s" filename))
   (ensure-config-directory)
   (let ((path (merge-pathnames filename (scratch-directory))))
-    (with-open-file (out path :direction :output :if-exists if-exists
-                          :if-does-not-exist :create)
-      (write-string contents out))
+    (write-string-atomically path contents :if-exists if-exists)
     path))
 
 (defun enabled-file-path ()
@@ -135,10 +133,11 @@ if that file doesn't exist yet (fresh install: load everything)."
 
 (defun write-enabled-config (config)
   (ensure-config-directory)
-  (with-open-file (out (enabled-file-path) :direction :output
-                        :if-exists :supersede :if-does-not-exist :create)
-    (let ((*print-pretty* t) (*package* (find-package :keyword)))
-      (prin1 config out)))
+  (call-with-atomic-output-file
+   (enabled-file-path)
+   (lambda (out)
+     (let ((*print-pretty* t) (*package* (find-package :keyword)))
+       (prin1 config out))))
   (values))
 
 (defun extension-enabled-p (filename)
@@ -205,6 +204,5 @@ model's convenience. Returns the pathname written."
   (ensure-config-directory)
   (let* ((name (if (search ".lisp" filename :from-end t) filename (concatenate 'string filename ".lisp")))
          (path (merge-pathnames name (extensions-directory))))
-    (with-open-file (out path :direction :output :if-exists if-exists :if-does-not-exist :create)
-      (write-string source out))
+    (write-string-atomically path source :if-exists if-exists)
     path))

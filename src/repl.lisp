@@ -503,11 +503,10 @@ the main agent. The JSON contract makes intermediate planning inspectable."
   (merge-pathnames "tasks/" *config-directory*))
 
 (defun persist-task-record (record)
-  (ensure-directories-exist (task-record-directory))
-  (with-open-file (out (merge-pathnames (format nil "~a.json" (jget record "id"))
-                                        (task-record-directory))
-                       :direction :output :if-exists :supersede :if-does-not-exist :create)
-    (write-string (json-encode record :pretty t) out))
+  (write-string-atomically
+   (merge-pathnames (format nil "~a.json" (jget record "id"))
+                    (task-record-directory))
+   (json-encode record :pretty t))
   record)
 
 (defun start-task-record (session original prepared execution)
@@ -662,10 +661,7 @@ replaces that snapshot; this makes a named checkpoint convenient to refresh."
   (let* ((snapshot-name (normalize-saved-session-name (or name (next-saved-session-name))))
          (record (session-snapshot-record session snapshot-name))
          (path (saved-session-path snapshot-name)))
-    (ensure-directories-exist path)
-    (with-open-file (out path :direction :output :if-exists :supersede
-                           :if-does-not-exist :create)
-      (write-string (json-encode record :pretty t) out))
+    (write-string-atomically path (json-encode record :pretty t))
     record))
 
 (defun read-saved-session (name)
