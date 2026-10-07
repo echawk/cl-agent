@@ -188,6 +188,10 @@ the proposed final answer with an isolated reviewer.")
                 :documentation "Durable journal entry for the current task.")
    (max-tool-iterations :initarg :max-tool-iterations :initform 1000
                          :accessor session-max-tool-iterations)
+   (context-compaction-threshold :initarg :context-compaction-threshold :initform 0.8
+                                 :accessor session-context-compaction-threshold
+                                 :documentation "Fraction of a provider's context window at which
+automatic compaction runs. Zero and one disable automatic compaction.")
    (subagent-depth :initarg :subagent-depth :initform 0
                    :accessor session-subagent-depth)
    (max-subagent-depth :initarg :max-subagent-depth :initform 1
@@ -303,7 +307,8 @@ startup rather than silently falling back to the host model."
                             profiles)))))
 
 (defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit
-                              (subagent-depth 0) (max-subagent-depth 1) subagent-model-profiles)
+                              (subagent-depth 0) (max-subagent-depth 1) subagent-model-profiles
+                              context-compaction-threshold)
   (let* ((profiles (normalize-subagent-model-profiles subagent-model-profiles))
          (base-prompt (or system-prompt *default-system-prompt*)))
     (make-instance 'agent-session
@@ -320,6 +325,9 @@ startup rather than silently falling back to the host model."
                                         (concatenate 'string base-prompt
                                                      (or (subagent-profile-guidance profiles) ""))))
                   :max-tool-iterations (or max-tool-iterations 1000)
+                  :context-compaction-threshold
+                  (let ((threshold (or context-compaction-threshold 0.8)))
+                    (if (and (numberp threshold) (<= 0 threshold 1)) threshold 0.8))
                   :subagent-depth subagent-depth
                   :subagent-model-profiles profiles
                   :max-subagent-depth (if (and (integerp max-subagent-depth)
@@ -802,9 +810,8 @@ provider has not returned an exact count."
   "Describe the approximate context that the next model request will carry.
 
 The report separates conversation history from advertised tool schemas, which
-are both sent to the model. A provider/model context-window size is not part
-of the current provider protocol, so this deliberately never invents a
-capacity percentage."
+are both sent to the model. When a provider advertises its capacity, include
+the estimated percentage so users can see automatic-compaction headroom."
   (let* ((messages (session-messages session))
          (message-characters (loop for message in messages sum (message-context-characters message)))
          (tool-characters (loop for tool in (session-tools session)
@@ -812,17 +819,22 @@ capacity percentage."
          (message-tokens (approximate-token-count message-characters))
          (tool-tokens (approximate-token-count tool-characters))
          (total (+ message-tokens tool-tokens))
+         (window (provider-context-window (session-provider session)))
          (stats (session-stats-snapshot session)))
-    (format nil "Context for the next model request (estimated)~%~%  conversation: ~6d tokens ~a  (~d message~:p)~%  tool schemas: ~6d tokens ~a  (~d tool~:p)~%                    ------~%  total:        ~6d tokens~%~%Context-window capacity: not advertised by the active provider/model, so no percentage is shown.~%Reported session usage: ~d prompt token~:p, ~d completion token~:p across ~d request~:p."
+    (format nil "Context for the next model request (estimated)~%~%  conversation: ~6d tokens ~a  (~d message~:p)~%  tool schemas: ~6d tokens ~a  (~d tool~:p)~%                    ------~%  total:        ~6d tokens~%~%~a~%Reported session usage: ~d prompt token~:p, ~d completion token~:p across ~d request~:p."
             message-tokens (context-bar message-tokens total) (length messages)
             tool-tokens (context-bar tool-tokens total) (length (session-tools session))
             total
+            (if window
+                (format nil "Context-window capacity: ~d tokens (~d% used)."
+                        window (floor (* 100 (/ total window))))
+                "Context-window capacity: not advertised by the active provider/model, so no percentage is shown.")
             (getf stats :prompt-tokens) (getf stats :completion-tokens) (getf stats :requests))))
 
-(defun session-history-transcript (session)
-  "Render SESSION's full history for a user-requested compaction summary."
+(defun render-messages-transcript (messages)
+  "Render message plists as text for an isolated continuity summarizer."
   (with-output-to-string (out)
-    (dolist (message (session-messages session))
+    (dolist (message messages)
       (format out "~a: ~a~%"
               (string-upcase (or (getf message :role) "unknown"))
               (or (getf message :content) ""))
@@ -830,30 +842,91 @@ capacity percentage."
         (format out "ASSISTANT TOOL CALL: ~a ~a~%"
                 (getf call :name) (json-encode (getf call :arguments)))))))
 
-(defun compact-session-history (session)
-  "Replace prior conversation history with a model-written continuity summary.
+(defun session-history-transcript (session)
+  "Render SESSION's full history for a user-requested compaction summary."
+  (render-messages-transcript (session-messages session)))
 
-This function is intentionally called only by the /COMPACT slash command.
-It does not run as part of the agent loop and therefore cannot cause a model
-to compact its own context autonomously."
-  (let* ((before (approximate-token-count
-                  (loop for message in (session-messages session)
-                        sum (message-context-characters message))))
-         (summary (session-complete
-                   (format nil "Summarize this coding-agent conversation for a future continuation. Preserve the user's goals and constraints, decisions made, files and code changed, exact commands or tool evidence that matter, unresolved work, and the next useful step. Do not address the user, do not add speculation, and do not call tools. Write a concise factual continuity note in plain text.~%~%Conversation:~%~a"
-                           (session-history-transcript session))
-                   :system "You compact coding-agent conversation history. Return only a precise continuity summary.")))
-    (if (or (null summary) (zerop (length (string-trim " " summary))))
+(defun compact-session-history (session &key (keep-recent 0))
+  "Summarize older history while retaining KEEP-RECENT trailing messages.
+
+The default retains the historical `/compact` behavior: all non-system
+conversation messages are summarized.  Automatic compaction supplies a
+positive KEEP-RECENT so fresh tool calls and results remain verbatim."
+  (unless (and (integerp keep-recent) (not (minusp keep-recent)))
+    (error "keep-recent must be a non-negative integer"))
+  (let* ((all-messages (session-messages session))
+         (initial-system (first all-messages))
+         (rest-messages (rest all-messages))
+         (recent-count (min keep-recent (length rest-messages)))
+         (older-messages (if (plusp recent-count)
+                             (subseq rest-messages 0 (- (length rest-messages) recent-count))
+                             rest-messages))
+         (recent-messages (if (plusp recent-count)
+                              (subseq rest-messages (- (length rest-messages) recent-count))
+                              nil))
+         (before (approximate-token-count
+                  (loop for message in all-messages sum (message-context-characters message)))))
+    (if (null older-messages)
         (values nil before before)
-        (let* ((initial-system (first (session-messages session)))
-               (compacted-message
-                 (list :role "system"
-                       :content (format nil "[User-requested context compaction]~%~a" summary))))
-          (setf (session-messages session) (list initial-system compacted-message))
-          (values t before
-                  (approximate-token-count
-                   (loop for message in (session-messages session)
-                         sum (message-context-characters message))))))))
+        (let ((summary
+                (session-complete
+                 (format nil "Summarize this coding-agent conversation for a future continuation. Preserve the user's goals and constraints, decisions made, files and code changed, exact commands or tool evidence that matter, unresolved work, and the next useful step. Do not address the user, do not add speculation, and do not call tools. Write a concise factual continuity note in plain text.~%~%Conversation:~%~a"
+                         (render-messages-transcript older-messages))
+                 :system "You compact coding-agent conversation history. Return only a precise continuity summary.")))
+          (if (or (null summary) (zerop (length (string-trim " " summary))))
+              (values nil before before)
+              (progn
+                (setf (session-messages session)
+                      (list* initial-system
+                             (list :role "system"
+                                   :content (format nil "[~a]~%~a"
+                                                    (if (zerop keep-recent)
+                                                        "User-requested context compaction"
+                                                        "Context compaction")
+                                                    summary))
+                             recent-messages))
+                (values t before
+                        (approximate-token-count
+                         (loop for message in (session-messages session)
+                               sum (message-context-characters message))))))))))
+
+(defun estimated-context-tokens (session)
+  "Estimate tokens sent in SESSION's next provider request."
+  (+ (approximate-token-count
+      (loop for message in (session-messages session) sum (message-context-characters message)))
+     (approximate-token-count
+      (loop for tool in (session-tools session)
+            sum (length (json-encode (tool-json-schema tool)))))))
+
+(defun count-recent-messages-for-window (session window)
+  "Choose a trailing verbatim slice targeting roughly one quarter of WINDOW."
+  (let ((target (floor (* window 1/4))) (accumulated 0) (count 0))
+    (loop for message in (reverse (session-messages session))
+          while (< accumulated target)
+          do (incf accumulated (approximate-token-count (message-context-characters message)))
+             (incf count))
+    count))
+
+(defun auto-compact-if-needed (session)
+  "Compact SESSION before a known provider window is exhausted; never signal."
+  (let ((threshold (session-context-compaction-threshold session)))
+    (when (and (numberp threshold) (plusp threshold) (< threshold 1))
+      (let ((window (provider-context-window (session-provider session))))
+        (when (and (integerp window) (plusp window)
+                   (> (estimated-context-tokens session) (floor (* window threshold))))
+          (handler-case
+              (multiple-value-bind (compacted-p before after)
+                  (compact-session-history
+                   session :keep-recent (max 6 (count-recent-messages-for-window session window)))
+                (when compacted-p
+                  (ui-system (session-frontend session)
+                             (format nil "[context] Auto-compacted: ~d -> ~d tokens (window ~d, threshold ~,2F)."
+                                     before after window threshold))
+                  t))
+            (error (condition)
+              (ui-system (session-frontend session)
+                         (format nil "[context] Auto-compaction attempted but failed: ~a" condition))
+              nil)))))))
 
 (defun session-note-request (session assistant-message)
   "Fold one CHAT-STREAM/CHAT round trip into SESSION's running stats:
@@ -1226,7 +1299,8 @@ during this turn can call SESSION-COMPLETE."
     (ui-thinking-started frontend)
     (unwind-protect
          (loop for iteration from 1
-          do (let* ((ctx (run-hook-chain :before-request
+          do (auto-compact-if-needed session)
+             (let* ((ctx (run-hook-chain :before-request
                                           (list :messages (session-messages session)
                                                 ;; A denied budget becomes a no-tool final-answer pass.
                                                 :tools (unless tool-budget-finalization-p

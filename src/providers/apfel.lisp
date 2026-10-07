@@ -53,6 +53,11 @@ started apfel) on the standard port; see PROVIDER-ENSURE-READY."))
 
 (defmethod provider-default-model ((provider apfel-provider)) "apple-foundationmodel")
 (defmethod provider-display-name ((provider apfel-provider)) "Apple Intelligence (apfel)")
+(defmethod provider-context-window ((provider apfel-provider))
+  (declare (ignore provider))
+  ;; apfel supports a larger window on newer macOS releases, but a fixed
+  ;; conservative capacity makes automatic compaction safe everywhere.
+  4096)
 ;; Deliberately no PROVIDER-API-KEY-ENV-VAR method: local, no key needed.
 
 (defparameter *apfel-start-timeout* 20

@@ -40,3 +40,9 @@ of BODY, so config/extensions tests never touch the user's real
     (ensure-config-directory)
     (check (probe-file (extensions-directory)))
     (check (probe-file (scratch-directory)))))
+
+(deftest context-compaction-threshold-config-default-and-override ()
+  (check-equal (config-value '(:provider :ollama) :context-compaction-threshold 0.8) 0.8)
+  (check-equal (config-value '(:context-compaction-threshold 0.5)
+                             :context-compaction-threshold 0.8)
+               0.5))

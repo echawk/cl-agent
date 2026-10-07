@@ -12,4 +12,12 @@
 (defmethod provider-display-name ((provider xai-provider)) "xAI")
 (defmethod provider-api-key-env-var ((provider xai-provider)) "XAI_API_KEY")
 
+(defmethod provider-context-window ((provider xai-provider))
+  (let ((model (provider-model provider)))
+    (cond
+      ((and (stringp model) (search "grok-4" model)) 256000)
+      ((and (stringp model) (search "grok-3" model)) 131072)
+      ((and (stringp model) (search "grok-2" model)) 131072)
+      (t nil))))
+
 (register-provider-class :xai 'xai-provider)

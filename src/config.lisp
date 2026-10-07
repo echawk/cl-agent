@@ -68,6 +68,11 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
   :MAX-TOOL-ITERATIONS  integer, caps how many tool-call round trips a
                    single turn may take before the agent gives up and
                    hands control back to the user (default 1000).
+  :CONTEXT-COMPACTION-THRESHOLD  number between 0.0 and 1.0; when the
+                   estimated context exceeds this fraction of a provider's
+                   advertised window, compact older history before the next
+                   request (default 0.8). Set 0 or 1.0 to disable automatic
+                   compaction.
   :MAX-SUBAGENT-DEPTH  non-negative integer limiting delegation nesting
                    (default 1: the host may create workers, but workers may
                    not create further workers).

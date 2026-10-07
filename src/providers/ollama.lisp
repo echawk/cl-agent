@@ -37,6 +37,26 @@ is .../v1 (see this file's DEFCLASS), so strip it to get .../api/tags,
         (subseq base 0 (- (length base) 3))
         base)))
 
+(defmethod provider-context-window ((provider ollama-provider))
+  "Return the running Ollama model's configured num_ctx, if available."
+  (handler-case
+      (multiple-value-bind (body status)
+          (drakma:http-request (concatenate 'string (ollama-api-root provider) "/api/show")
+                                :method :post :content-type "application/json"
+                                :content (json-encode (jobj "model" (provider-model provider)))
+                                :connection-timeout 3)
+        (when (= status 200)
+          (let ((parameters (jget (json-decode (if (stringp body) body
+                                                    (flexi-streams:octets-to-string body :external-format :utf-8)))
+                                  "parameters")))
+            (when (stringp parameters)
+              (let ((match (search "num_ctx " parameters)))
+                (when match
+                  (let* ((rest (subseq parameters (+ match (length "num_ctx "))))
+                         (end (or (position #\Newline rest) (length rest))))
+                    (parse-integer (subseq rest 0 end) :junk-allowed t))))))))
+    (error () nil)))
+
 (defun ollama-reachable-p (provider)
   "True if PROVIDER's Ollama server responds to a quick request."
   (handler-case

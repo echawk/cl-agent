@@ -140,7 +140,9 @@ message and a non-zero exit, not a Lisp backtrace."
                                         :orchestration-tool-limit (config-value config :orchestration-tool-limit)
                                         :max-tool-iterations (config-value config :max-tool-iterations)
                                         :max-subagent-depth (config-value config :max-subagent-depth 1)
-                                        :subagent-model-profiles (config-value config :subagent-model-profiles))
+                                        :subagent-model-profiles (config-value config :subagent-model-profiles)
+                                        :context-compaction-threshold
+                                        (config-value config :context-compaction-threshold 0.8))
                           :initial-task task))))
       (provider-not-found (c)
         (format *error-output* "~&~a~%" c) (uiop:quit 1))

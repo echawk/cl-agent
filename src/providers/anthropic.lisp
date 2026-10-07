@@ -42,6 +42,16 @@ request; override if 4096 is too small/large for your use."))
 (defmethod provider-display-name ((provider anthropic-provider)) "Anthropic")
 (defmethod provider-api-key-env-var ((provider anthropic-provider)) "ANTHROPIC_API_KEY")
 
+(defmethod provider-context-window ((provider anthropic-provider))
+  (let ((model (provider-model provider)))
+    (cond
+      ((and (stringp model) (search "claude-sonnet-4" model)) 200000)
+      ((and (stringp model) (search "claude-opus-4" model)) 200000)
+      ((and (stringp model) (search "claude-haiku" model)) 200000)
+      ((and (stringp model) (search "claude-3-5" model)) 200000)
+      ((and (stringp model) (search "claude-3" model)) 200000)
+      (t nil))))
+
 (defmethod provider-list-models ((provider anthropic-provider))
   (let ((headers (list (cons "x-api-key" (or (provider-api-key provider) ""))
                        (cons "anthropic-version" *anthropic-api-version*))))

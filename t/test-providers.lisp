@@ -174,3 +174,13 @@
     (check-equal (getf tc :id) "t2")
     (check-equal (jget (getf tc :arguments) "command") "pwd"
                  "Anthropic's \"input\" is already a decoded object, not a JSON-string-of-a-string")))
+
+(deftest provider-context-windows-are-advisory-and-model-specific ()
+  (check-equal (provider-context-window (make-instance 'llm-provider)) nil)
+  (check-equal (provider-context-window (make-provider :openai :model "gpt-4o-mini" :api-key "x")) 128000)
+  (check-equal (provider-context-window (make-provider :openai :model "gpt-4.1" :api-key "x")) 1047576)
+  (check-equal (provider-context-window (make-provider :openai :model "future-model" :api-key "x")) nil)
+  (check-equal (provider-context-window (make-provider :anthropic :api-key "x")) 200000)
+  (check-equal (provider-context-window (make-provider :xai :model "grok-4-fast" :api-key "x")) 256000)
+  (check-equal (provider-context-window (make-provider :reallms :api-key "x")) nil)
+  (check-equal (provider-context-window (make-instance 'apfel-provider)) 4096))

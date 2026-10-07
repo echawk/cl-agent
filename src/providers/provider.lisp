@@ -5,8 +5,8 @@
 ;;;; task this project started from explicitly warns against
 ;;;; hard-wiring the agent to one LLM vendor. Every provider --
 ;;;; REALLMS, OpenAI, xAI/Grok, Ollama, Anthropic, and whatever you add
-;;;; next -- implements exactly the same five generic functions below.
-;;;; repl.lisp, main.lisp, and every tool only ever call these five
+;;;; next -- implements the generic functions below.
+;;;; repl.lisp, main.lisp, and every tool only ever call these
 ;;;; functions; none of them know or care which concrete class they're
 ;;;; talking to. That is what makes `--provider ollama` vs `--provider
 ;;;; anthropic` a one-line config change instead of an if/else chain
@@ -154,3 +154,12 @@ LLM instance with a selected model without changing its main session.")
     (declare (ignore model))
     (error "~a cannot create a second request with a selected model."
            (provider-display-name provider))))
+
+(defgeneric provider-context-window (provider)
+  (:documentation
+   "Return the context-window size in tokens for PROVIDER's current model,
+or NIL if unknown.  The agent loop uses this advisory capacity to compact
+history before a request exceeds a known limit.")
+  (:method ((provider llm-provider))
+    (declare (ignore provider))
+    nil))
