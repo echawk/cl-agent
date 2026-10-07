@@ -162,7 +162,7 @@ extension that comes after it."
                 (remove filename as-list :test #'string=)))
       (write-enabled-config config))))
 
-(defun load-extension-file (path)
+(defun load-extension-file (path &key owner origin)
   "LOAD PATH into the running image, firing :BEFORE-EXTENSION-LOAD and
 :AFTER-EXTENSION-LOAD around it. Any error during compilation/loading
 is caught and re-signalled as EXTENSION-ERROR rather than propagating
@@ -172,8 +172,8 @@ without taking down the whole process."
   (run-hook :before-extension-load path)
   (handler-case
       (let* ((resolved (or (probe-file path) path))
-             (*registration-origin* (list :extension (namestring resolved)))
-             (*registration-owner* (format nil "extension:~a" (file-namestring resolved))))
+             (*registration-origin* (or origin (list :extension (namestring resolved))))
+             (*registration-owner* (or owner (format nil "extension:~a" (file-namestring resolved)))))
         (load resolved)
         (run-hook :after-extension-load resolved)
         t)

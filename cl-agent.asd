@@ -71,6 +71,12 @@
      (:file "apropos")
      (:file "quality")
      (:file "extensions")
+     (:module "mutation"
+      :serial t
+      :components
+      ((:file "protocol")
+       (:file "transaction")
+       (:file "journal")))
      (:file "doctor")
      (:module "ui"
       :serial t
@@ -119,6 +125,7 @@
    (:file "test-skills")
    (:file "test-lsp")
    (:file "test-extensions")
+   (:file "test-mutations")
    (:file "test-doctor")
    (:file "test-quality")
    (:file "test-clspec")

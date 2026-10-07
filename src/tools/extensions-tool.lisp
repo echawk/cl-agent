@@ -43,14 +43,6 @@
       (error (c)
         (format nil "Scratch artifact was not saved: ~a" c)))))
 
-(defun extension-source-integrates-p (source)
-  "Recognize the public integration forms that make a file an extension.
-A standalone DEFUN or test program is a scratch artifact, not an extension:
-loading it changes no agent capability and makes future starts carry junk."
-  (some (lambda (form) (search form source :test #'char-equal))
-        '("define-tool" "add-hook" "defmethod" "register-provider-class"
-          "register-frontend-class" "define-slash-command")))
-
 (define-tool eval-lisp (args)
     (:description "Evaluate a Common Lisp form in the running agent's own image and return its printed result. Before evaluation, the form is automatically reviewed with Mallet, checked for DEFSTAR/DECLAIM type claims on definitions, and compiled; compilation failures prevent evaluation while advisory smells are returned with the value so you can improve the code. Ephemeral: has full read/write access to the agent's own state but is not saved. The form is read with *package* bound to :cl-agent."
      :parameters (jobj "type" "object"
@@ -112,21 +104,21 @@ specifically what to fix, rather than a bare reader end-of-file error."
       ((not (extension-source-integrates-p source))
        "Not written: this source does not add a durable cl-agent integration. Use write-scratch-file for a program, experiment, test, or draft; reserve write-extension for a tool, hook, method, provider, frontend, or slash command.")
       (t
-       (let ((review (review-lisp-source source)))
-          (if (getf review :compile-failure-p)
-              (format nil "Not written because compilation failed. Fix the source and retry.~%~a"
-                      (format-lisp-review review))
-              (let* ((path (write-extension-file filename source))
-                     (outcome
-                       (if do-load
-                           (handler-case
-                               (progn
-                                 (load-extension-file path)
-                                 (when do-enable (set-extension-enabled bare t))
-                                 (format nil "Wrote and loaded ~a~:[ (not enabled for future sessions)~;, enabled for future sessions~]."
-                                         path do-enable))
-                             (extension-error (c)
-                               (format nil "Wrote ~a but it failed to load, so it was NOT enabled:~%~a~%Fix the error and retry."
-                                       path c)))
-                           (format nil "Wrote ~a (not loaded or enabled; pass load=true to activate it)." path))))
-                (format nil "~a~%~%~a" outcome (format-lisp-review review)))))))))
+       (handler-case
+           (let ((transaction (propose-extension filename source)))
+             (preflight-mutation transaction)
+             (if do-load
+                 (progn
+                   (install-mutation transaction)
+                   (commit-mutation transaction :enable-p do-enable)
+                   (format nil "Committed mutation ~a: staged, preflighted, installed, and published ~a~:[ (not enabled for future sessions)~;, enabled for future sessions~]."
+                           (mutation-id transaction) (mutation-target transaction) do-enable))
+                 ;; Compatibility mode: the user explicitly requested a saved
+                 ;; but inactive draft, so publish source only and retain its
+                 ;; proposal receipt for later inspection.
+                 (progn
+                   (write-extension-file bare source)
+                   (format nil "Wrote inactive extension draft ~a (mutation ~a; not loaded or enabled)."
+                           bare (mutation-id transaction)))))
+         (error (condition)
+           (format nil "Extension mutation was not committed: ~a" condition)))))))
