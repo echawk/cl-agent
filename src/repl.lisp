@@ -1577,6 +1577,13 @@ Plan mode makes a visible planning request; plan-review also verifies finals."
   (ui-system (session-frontend session) (format-stats (session-stats-snapshot session)))
   t)
 
+(define-slash-command doctor (session arg)
+  "Run local configuration diagnostics without contacting providers or starting services."
+  (if (plusp (length (string-trim " " arg)))
+      (ui-system (session-frontend session) "Usage: /doctor")
+      (ui-system (session-frontend session) (format-doctor-report (run-doctor))))
+  t)
+
 (define-slash-command context (session arg)
   "Show the estimated context load for the next model request.
 

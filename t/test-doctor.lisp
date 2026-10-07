@@ -1,0 +1,26 @@
+(in-package :cl-agent)
+
+(defun doctor-result-for (results id)
+  (find id results :key (lambda (result) (getf result :id)) :test #'string=))
+
+(deftest doctor-reports-missing-config-as-a-nonfatal-warning ()
+  (with-temp-config-dir ()
+    (let ((results (run-doctor)))
+      (check-equal (getf (doctor-result-for results "config") :status) :warning)
+      (check (doctor-healthy-p results)))))
+
+(deftest doctor-reports-invalid-config-without-signalling ()
+  (with-temp-config-dir ()
+    (ensure-config-directory)
+    (write-string-atomically (config-file-path) "(:provider #.(error \"must not run\"))")
+    (let ((results (run-doctor)))
+      (check-equal (getf (doctor-result-for results "config") :status) :failed)
+      (check (not (doctor-healthy-p results))))))
+
+(deftest doctor-reports-an-unknown-provider-without-instantiating-a-session ()
+  (with-temp-config-dir ()
+    (ensure-config-directory)
+    (write-string-atomically (config-file-path) "(:provider :definitely-not-a-provider)")
+    (let ((results (run-doctor)))
+      (check-equal (getf (doctor-result-for results "provider") :status) :failed)
+      (check (search "Unknown provider" (getf (doctor-result-for results "provider") :detail))))))

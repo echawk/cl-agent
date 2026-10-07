@@ -773,6 +773,14 @@
       (check (search "request" text))
       (check (search (provider-display-name (session-provider session)) text)))))
 
+(deftest slash-doctor-renders-local-diagnostic-report ()
+  (with-temp-config-dir ()
+    (let ((session (make-session (make-instance 'ollama-provider)))
+          (output (make-string-output-stream)))
+      (let ((*standard-output* output))
+        (check (dispatch-slash-command session "/doctor")))
+      (check (search "cl-agent doctor:" (get-output-stream-string output))))))
+
 (deftest slash-context-shows-next-request-context-diagram ()
   (let* ((session (make-session (make-instance 'ollama-provider)
                                 :tools (list (find-tool "shell"))))

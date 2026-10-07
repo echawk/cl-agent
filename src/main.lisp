@@ -79,7 +79,9 @@ could change between calls."
     (clingon:make-option :string :long-name "ui" :key :ui
                           :description "Frontend to run: cli (default), tui, web, or one an extension registered. See src/ui/frontend.lisp.")
     (clingon:make-option :flag :long-name "mcp-serve" :key :mcp-serve
-                          :description "Run as an MCP server over stdio instead of the chat REPL, exposing every registered tool to an external MCP client (see src/mcp/server.lisp)."))
+                          :description "Run as an MCP server over stdio instead of the chat REPL, exposing every registered tool to an external MCP client (see src/mcp/server.lisp).")
+    (clingon:make-option :flag :long-name "doctor" :key :doctor
+                          :description "Report local configuration and capability health without contacting providers or starting external services."))
    :handler #'cli-handler))
 
 (defun cli-handler (cmd)
@@ -91,10 +93,15 @@ key, unknown provider name): those are reported with a readable
 message and a non-zero exit, not a Lisp backtrace."
   (when (clingon:getopt cmd :config-dir)
     (setf *config-directory* (uiop:ensure-directory-pathname (clingon:getopt cmd :config-dir))))
-  (ensure-config-directory)
-  (let ((config (load-user-config))
-        (task (format nil "~{~a~^ ~}" (clingon:command-arguments cmd))))
-    (handler-case
+  (if (clingon:getopt cmd :doctor)
+      (let ((results (run-doctor)))
+        (format t "~a~%" (format-doctor-report results))
+        (unless (doctor-healthy-p results) (uiop:quit 1)))
+      (progn
+        (ensure-config-directory)
+        (let ((config (load-user-config))
+              (task (format nil "~{~a~^ ~}" (clingon:command-arguments cmd))))
+          (handler-case
         (let* ((provider-keyword (resolve-provider-keyword (let ((p (clingon:getopt cmd :provider)))
                                                               (and p (intern (string-upcase p) :keyword)))
                                                             config))
@@ -140,7 +147,7 @@ message and a non-zero exit, not a Lisp backtrace."
       (missing-api-key (c)
         (format *error-output* "~&~a~%" c) (uiop:quit 1))
       (mcp-error (c)
-        (format *error-output* "~&~a~%" c) (uiop:quit 1)))))
+        (format *error-output* "~&~a~%" c) (uiop:quit 1)))))))
 
 (defun connect-configured-mcp-servers (config)
   "Auto-connect every server listed in config.lisp's :MCP-SERVERS (a
