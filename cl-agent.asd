@@ -75,6 +75,7 @@
       :serial t
       :components
       ((:file "protocol")
+       (:file "probe")
        (:file "transaction")
        (:file "journal")))
      (:file "doctor")

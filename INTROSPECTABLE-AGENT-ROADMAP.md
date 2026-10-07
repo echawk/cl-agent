@@ -528,6 +528,20 @@ Relative effort: medium.
 
 ### P2 — Transactional self-modification, exercises, and rollback
 
+#### Implementation status (2026-10-07)
+
+Implemented so far: staged extension proposals, reader/review validation, a
+clean-process load probe with an isolated configuration directory, registry
+snapshot rollback for failed installs, explicit install/discard/commit APIs,
+atomic source publication, and readable mutation-journal receipts.
+
+Not implemented yet: focused mutation exercises, definition/method/variable
+capture and rollback, stale-definition retirement on update, replayed
+generations, `--safe` recovery boot, named checkpoints, and generation
+rollback. Registry rollback must not be mistaken for undoing arbitrary
+top-level side effects; the clean-process probe is the current protection for
+the parent image, not an OS sandbox.
+
 This should be the flagship next feature. The desired workflow is:
 
 ```text

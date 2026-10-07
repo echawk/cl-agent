@@ -30,21 +30,31 @@
     (maphash (lambda (key value) (push (cons key value) entries)) table)
     (dolist (entry entries copy) (setf (gethash (car entry) copy) (cdr entry)))))
 
+(defun later-registry-value (name)
+  "Read a registry defined later in ASDF load order without creating it early."
+  (let ((symbol (find-symbol name :cl-agent)))
+    (and symbol (boundp symbol) (symbol-value symbol))))
+
+(defun set-later-registry-value (name value)
+  (let ((symbol (find-symbol name :cl-agent)))
+    (unless symbol (error "Registry ~a has not been defined" name))
+    (setf (symbol-value symbol) value)))
+
 (defun snapshot-mutation-state ()
   (list :tools (snapshot-hash-table *tools*)
         :hooks (snapshot-hash-table *hooks*)
         :providers (snapshot-hash-table *provider-registry*)
-        :frontends (snapshot-hash-table *frontend-registry*)
-        :commands (copy-tree *slash-commands*)
+        :frontends (snapshot-hash-table (later-registry-value "*FRONTEND-REGISTRY*"))
+        :commands (copy-tree (later-registry-value "*SLASH-COMMANDS*"))
         :components (snapshot-hash-table *components*)))
 
 (defun restore-mutation-state (snapshot)
   (setf *tools* (getf snapshot :tools)
         *hooks* (getf snapshot :hooks)
         *provider-registry* (getf snapshot :providers)
-        *frontend-registry* (getf snapshot :frontends)
-        *slash-commands* (getf snapshot :commands)
         *components* (getf snapshot :components))
+  (set-later-registry-value "*FRONTEND-REGISTRY*" (getf snapshot :frontends))
+  (set-later-registry-value "*SLASH-COMMANDS*" (getf snapshot :commands))
   t)
 
 (defun propose-extension (filename source)
@@ -82,6 +92,11 @@ top-level effects."
           (error "Source does not contain a supported cl-agent integration form"))
         (when (getf review :compile-failure-p)
           (error "Source did not compile: ~a" (format-lisp-review review)))
+        (let ((probe (run-clean-process-probe transaction)))
+          (unless (eq (getf probe :status) :passed)
+            (error "Clean-process probe failed: ~a"
+                   (or (getf probe :detail) (getf probe :error-output) (getf probe :output))))
+          (mutation-receipt transaction :clean-probe :probe probe))
         (setf (mutation-state transaction) :preflighted)
         (mutation-receipt transaction :preflighted :forms (length forms) :review review)
         transaction)

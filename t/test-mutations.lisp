@@ -18,6 +18,8 @@
                         "mutation-discard"
                         "(in-package :cl-agent) (define-tool mutation-discard-tool (args) (:description \"x\") \"ok\")")))
       (preflight-mutation transaction)
+      (check (find :clean-probe (mutation-receipts transaction)
+                   :key (lambda (receipt) (getf receipt :status))))
       (install-mutation transaction)
       (check (find-tool "mutation-discard-tool"))
       (discard-mutation transaction)
@@ -30,8 +32,9 @@
            (transaction (propose-extension
                          "mutation-failure"
                          "(in-package :cl-agent) (define-tool mutation-failure-tool (args) (:description \"x\") \"ok\") (error \"fail after registration\")")))
-      (preflight-mutation transaction)
-      (check-condition extension-error (install-mutation transaction))
+      ;; The fresh process catches the staged load error before the parent
+      ;; image ever receives the partially registering source.
+      (check-condition error (preflight-mutation transaction))
       (check-equal (uiop:read-file-string target) before)
       (check-equal (find-tool "mutation-failure-tool") nil)
       (check-equal (mutation-state transaction) :failed))))
