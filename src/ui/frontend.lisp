@@ -72,6 +72,15 @@ the transient narration while still showing the eventual no-tool completion.")
 is intentionally not shown by the frontend. Default: no-op.")
   (:method ((frontend agent-frontend)) (values)))
 
+(defgeneric ui-agent-activity (frontend label text)
+  (:documentation "Record model-provided progress or narration in an optional
+activity surface without treating it as a user-facing final response. This is
+not hidden chain-of-thought; callers pass only text already returned by the
+model. Default: no-op.")
+  (:method ((frontend agent-frontend) label text)
+    (declare (ignore label text))
+    (values)))
+
 (defgeneric ui-tool-started (frontend tool-name arguments)
   (:documentation "A tool call is about to run. ARGUMENTS is the hash
 table of parsed call arguments (see tools.lisp).")
@@ -125,6 +134,18 @@ needing to override what they actually want to do differently).")
 (defgeneric ui-thinking-stopped (frontend)
   (:documentation "Pairs with UI-THINKING-STARTED when the agent turn
 has completed or stopped. Default: no-op.")
+  (:method ((frontend agent-frontend)) (values)))
+
+(defgeneric ui-planning-started (frontend)
+  (:documentation "Called immediately before an orchestration planning request.
+This is intentionally distinct from UI-THINKING-STARTED: planning happens
+before RUN-AGENT-TURN starts, so a frontend can reassure the user during the
+otherwise silent initial planner request. Default: no-op.")
+  (:method ((frontend agent-frontend)) (values)))
+
+(defgeneric ui-planning-stopped (frontend)
+  (:documentation "Pairs with UI-PLANNING-STARTED after the planner returns or
+fails. Default: no-op.")
   (:method ((frontend agent-frontend)) (values)))
 
 (defgeneric ui-assistant-delta (frontend chunk)

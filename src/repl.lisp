@@ -562,7 +562,11 @@ anything else that wants to feed the model a user turn."
   (let* ((ctx (run-hook-chain :user-message (list :text text)))
          (prepared-text (getf ctx :text))
          (execution-text (if (planning-mode-p session)
-                             (plan-user-request session prepared-text)
+                             (unwind-protect
+                                  (progn
+                                    (ui-planning-started (session-frontend session))
+                                    (plan-user-request session prepared-text))
+                               (ui-planning-stopped (session-frontend session)))
                              prepared-text)))
     (setf (session-messages session)
           (append (session-messages session) (list (list :role "user" :content execution-text))))
@@ -1068,6 +1072,13 @@ during this turn can call SESSION-COMPLETE."
                        ;; A plan-review final stays hidden until the reviewer
                        ;; accepts it; tool-bearing replies retain normal live UI.
                        (when (and tool-calls (not (ui-show-tool-call-assistant-text-p frontend)))
+                         ;; Preserve any model narration returned alongside a
+                         ;; tool call in richer frontends' activity view. It is
+                         ;; progress text the model emitted, not private
+                         ;; reasoning, and stays out of the final transcript.
+                         (when (getf assistant-message :content)
+                           (ui-agent-activity frontend "AGENT NARRATION"
+                                              (getf assistant-message :content)))
                          (ui-discard-assistant-pending frontend))
                        (unless (or (and (null tool-calls) (completion-review-mode-p session))
                                    (and tool-calls (not (ui-show-tool-call-assistant-text-p frontend))))

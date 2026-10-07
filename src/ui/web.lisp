@@ -48,6 +48,10 @@ delivers the complete, final text for the same turn.")
              :documentation "True between UI-THINKING-STARTED and
 UI-THINKING-STOPPED -- shown by the page while PENDING is still empty
 (once text starts streaming in, PENDING itself is the live indicator).")
+   (activity :initform nil :accessor web-frontend-activity
+             :documentation "Inspectable agent lifecycle and tool events, newest
+first. These remain available in the activity pane while the main transcript
+is reserved for the user-visible conversation.")
    (stats :initform nil :accessor web-frontend-stats
           :documentation "Latest SESSION-STATS-SNAPSHOT plist, or NIL
 before the first turn completes.")
@@ -62,6 +66,11 @@ file's header comment for scope and the threading model."))
 (defun web-frontend-push (frontend role text)
   (bt:with-lock-held ((web-frontend-state-lock frontend))
     (push (list :role role :text text) (web-frontend-transcript frontend))))
+
+(defun web-frontend-push-activity (frontend kind label text)
+  "Append one labelled, inspectable agent event without cluttering chat."
+  (bt:with-lock-held ((web-frontend-state-lock frontend))
+    (push (list :kind kind :label label :text text) (web-frontend-activity frontend))))
 
 (defun normalize-compact-markdown-table (text)
   "Recover the common one-line table form emitted by some chat models.
@@ -267,6 +276,12 @@ currently in flight, and the latest stats snapshot."
                           :empty-array)
            "pending" (web-frontend-pending frontend)
            "thinking" (web-frontend-thinking-p frontend)
+           "activity" (or (mapcar (lambda (entry)
+                                      (jobj "kind" (getf entry :kind)
+                                            "label" (getf entry :label)
+                                            "text" (getf entry :text)))
+                                    (reverse (web-frontend-activity frontend)))
+                          :empty-array)
            "stats" (let ((s (web-frontend-stats frontend)))
                      (if s
                          (jobj "provider" (getf s :provider) "model" (getf s :model)
@@ -303,6 +318,46 @@ SSE/WebSocket being a real-product improvement this PoC skips) so the
 in-progress reply (DATA.PENDING) and the thinking indicator feel
 reasonably live without any new transport.")
 
+(defun enhance-web-page-with-activity-pane ()
+  "Install the independent, non-collapsing activity pane into the inline page."
+  (setf *web-page-html*
+        (replace-all-substrings
+         *web-page-html* "</head><body>"
+         "<style>.workspace{min-height:0;display:grid;grid-template-columns:minmax(0,1fr) minmax(270px,.42fr);gap:14px}.activity-pane{min-height:0;display:flex;flex-direction:column;background:#10182a;border:1px solid #34405b;border-radius:18px;overflow:hidden}.activity-head{display:flex;justify-content:space-between;align-items:center;padding:13px 15px;border-bottom:1px solid #273552;color:#c9d8ed;font-size:12px;font-weight:750;letter-spacing:.08em}.activity-scroll{min-height:0;overflow:auto;padding:12px}.activity-entry{margin-bottom:10px;border:1px solid #2e3c59;border-radius:10px;background:#0d1527;overflow:hidden}.activity-label{display:inline-block;margin:8px 9px 0;padding:2px 6px;border:1px solid #496587;border-radius:4px;background:#162944;color:#a9dafe;font:700 10px ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;letter-spacing:.06em}.activity-text{padding:7px 10px 10px;color:#c2cce0;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.activity-empty{color:#8190aa;font-size:13px;padding:8px}@media(max-width:820px){.workspace{grid-template-columns:1fr;grid-template-rows:minmax(320px,1fr) minmax(180px,.45fr)}.activity-pane{border-radius:14px}}</style></head><body>"))
+  (setf *web-page-html*
+        (replace-all-substrings
+         *web-page-html*
+         "<section class=\"chat\"><div class=\"messages\" id=\"messages\" aria-live=\"polite\"></div><button class=\"jump\" id=\"jump\" hidden>Jump to latest ↓</button></section><form class=\"composer\""
+         "<section class=\"workspace\"><section class=\"chat\"><div class=\"messages\" id=\"messages\" aria-live=\"polite\"></div><button class=\"jump\" id=\"jump\" hidden>Jump to latest ↓</button></section><aside class=\"activity-pane\" aria-label=\"Agent activity\"><div class=\"activity-head\">AGENT ACTIVITY <span id=\"activity-state\">Idle</span></div><div class=\"activity-scroll\" id=\"activity\"></div></aside></section><form class=\"composer\""))
+  (setf *web-page-html*
+        (replace-all-substrings
+         *web-page-html*
+         "const messages=document.getElementById('messages'),form="
+         "const messages=document.getElementById('messages'),activityPane=document.getElementById('activity'),activityState=document.getElementById('activity-state'),form="))
+  ;; System and tool entries remain in DATA.MESSAGES for backwards-compatible
+  ;; API consumers, but are displayed only in the independent activity pane.
+  (setf *web-page-html*
+        (replace-all-substrings
+         *web-page-html* "function clearMath(){"
+         "function transcript(items){return items.filter(m=>m.role==='user'||m.role==='assistant'||m.role==='compaction').map(m=>m.role==='compaction'?compaction(m.text):card(m.role,m.role,m.html||m.text,m.role==='assistant','',m.text)).join('')}function clearMath(){"))
+  (setf *web-page-html*
+        (replace-all-substrings
+         *web-page-html*
+         "function render(data){const next=JSON.stringify([data.messages,data.pending,data.thinking]);"
+         "function renderActivity(items,thinking){const pinned=activityPane.scrollHeight-activityPane.scrollTop-activityPane.clientHeight<40;activityState.textContent=thinking?'Thinking…':'Idle';activityPane.innerHTML=items.length?items.map(item=>\`<article class=\"activity-entry\"><div class=\"activity-label\">\${esc(item.label)}</div><div class=\"activity-text\">\${copyControl(item.text)}\${esc(item.text)}</div></article>\`).join(''):'<div class=\"activity-empty\">Tool calls, planning updates, and agent status will appear here.</div>';if(pinned)activityPane.scrollTop=activityPane.scrollHeight}function render(data){const next=JSON.stringify([data.messages,data.pending,data.thinking,data.activity]);"))
+  (setf *web-page-html*
+        (replace-all-substrings
+         *web-page-html*
+         "clearMath();messages.innerHTML=html||card('system','cl-agent','Start a conversation to see the agent here.',false);decorateCopies();"
+         "clearMath();messages.innerHTML=html||card('system','cl-agent','Start a conversation to see the agent here.',false);renderActivity(data.activity||[],data.thinking);decorateCopies();"))
+  (setf *web-page-html*
+        (replace-all-substrings
+         *web-page-html*
+         "messages.addEventListener('scroll',()=>{jump.hidden=nearBottom()});messages.addEventListener('click',e=>{const button=e.target.closest('[data-copy]');if(button)copyText(decodeURIComponent(button.dataset.copy),button)});"
+         "messages.addEventListener('scroll',()=>{jump.hidden=nearBottom()});for(const pane of [messages,activityPane])pane.addEventListener('click',e=>{const button=e.target.closest('[data-copy]');if(button)copyText(decodeURIComponent(button.dataset.copy),button)});")))
+
+(enhance-web-page-with-activity-pane)
+
 (hunchentoot:define-easy-handler (cl-agent-web-index :uri "/") ()
   (setf (hunchentoot:content-type*) "text/html; charset=utf-8")
   *web-page-html*)
@@ -311,7 +366,8 @@ reasonably live without any new transport.")
   (setf (hunchentoot:content-type*) "application/json")
   (if *web-frontend*
       (web-frontend-status-json *web-frontend*)
-      (json-encode (jobj "messages" :empty-array "pending" "" "thinking" nil "stats" :null))))
+      (json-encode (jobj "messages" :empty-array "pending" "" "thinking" nil
+                         "activity" :empty-array "stats" :null))))
 
 (hunchentoot:define-easy-handler (cl-agent-web-send :uri "/api/send") (text)
   (setf (hunchentoot:content-type*) "application/json")
@@ -372,15 +428,24 @@ reasonably live without any new transport.")
   (bt:with-lock-held ((web-frontend-state-lock frontend))
     (setf (web-frontend-pending frontend) "")))
 
+(defmethod ui-agent-activity ((frontend web-frontend) label text)
+  (web-frontend-push-activity frontend "agent-narration" label text))
+
 (defmethod ui-tool-started ((frontend web-frontend) tool-name arguments)
-  (web-frontend-push frontend "tool" (format nil "~~ ~a" (tool-call-summary tool-name arguments))))
+  (let ((summary (tool-call-summary tool-name arguments)))
+    ;; Keep the legacy transcript event for API consumers, while the page
+    ;; renders it in the dedicated activity pane.
+    (web-frontend-push frontend "tool" (format nil "~~ ~a" summary))
+    (web-frontend-push-activity frontend "tool-call" (format nil "TOOL · ~a" tool-name) summary)))
 
 (defmethod ui-tool-finished ((frontend web-frontend) tool-name arguments result)
-  (declare (ignore tool-name arguments))
-  (web-frontend-push frontend "tool" result))
+  (declare (ignore arguments))
+  (web-frontend-push frontend "tool" result)
+  (web-frontend-push-activity frontend "tool-output" (format nil "TOOL OUTPUT · ~a" tool-name) result))
 
 (defmethod ui-system ((frontend web-frontend) text)
-  (web-frontend-push frontend "system" text))
+  (web-frontend-push frontend "system" text)
+  (web-frontend-push-activity frontend "system" "AGENT STATUS" text))
 
 (defmethod ui-context-compacted ((frontend web-frontend) summary before-tokens after-tokens)
   "Retain the exact continuity note for the web UI without showing it by default."
@@ -392,10 +457,20 @@ reasonably live without any new transport.")
     (setf (web-frontend-pending frontend) (concatenate 'string (web-frontend-pending frontend) chunk))))
 
 (defmethod ui-thinking-started ((frontend web-frontend))
-  (bt:with-lock-held ((web-frontend-state-lock frontend)) (setf (web-frontend-thinking-p frontend) t)))
+  (bt:with-lock-held ((web-frontend-state-lock frontend)) (setf (web-frontend-thinking-p frontend) t))
+  (web-frontend-push-activity frontend "thinking" "AGENT" "Thinking…"))
 
 (defmethod ui-thinking-stopped ((frontend web-frontend))
   (bt:with-lock-held ((web-frontend-state-lock frontend)) (setf (web-frontend-thinking-p frontend) nil)))
+
+(defmethod ui-planning-started ((frontend web-frontend))
+  (bt:with-lock-held ((web-frontend-state-lock frontend))
+    (setf (web-frontend-thinking-p frontend) t))
+  (web-frontend-push-activity frontend "planning" "PLAN MODE" "Planning the next steps…"))
+
+(defmethod ui-planning-stopped ((frontend web-frontend))
+  (bt:with-lock-held ((web-frontend-state-lock frontend))
+    (setf (web-frontend-thinking-p frontend) nil)))
 
 (defmethod ui-stats-updated ((frontend web-frontend) stats)
   (bt:with-lock-held ((web-frontend-state-lock frontend)) (setf (web-frontend-stats frontend) stats)))

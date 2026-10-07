@@ -200,6 +200,13 @@ comment for the threading model."))
 (defmethod ui-thinking-stopped ((frontend tui-frontend))
   (tui:send (tui-frontend-program frontend) (make-instance 'tui-status-msg :text "")))
 
+(defmethod ui-planning-started ((frontend tui-frontend))
+  (tui:send (tui-frontend-program frontend)
+            (make-instance 'tui-status-msg :text "⋯ planning next steps")))
+
+(defmethod ui-planning-stopped ((frontend tui-frontend))
+  (tui:send (tui-frontend-program frontend) (make-instance 'tui-status-msg :text "")))
+
 (defmethod ui-stats-updated ((frontend tui-frontend) stats)
   (tui:send (tui-frontend-program frontend) (make-instance 'tui-status-msg :text (format-stats stats))))
 
