@@ -79,6 +79,7 @@
       :components
       ((:file "protocol")
        (:file "probe")
+       (:file "exercises")
        (:file "transaction")
        (:file "journal")))
      (:file "doctor")

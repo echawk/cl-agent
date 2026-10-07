@@ -46,12 +46,14 @@
         :providers (snapshot-hash-table *provider-registry*)
         :frontends (snapshot-hash-table (later-registry-value "*FRONTEND-REGISTRY*"))
         :commands (copy-tree (later-registry-value "*SLASH-COMMANDS*"))
+        :exercises (snapshot-hash-table *mutation-exercises*)
         :components (snapshot-hash-table *components*)))
 
 (defun restore-mutation-state (snapshot)
   (setf *tools* (getf snapshot :tools)
         *hooks* (getf snapshot :hooks)
         *provider-registry* (getf snapshot :providers)
+        *mutation-exercises* (getf snapshot :exercises)
         *components* (getf snapshot :components))
   (set-later-registry-value "*FRONTEND-REGISTRY*" (getf snapshot :frontends))
   (set-later-registry-value "*SLASH-COMMANDS*" (getf snapshot :commands))
@@ -130,10 +132,37 @@ top-level effects."
                     :payload (mutation->plist transaction))
         (error condition)))))
 
+(defun exercise-mutation (transaction)
+  "Run focused checks for an installed mutation before it may be committed.
+
+An exercise failure restores the registry snapshot captured by
+INSTALL-MUTATION.  Like registry discard generally, this cannot undo arbitrary
+top-level side effects; the clean-process preflight remains the first safety
+boundary."
+  (unless (eq (mutation-state transaction) :installed)
+    (error "Mutation ~a must be installed before exercises run" (mutation-id transaction)))
+  (handler-case
+      (progn
+        (run-mutation-exercises transaction)
+        (setf (mutation-state transaction) :exercised)
+        (mutation-receipt transaction :exercised)
+        (emit-event :mutation-exercised :component (mutation-owner transaction)
+                    :payload (mutation->plist transaction))
+        transaction)
+    (error (condition)
+      (when (mutation-before-state transaction)
+        (restore-mutation-state (mutation-before-state transaction)))
+      (setf (mutation-state transaction) :failed)
+      (mutation-receipt transaction :rolled-back :phase :exercise
+                        :detail (princ-to-string condition) :rollback :registry-snapshot)
+      (emit-event :mutation-rolled-back :component (mutation-owner transaction)
+                  :payload (mutation->plist transaction))
+      (error condition))))
+
 (defun discard-mutation (transaction)
   "Restore the registry state captured before installation, if still available."
-  (unless (member (mutation-state transaction) '(:installed :failed))
-    (error "Only installed or failed mutations can be discarded"))
+  (unless (member (mutation-state transaction) '(:installed :exercised :failed))
+    (error "Only installed, exercised, or failed mutations can be discarded"))
   (when (mutation-before-state transaction)
     (restore-mutation-state (mutation-before-state transaction)))
   (setf (mutation-state transaction) :discarded)

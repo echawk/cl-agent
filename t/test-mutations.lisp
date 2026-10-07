@@ -22,6 +22,8 @@
                    :key (lambda (receipt) (getf receipt :status))))
       (install-mutation transaction)
       (check (find-tool "mutation-discard-tool"))
+      (exercise-mutation transaction)
+      (check-equal (mutation-state transaction) :exercised)
       (discard-mutation transaction)
       (check-equal (find-tool "mutation-discard-tool") nil))))
 
@@ -46,9 +48,45 @@
                         "(in-package :cl-agent) (define-tool mutation-commit-tool (args) (:description \"x\") \"ok\")")))
       (preflight-mutation transaction)
       (install-mutation transaction)
+      (exercise-mutation transaction)
       (commit-mutation transaction)
       (check-equal (mutation-state transaction) :committed)
       (check (probe-file (mutation-target transaction)))
       (check (extension-enabled-p "mutation-commit.lisp"))
       (check (probe-file (mutation-journal-path transaction)))
       (unregister-tool "mutation-commit-tool"))))
+
+(deftest mutation-exercises-run-before-commit-and-record-evidence ()
+  (with-temp-config-dir ()
+    (let ((transaction
+            (propose-extension
+             "mutation-exercise-pass"
+             "(in-package :cl-agent)
+               (define-tool mutation-exercise-pass-tool (args) (:description \"x\") \"ready\")
+               (define-mutation-exercise mutation-exercise-pass ()
+                 (unless (search \"ready\" (call-tool \"mutation-exercise-pass-tool\" (jobj)))
+                   (error \"tool smoke test failed\")))")))
+      (preflight-mutation transaction)
+      (install-mutation transaction)
+      (exercise-mutation transaction)
+      (check-equal (mutation-state transaction) :exercised)
+      (check (find 'mutation-exercise-pass (mutation-receipts transaction)
+                   :key (lambda (receipt) (getf receipt :exercise-id))))
+      (commit-mutation transaction)
+      (unregister-tool "mutation-exercise-pass-tool"))))
+
+(deftest failed-mutation-exercise-rolls-back-and-blocks-commit ()
+  (with-temp-config-dir ()
+    (let ((transaction
+            (propose-extension
+             "mutation-exercise-fail"
+             "(in-package :cl-agent)
+               (define-tool mutation-exercise-fail-tool (args) (:description \"x\") \"ready\")
+               (define-mutation-exercise mutation-exercise-fail ()
+                 (error \"deliberate exercise failure\"))")))
+      (preflight-mutation transaction)
+      (install-mutation transaction)
+      (check-condition error (exercise-mutation transaction))
+      (check-equal (mutation-state transaction) :failed)
+      (check-equal (find-tool "mutation-exercise-fail-tool") nil)
+      (check-condition error (commit-mutation transaction)))))

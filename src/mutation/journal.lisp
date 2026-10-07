@@ -13,9 +13,9 @@
    (lambda (out) (let ((*print-pretty* t)) (pprint (mutation->plist transaction) out)))))
 
 (defun commit-mutation (transaction &key (enable-p t))
-  "Atomically publish the active source only after a successful install."
-  (unless (eq (mutation-state transaction) :installed)
-    (error "Mutation ~a must be installed before commit" (mutation-id transaction)))
+  "Atomically publish active source only after installation and exercises pass."
+  (unless (eq (mutation-state transaction) :exercised)
+    (error "Mutation ~a must pass exercises before commit" (mutation-id transaction)))
   (write-string-atomically (mutation-target transaction) (mutation-source transaction))
   (when enable-p (set-extension-enabled (mutation-filename transaction) t))
   (setf (mutation-state transaction) :committed)

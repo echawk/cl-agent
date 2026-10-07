@@ -110,8 +110,9 @@ specifically what to fix, rather than a bare reader end-of-file error."
              (if do-load
                  (progn
                    (install-mutation transaction)
+                   (exercise-mutation transaction)
                    (commit-mutation transaction :enable-p do-enable)
-                   (format nil "Committed mutation ~a: staged, preflighted, installed, and published ~a~:[ (not enabled for future sessions)~;, enabled for future sessions~]."
+                   (format nil "Committed mutation ~a: staged, preflighted, installed, exercised, and published ~a~:[ (not enabled for future sessions)~;, enabled for future sessions~]."
                            (mutation-id transaction) (mutation-target transaction) do-enable))
                  ;; Compatibility mode: the user explicitly requested a saved
                  ;; but inactive draft, so publish source only and retain its
