@@ -95,6 +95,15 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
                    \"@modelcontextprotocol/server-filesystem\" \"/tmp\")).
                    A server that fails to connect is reported and
                    skipped, not fatal to startup.
+  LSP servers are configured separately in config-dir/lsp.sexp using
+                   cl-lsp's bounded (:VERSION 1 :SERVERS (...)) data format.
+                   At startup cl-agent reports commands missing from PATH but
+                   starts no LSP process until an LSP tool queries a matching
+                   source file.
+  Skills are discovered from .agents/skills/ in the current project (first)
+                   and config-dir/skills/ (second). Both standard SKILL.md and
+                   cl-skills' SKILL.sexp sources are accepted; instruction
+                   bodies are read only when the agent calls READ-SKILL.
 
 This function only ever calls READ on the file contents, never LOAD or
 EVAL, and binds *READ-EVAL* to NIL while doing so -- config.lisp is

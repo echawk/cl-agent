@@ -21,6 +21,7 @@
   :version "0.1.0"
   :depends-on ("drakma" "shasht" "uiop" "mallet" "defstar"
                "cl-mcp" "cl-mcp/client" "bordeaux-threads"  ; src/mcp/*.lisp
+               "cl-lsp" "cl-skills"                           ; agent LSP + Skills
                "clingon" "3bmd" "3bmd-ext-tables"           ; CLI parsing; Markdown web rendering
                "tuition"                                     ; TUI frontend, src/ui/tui.lisp
                "hunchentoot")                                ; web frontend, src/ui/web.lisp
@@ -44,6 +45,8 @@
      (:file "http")
      (:file "config")
      (:file "tools")
+     (:file "lsp")
+     (:file "skills")
      (:module "mcp"
       :serial t
       :components
@@ -76,8 +79,10 @@
       :pathname "tools"
       :serial t
       :components
-      ((:file "shell")
+     ((:file "shell")
        (:file "file-tool")
+       (:file "lsp-tool")
+       (:file "skills-tool")
        (:file "quality-tool")
        (:file "asdf-tool")
        (:file "extensions-tool")
@@ -105,6 +110,8 @@
    (:file "test-ollama-ensure-ready")
    (:file "test-apfel-ensure-ready")
    (:file "test-config")
+   (:file "test-skills")
+   (:file "test-lsp")
    (:file "test-extensions")
    (:file "test-quality")
    (:file "test-clspec")
@@ -125,3 +132,15 @@
   :components
   ((:file "framework")
    (:file "test-ollama-integration")))
+
+;; Separate from the offline suite: starts the published npm filesystem MCP
+;; server through npx and therefore needs network access on a cold cache.
+(asdf:defsystem "cl-agent/tests/mcp-external"
+  :description "Live interoperability tests against published MCP servers."
+  :depends-on ("cl-agent")
+  :pathname "t"
+  :serial t
+  :components ((:file "framework")
+               (:file "test-mcp-external"))
+  :perform (asdf:test-op (op system)
+             (uiop:symbol-call :cl-agent :run-all-tests)))

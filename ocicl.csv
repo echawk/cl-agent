@@ -29,12 +29,16 @@ cl-base64, ghcr.io/ocicl/cl-base64@sha256:702412dbc1ed825e275fb23e22c29527eb786b
 cl-base64-tests, ghcr.io/ocicl/cl-base64@sha256:702412dbc1ed825e275fb23e22c29527eb786bf644e47c7621bf0dbb34e17c7e, cl-base64-20240503-80496b7/cl-base64-tests.asd
 cl-fad, ghcr.io/ocicl/cl-fad@sha256:c0aaffc859e419e0a94cedb08f48c2484da404363fb0fe4ffd6e09a80aadafe1, cl-fad-0.7.6/cl-fad.asd
 cl-interpol, ghcr.io/ocicl/cl-interpol@sha256:bf02bce744361792150a04310b24a623596b99190a9f85a1c2ebf35f12b2288c, cl-interpol-2.0.7/cl-interpol.asd
+cl-lsp, git+https://github.com/lambda-symbolics/cl-lsp@9f459b8d3d41e6eeb82cae06159879cf7258701a, cl-lsp-9f459b8/cl-lsp.asd
+cl-skills, git+https://github.com/lambda-symbolics/cl-skills@f9eea22421272362e1b99a48cc8f2705127b5ff2, cl-skills-f9eea22/cl-skills.asd
+ls-compat, git+https://github.com/lambda-symbolics/ls-compat@52c959f2bc00adc30f2970c2fd2226bd0c01730d, ls-compat-52c959f/ls-compat.asd
 cl-mcp, git+https://github.com/quasi/cl-mcp@e095dc74156095027592e320db7a56d5a0c91eba, cl-mcp-e095dc7/cl-mcp.asd
 cl-ppcre, ghcr.io/ocicl/cl-ppcre@sha256:bf073924cf4fd5957a4fd961a95d446ed0e53fa32a5002cbd2d52182874f45e5, cl-ppcre-20250606-a2ea581/cl-ppcre.asd
 cl-ppcre-unicode, ghcr.io/ocicl/cl-ppcre@sha256:bf073924cf4fd5957a4fd961a95d446ed0e53fa32a5002cbd2d52182874f45e5, cl-ppcre-20250606-a2ea581/cl-ppcre-unicode.asd
 cl-reexport, ghcr.io/ocicl/cl-reexport@sha256:c795feb3e3727a19e61797187eb31bac1e855b1332335d26752200a28e9b9da8, cl-reexport-20240503-03ad7a0/cl-reexport.asd
 cl-reexport-test, ghcr.io/ocicl/cl-reexport@sha256:c795feb3e3727a19e61797187eb31bac1e855b1332335d26752200a28e9b9da8, cl-reexport-20240503-03ad7a0/cl-reexport-test.asd
 cl-unicode, ghcr.io/ocicl/cl-unicode@sha256:d98f12c1271fb3c1812a27d64dfbe95b0bc5bcfd545b71b8101874e61270b120, cl-unicode-20240503-07e7ff5/cl-unicode.asd
+cl-utilities, ghcr.io/ocicl/cl-utilities@sha256:e5e0676a4e0627332a0fe64d56ed4f1890f0466d715a11e8d95561b4c2baa38f, cl-utilities-20240503-6b4de39/cl-utilities.asd
 cl_plus_ssl, ghcr.io/ocicl/cl_plus_ssl@sha256:d50fbbba38827e835eec2415744e0fb05a2a0bf4d44940cdc23922f15036efe5, cl-plus-ssl-20251220-499b2f5/cl+ssl.asd
 cl_plus_ssl.test, ghcr.io/ocicl/cl_plus_ssl@sha256:d50fbbba38827e835eec2415744e0fb05a2a0bf4d44940cdc23922f15036efe5, cl-plus-ssl-20251220-499b2f5/cl+ssl.test.asd
 clingon, ghcr.io/ocicl/clingon@sha256:27d1426613e66fd28223c737bd7886dfdd4f20df742212bd0903c2fc6791871f, clingon-20260807-e7e936b/clingon.asd
@@ -73,8 +77,11 @@ named-readtables-test, ghcr.io/ocicl/named-readtables@sha256:9c467a5a6d7b4e928d4
 parse-declarations-1.0, ghcr.io/ocicl/parse-declarations-1.0@sha256:9305fa9624205b16fd1fc51cb1cc4282a18e50eee9ac75b66a14f6f2c5df9518, parse-declarations-20240503-549aebb/parse-declarations-1.0.asd
 parse-number, ghcr.io/ocicl/parse-number@sha256:11f3f9f512871e1f96cea6b8260aa3610e34e8fd7272bbcdb210fd3c5dd8025c, parse-number-20240503-cb9e487/parse-number.asd
 puri, ghcr.io/ocicl/puri@sha256:b803fb9444eaf2c7053812e19d342d4ce6a05fd1880fa3a2a2f824769a6d58d2, puri-20260406-4bbab89/puri.asd
+quri, ghcr.io/ocicl/quri@sha256:e2559f91600e4895e115b42dde88fcaac3677f051335d73431888dcf7af99f95, quri-0.7.0/quri.asd
+quri-test, ghcr.io/ocicl/quri@sha256:e2559f91600e4895e115b42dde88fcaac3677f051335d73431888dcf7af99f95, quri-0.7.0/quri-test.asd
 rfc2388, ghcr.io/ocicl/rfc2388@sha256:4190f6eb36b3b2f53def6eff56b44e76edf4086ada2feb6d88bb671a40fc9f70, rfc2388-20240503-591bcf7/rfc2388.asd
 serapeum, ghcr.io/ocicl/serapeum@sha256:8b34aeb02dc7e9a20ae0c9e0166df2de04aac66cbbad4c4afd68071c20dae67f, serapeum-20260921-2271710/serapeum.asd
+sexp-config, git+https://github.com/lambda-symbolics/sexp-config@71d665f3ae81038b6721cce37bfa62cedd52ba2c, sexp-config-71d665f/sexp-config.asd
 shasht, ghcr.io/ocicl/shasht@sha256:ed683f73d865bb2d7231786797211774fce8f783890b295768f0794cd3de633b, shasht-20251015-40a4aee/shasht.asd
 split-sequence, ghcr.io/ocicl/split-sequence@sha256:3a37662eedd99c42995587b9d443c4631f25c4c523091bcca31a27b880585b8e, split-sequence-2.0.1/split-sequence.asd
 string-case, ghcr.io/ocicl/string-case@sha256:9db2d4160b76ce1ed9f754d12f679c665593a9a436177d36380a1a8a176ec16a, string-case-20240503-718c761/string-case.asd
@@ -117,3 +124,4 @@ version-string, ghcr.io/ocicl/version-string@sha256:eb8f45786af7fd6f792aecada1f9
 with-user-abort, ghcr.io/ocicl/with-user-abort@sha256:c19560034f9909a7afb4110b5efd939a9f1e829d9ef9887797b98679f290c480, with-user-abort-20240503-a3db02e/with-user-abort.asd
 yason, ghcr.io/ocicl/yason@sha256:d4857f9cbdd68a5d1332c7f8a4a2374b1ae0dc567d4b8f90795ff38fd490876b, yason-20250323-0c84b29/yason.asd
 yason-tests, ghcr.io/ocicl/yason@sha256:d4857f9cbdd68a5d1332c7f8a4a2374b1ae0dc567d4b8f90795ff38fd490876b, yason-20250323-0c84b29/yason-tests.asd
+argo, git+https://github.com/lambda-symbolics/argo@bd7415c7d6df61889147979c7c1964a0246a8f19, argo-bd7415c/argo.asd

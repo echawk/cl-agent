@@ -7,7 +7,7 @@
 SBCL ?= sbcl
 OLLAMA_TEST_MODEL ?= qwen2.5:0.5b
 
-.PHONY: all check-env install-deps build run test test-ollama clspec-data clean
+.PHONY: all check-env install-deps build run test test-ollama test-mcp-external clspec-data clean
 
 all: build
 
@@ -37,6 +37,12 @@ test-ollama: install-deps
 	ollama pull $(OLLAMA_TEST_MODEL)
 	CL_AGENT_OLLAMA_TEST_MODEL=$(OLLAMA_TEST_MODEL) \
 		$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:load-system "cl-agent/tests/ollama")'
+
+# A genuine third-party MCP interoperability suite. npx downloads the pinned
+# server automatically on its first run; no LLM provider is required.
+test-mcp-external: install-deps
+	command -v npx >/dev/null 2>&1 || { echo "npx not found; install Node.js first"; exit 1; }
+	$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:test-system "cl-agent/tests/mcp-external")'
 
 
 # Regenerates data/cl-spec.sdoc (already committed; most people never

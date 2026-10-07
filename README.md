@@ -351,6 +351,30 @@ is necessary; compiler failures prevent execution/writing and are returned to
 the model to fix. The `review-lisp` tool exposes that pipeline directly for
 code destined for a normal reply or another file.
 
+## Language servers and Skills
+
+Language-server support is built on the included
+[cl-lsp](https://github.com/lambda-symbolics/cl-lsp) client. Put a bounded
+declarative `lsp.sexp` in the selected config directory; cl-agent checks which
+configured commands exist at startup, but starts a server only when the agent
+uses `lsp-query` or `lsp-diagnostics` on a matching file. The available tools
+are `list-lsp-servers`, `lsp-query`, `lsp-diagnostics`, and
+`reload-lsp-servers`. Queries are read-only and include definition, references,
+hover, implementation, type definition, and document/workspace symbols.
+
+```lisp
+(:version 1
+ :servers ((:name "clangd" :command "clangd" :arguments ("--background-index")
+            :extensions (".c" ".h" ".cpp") :language-id "cpp"
+            :root-markers ("compile_commands.json") :timeout-seconds 10)))
+```
+
+Skills use [cl-skills](https://github.com/lambda-symbolics/cl-skills) and the
+standard `SKILL.md` format. Put a skill in `.agents/skills/<name>/SKILL.md` for
+the current project or `~/.config/cl-agent/skills/<name>/SKILL.md` for a
+user-wide skill. The model sees only metadata through `list-skills`; it uses
+`read-skill` to load the validated instructions only after selecting one.
+
 The `load-asdf-system` tool loads libraries by ASDF system name. `boot.lisp`
 installs ocicl's missing-system hook into ASDF, so a missing system is fetched
 through ocicl rather than by downloading `.asd` files manually.
@@ -448,6 +472,7 @@ whole thing (config *and* extensions) somewhere other than
 ```sh
 make test          # offline unit test suite (no network, no provider needed)
 make test-ollama   # pulls a small model and runs a live end-to-end test
+make test-mcp-external # runs a published npm filesystem MCP server through npx
 make run           # run from source, no build step
 make clean         # remove the ocicl package cache and bin/
 ```

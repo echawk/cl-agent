@@ -110,6 +110,16 @@ message and a non-zero exit, not a Lisp backtrace."
             (declare (ignore loaded))
             (when failed
               (format *error-output* "~&~d extension(s) failed to load; see above.~%" (length failed))))
+          ;; Catalog discovery is cheap and metadata-only. LSP executables are
+          ;; inspected now but their processes remain lazy until a tool call.
+          (handler-case (initialize-skills)
+            (error (c) (format *error-output* "~&[skills] ~a~%" c)))
+          (handler-case
+              (multiple-value-bind (available unavailable) (initialize-lsp)
+                (declare (ignore available))
+                (when unavailable
+                  (format *error-output* "~&[lsp] unavailable commands: ~{~a~^, ~}~%" unavailable)))
+            (error (c) (format *error-output* "~&[lsp] ~a~%" c)))
           (connect-configured-mcp-servers config)
           (if (clingon:getopt cmd :mcp-serve)
               (run-cl-agent-mcp-server :name (provider-display-name provider))
