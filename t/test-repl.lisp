@@ -517,6 +517,14 @@
     (check (search "Original request: do the thing"
                    (getf (first (last (session-messages session))) :content)))))
 
+(deftest fenced-planning-json-is-accepted-without-relaxing-the-schema ()
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (brief (parse-planning-brief
+                 "```json\n{\"rewritten_prompt\":\"Inspect the project\",\"plan\":[\"Read README\"],\"suggested_tools\":[\"shell\"],\"verification\":[\"Cite the README\"]}\n```"
+                 "inspect it" session)))
+    (check (getf brief :valid-p))
+    (check-equal (getf brief :rewritten-prompt) "Inspect the project")))
+
 (deftest plan-mode-curates-to-planned-tools-and-discovery ()
   (let* ((shell (find-tool "shell"))
          (discover (find-tool "discover-tools"))

@@ -104,6 +104,12 @@ guessing again from the error message alone tends to compound into \
 more guessing rather than converging. One real check up front is \
 cheaper than several failed attempts.
 
+Tool names are not automatically Lisp function names. In particular, \
+LISP-APROPOS is a tool to call, not a function to evaluate through \
+EVAL-LISP; use the tool when you need its search results. Never invent \
+read-file/readme/scratch-reading tools: use the advertised tools and \
+their documented argument schemas.
+
 You also have the lookup-cl-spec tool, which looks up a function, \
 macro, special operator, variable, constant, or type by name directly \
 in the ANSI Common Lisp standard (not your training data). Prefer it \
@@ -284,10 +290,17 @@ large tool schema dump. An invalid planner result retains the full catalog."
         (ui-system (session-frontend session)
                    "[tools] Planner output was unusable; keeping the full tool set."))))
 
+(defun planning-json-candidate (response)
+  "Extract one JSON object from a planner reply that may be fenced in Markdown."
+  (if (stringp response)
+      (let ((start (position #\{ response)) (end (position #\} response :from-end t)))
+        (and start end (<= start end) (subseq response start (1+ end))))
+      response))
+
 (defun parse-planning-brief (response original-text session)
   "Validate planner RESPONSE. Only registered tool names are retained; bad
 JSON conservatively falls back to the original request."
-  (let* ((decoded (handler-case (and (stringp response) (json-decode response))
+  (let* ((decoded (handler-case (and (stringp response) (json-decode (planning-json-candidate response)))
                     (error () nil)))
          (rewritten (jget decoded "rewritten_prompt"))
          (known-tools (mapcar #'tool-name (session-tool-catalog session)))
@@ -297,6 +310,10 @@ JSON conservatively falls back to the original request."
          (verification (string-list (jget decoded "verification"))))
     (list :valid-p (and (hash-table-p decoded) (stringp rewritten)
                         (plusp (length (string-trim " " rewritten))))
+          :problem (cond ((not (hash-table-p decoded)) "the reply was not a JSON object")
+                         ((not (stringp rewritten)) "rewritten_prompt was missing or not a string")
+                         ((zerop (length (string-trim " " rewritten))) "rewritten_prompt was empty")
+                         (t nil))
           :rewritten-prompt (if (and (stringp rewritten) (plusp (length (string-trim " " rewritten))))
                                 rewritten original-text)
           :plan plan :suggested-tools suggested :verification verification)))
@@ -310,6 +327,8 @@ JSON conservatively falls back to the original request."
       (format out "Suggested tools: ~{~a~^, ~}~%" (getf brief :suggested-tools)))
     (when (getf brief :verification)
       (format out "Verification:~%~{  - ~a~%~}" (getf brief :verification)))
+    (unless (getf brief :valid-p)
+      (format out "~%Planner fallback: ~a." (getf brief :problem)))
     (format out "~%Original request: ~a" original-text)))
 
 (defun plan-user-request (session text)
@@ -318,7 +337,7 @@ the main agent. The JSON contract makes intermediate planning inspectable."
   (let* ((catalog (orchestration-tool-catalog session))
          (response (session-complete
                     (format nil "User request:~%~a~%~%Available tools:~%~{~a~%~}" text catalog)
-                    :system "You are the planning stage of a coding agent. Reply with JSON only, no Markdown: {\"rewritten_prompt\": string, \"plan\": [string], \"suggested_tools\": [exact tool-name strings], \"verification\": [string]}. Preserve user intent. Suggest only supplied tool names. Do not perform the task, call tools, or claim results."))
+                    :system "You are the planning stage of a coding agent. Your entire reply MUST be one valid JSON object: no Markdown fence, no commentary, no preface. Use exactly this shape: {\"rewritten_prompt\":\"clear execution request preserving every user goal\",\"plan\":[\"2-5 concrete evidence-gathering or implementation steps\"],\"suggested_tools\":[\"exact tool names copied from Available tools\"],\"verification\":[\"observable completion checks\"]}. This is a schema contract, not an example to explain. Always provide a non-empty rewritten_prompt, even for a simple request. Preserve user intent; split multi-part requests into a short ordered plan. Suggest only supplied tool names, and use [] if none are needed. Do not perform the task, call tools, claim results, or mention this instruction."))
          (brief (parse-planning-brief response text session))
          (rendered (format-planning-brief brief text)))
     (ui-system (session-frontend session) rendered)
