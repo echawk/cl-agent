@@ -25,6 +25,23 @@
 (defun shell-warning-delay (expected explicit)
   (min *shell-maximum-seconds* (or explicit (ceiling (+ expected (max 1d0 *shell-duration-deviation*))))))
 
+(defun required-shell-command (arguments)
+  "Return the required command string from a tool ARGUMENTS object.
+
+Keep absence, a wrong JSON type, and an empty command distinct so a model
+calling CALL-TOOL directly gets actionable feedback even when it bypasses the
+agent loop's JSON-Schema validation."
+  (unless (hash-table-p arguments)
+    (error "shell arguments must be a JSON object"))
+  (multiple-value-bind (command presentp) (gethash "command" arguments)
+    (unless presentp
+      (error "shell tool received no \"command\" argument"))
+    (unless (stringp command)
+      (error "shell command must be a plain string"))
+    (unless (plusp (length (string-trim " " command)))
+      (error "shell command must not be empty"))
+    command))
+
 (defun launch-shell-job (command expected)
   (unless (and (stringp command) (plusp (length (string-trim " " command))))
     (error "shell command must be a non-empty string"))
@@ -76,13 +93,13 @@
                               "expected_seconds" (jobj "type" "integer" "minimum" 1) "warning_after_seconds" (jobj "type" "integer" "minimum" 1))
                        "required" (list "command" "reason" "result_use")))
   (let* ((expected (jget args "expected_seconds" *shell-default-expected-seconds*))
-         (job (launch-shell-job (jget args "command") expected)))
+         (job (launch-shell-job (required-shell-command args) expected)))
     (wait-for-shell-job job (shell-warning-delay expected (jget args "warning_after_seconds")))))
 
 (define-tool start-shell-job (args)
     (:description "Start a managed background shell job. Then use shell-job-status, collect-shell-job, or stop-shell-job instead of ps/kill."
      :parameters (jobj "type" "object" "properties" (jobj "command" (jobj "type" "string") "expected_seconds" (jobj "type" "integer" "minimum" 1)) "required" (list "command" "expected_seconds")))
-  (let ((job (launch-shell-job (jget args "command") (jget args "expected_seconds"))))
+  (let ((job (launch-shell-job (required-shell-command args) (jget args "expected_seconds"))))
     (format nil "Started managed shell job ~a." (shell-job-id job))))
 (define-tool shell-job-status (args)
     (:description "Check a managed background shell job by id." :parameters (jobj "type" "object" "properties" (jobj "id" (jobj "type" "string")) "required" (list "id")))

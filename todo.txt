@@ -1,33 +1,17 @@
-Continue to improve the UI - things could still look and function much better than they presently do
- - take inspiration from claude-code, codex, and opencode
-
-Need to fix little UI bugs on web and tui; text is often malformed on the tui and
-for the web ui there are lots of little bugs that crop up from time to time. 
-
-some errors with api calls to REALLMs
- - also use /models api endpoint to present a list of models which can be used if none is selected
-   - once user has selected a choice, we continue on.
-
-add a tool for requesting things from another instance of the AI; we heard you like ai so we added an ai to your ai
- - this can be used to ask questions, guidance, planning etc - the agent can ask any kind of question - it can include a system prompt as well, to guide exactly what output it wants. 
-
 Maybe expose an interface via swank/slynk too?
   - allow CL programs to ask the AI for things, and have it return json (a final json, not the intermediate steps?).
 
-Web ui needs *much much much* more polish and tweaking to be usable day-to-day.
-
 Ideally want a nice Emacs interface to interact with cl-agent.
-
-Need to fix it's weird behavior where it will use write-extension as a scratch space. 
- - give it a proper, "write-scratch-file" which it can decide what to do with instead of
-   using the extension system to write these things.
-    - can also allow for the user to "download" the resulting file. 
-
-Add more directory search techniques and file digestion; want the ai to be able to determine
-what files contain what etc. Get a lay of the land for each file. 
-
 
 investigate:
 - https://github.com/lambda-symbolics/cl-skills
 - https://github.com/lambda-symbolics/mcparen ? 
+
+
+support using LSP as a tool/mcp server; on boot see what lsp servers are available and 
+expose them; when the agent wants, spin up the server and allow for the agent to query it
+
+add testsuite for using actual mcp servers; find some common/useful mcp servers, and 
+write some test suites using them (ideally with the small ollama model, but could try 
+using the apfel model too).
 

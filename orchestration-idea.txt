@@ -1,0 +1,35 @@
+Yes — cl-agent has the right foundation, but the orchestration is currently “possible through hooks,” not yet a first-class product feature.
+
+What it already has:
+
+- `:user-message` can rewrite/expand prompts before the main model sees them.
+- `:before-request`, `:after-response`, and tool hooks provide the right pipeline boundaries.
+- `session-complete` and `ask-llm` provide isolated side calls for planning, critique, or synthesis.
+- Tool registry/introspection, MCP, model discovery, and verification loops already exist.
+
+That maps well to the design guidance: keep the model-led loop, while making context assembly, execution, verification, and intermediate state explicit. [Dive into Claude Code’s design guide](https://github.com/VILA-Lab/Dive-into-Claude-Code/blob/main/docs/build-your-own-agent.md) makes the same distinction, especially around the assemble/model/execute boundaries, isolated subagent results, and preserving evidence across stages.
+
+The missing piece is a built-in orchestration layer. I recommend this order:
+
+1. First-class pipeline modes: `direct`, `plan`, and `plan-review`.
+   - `plan` makes an isolated structured planning call before execution.
+   - It produces a rewritten task, short visible plan/sketch, suggested tools, and verification criteria.
+   - The main agent receives the execution brief; the user sees the plan as an intermediate event.
+
+2. Tool discovery and curation.
+   - Planner sees a compact tool catalog.
+   - Main model receives either all tools for small sessions or a selected set for large MCP tool inventories.
+   - It can request another discovery pass rather than blindly using a suggested tool.
+
+3. Completion verification.
+   - Before declaring success, run a lightweight reviewer with the original goal, plan, changed artifacts/tool results, and verification evidence.
+   - The reviewer either accepts, asks for a bounded revision, or reports an explicit unresolved blocker.
+
+4. Durable task records before true multi-agent execution.
+   - Persist plan, stage status, tool evidence, and pending approvals.
+   - Then add isolated worker tasks with explicit input, allowed tools, model, expected output, and acceptance criteria.
+   - Do not start with unrestricted concurrent agents sharing the main conversation or write access.
+
+That last ordering is intentional: Open Multi-Agent’s useful ideas are its explicit task graph, deterministic scheduling, checkpoints, approvals, execution receipts, and verifiable journal—not merely “multiple agents.” Its coordinator turns a goal into task specifications, then a scheduler runs them and records results. [OMA README](https://github.com/open-multi-agent/open-multi-agent) describes those modes and the durable approval/journal model.
+
+I’d build phase 1 next: an opt-in `/mode plan` pipeline plus a config setting, structured planner output, visible intermediate plan, and tests. It would make cl-agent feel much more like Codex/Claude/OpenCode without forcing every simple prompt through extra model calls.
