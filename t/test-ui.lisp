@@ -160,6 +160,18 @@ suite that only ever runs one of these at a time.")
     (check (search "<pre" inline-fence-html))
     (check (search "(let ((answer 42)) answer)" inline-fence-html))))
 
+(deftest web-frontend-does-not-leak-code-block-markers-between-prose ()
+  ;; The renderer replaces fences with private markers before 3BMD parses the
+  ;; surrounding Markdown.  A marker must remain its own paragraph even when
+  ;; prose immediately follows a closing fence, or it becomes visible to the
+  ;; user as "CLAGENT-CODE-BLOCK-1".
+  (let ((html (web-markdown-html
+               (format nil "An excerpt:~%```lisp~%(defun answer () 42)~%```~%It returns the answer."))))
+    (check (search "<pre" html))
+    (check (search "(defun answer () 42)" html))
+    (check (search "It returns the answer" html))
+    (check (not (search "CLAGENT-CODE-BLOCK" html)))))
+
 (deftest web-frontend-messages-reflects-ui-calls ()
   (with-test-web-frontend (frontend)
     (ui-system frontend "system notice")

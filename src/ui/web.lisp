@@ -203,8 +203,13 @@ Markers prevent 3BMD from parsing either backticks or raw PRE markup."
                            (html (format nil "<pre><code~@[ class=\"language-~a\"~]>~a</code></pre>"
                                          (and (plusp (length language)) (html-escape language))
                                          (html-escape code))))
+                      ;; Keep the marker in its own Markdown paragraph.  If
+                      ;; prose follows the closing fence, merely replacing the
+                      ;; fence with MARKER joins them into one <p>; the exact
+                      ;; <p>MARKER</p> substitution below then misses and the
+                      ;; browser exposes our implementation detail.
                       (write-string text out :start cursor :end opening)
-                      (write-string marker out)
+                      (format out "~%~%~a~%~%" marker)
                       (push (cons marker html) blocks)
                       (setf cursor (if (< closing-line-end (length text))
                                        (1+ closing-line-end) closing-line-end)))))))
