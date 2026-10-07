@@ -536,10 +536,10 @@ snapshot rollback for failed installs, focused transaction-owned mutation
 exercises with durable receipts, explicit install/discard/commit APIs, atomic
 source publication, and readable mutation-journal receipts.
 
-Not implemented yet: definition/method/variable capture and rollback,
-stale-definition retirement on update, replayed generations, `--safe` recovery
-boot, named checkpoints, and generation rollback. Registry rollback must not
-be mistaken for undoing arbitrary
+Not implemented yet: stale-definition retirement on update, replayed
+generations, `--safe` recovery boot, named checkpoints, and generation
+rollback. Definition/method/variable capture and rollback now use Surgeon;
+they and registry rollback must not be mistaken for undoing arbitrary
 top-level side effects; the clean-process probe is the current protection for
 the parent image, not an OS sandbox.
 

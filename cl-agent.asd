@@ -22,6 +22,7 @@
   :depends-on ("drakma" "shasht" "uiop" "mallet" "defstar"
                "cl-mcp" "cl-mcp/client" "bordeaux-threads"  ; src/mcp/*.lisp
                "cl-exec-sandbox" "daphne"                      ; sandboxed processes; DAP client
+               "surgeon"                                        ; reversible SBCL definition changes
                "cl-lsp" "cl-skills"                           ; agent LSP + Skills
                "clingon" "3bmd" "3bmd-ext-tables"           ; CLI parsing; Markdown web rendering
                "tuition"                                     ; TUI frontend, src/ui/tui.lisp
@@ -79,6 +80,7 @@
       :components
       ((:file "protocol")
        (:file "probe")
+       (:file "definitions")
        (:file "exercises")
        (:file "transaction")
        (:file "journal")))

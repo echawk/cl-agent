@@ -90,6 +90,7 @@ sexp-config, git+https://github.com/lambda-symbolics/sexp-config@71d665f3ae81038
 shasht, ghcr.io/ocicl/shasht@sha256:ed683f73d865bb2d7231786797211774fce8f783890b295768f0794cd3de633b, shasht-20251015-40a4aee/shasht.asd
 split-sequence, ghcr.io/ocicl/split-sequence@sha256:3a37662eedd99c42995587b9d443c4631f25c4c523091bcca31a27b880585b8e, split-sequence-2.0.1/split-sequence.asd
 string-case, ghcr.io/ocicl/string-case@sha256:9db2d4160b76ce1ed9f754d12f679c665593a9a436177d36380a1a8a176ec16a, string-case-20240503-718c761/string-case.asd
+surgeon, git+https://github.com/lambda-symbolics/surgeon@347e3a48f931c6ba178d0582fb8a79bd22a4ea6f#ref=347e3a48f931c6ba178d0582fb8a79bd22a4ea6f, surgeon-347e3a4/surgeon.asd
 trivia, ghcr.io/ocicl/trivia@sha256:51db74757bc31ceaf3a643914a8ffa87825799097dea4912650e6ac62bed5209, trivia-20240904-4383dd8/trivia.asd
 trivia.balland2006, ghcr.io/ocicl/trivia@sha256:51db74757bc31ceaf3a643914a8ffa87825799097dea4912650e6ac62bed5209, trivia-20240904-4383dd8/trivia.balland2006.asd
 trivia.benchmark, ghcr.io/ocicl/trivia@sha256:51db74757bc31ceaf3a643914a8ffa87825799097dea4912650e6ac62bed5209, trivia-20240904-4383dd8/trivia.benchmark.asd

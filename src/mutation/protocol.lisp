@@ -11,6 +11,11 @@
    (staged-source :initarg :staged-source :reader mutation-staged-source)
    (state :initform :proposed :accessor mutation-state)
    (receipts :initform nil :accessor mutation-receipts)
+   ;; Surgeon captures a callable undo closure for each top-level definition
+   ;; installed by this transaction.  These are live-image state, deliberately
+   ;; kept separate from the data-only definition-changes journal projection.
+   (definition-undo-actions :initform nil :accessor mutation-definition-undo-actions)
+   (definition-changes :initform nil :accessor mutation-definition-changes)
    ;; Registry snapshots can reverse registrations, not arbitrary top-level
    ;; effects or definition changes.  The receipt makes that limit explicit.
    (before-state :initform nil :accessor mutation-before-state)))
@@ -53,4 +58,5 @@
         :filename (mutation-filename transaction) :target (namestring (mutation-target transaction))
         :staged-source (namestring (mutation-staged-source transaction))
         :state (mutation-state transaction)
+        :definition-changes (reverse (copy-tree (mutation-definition-changes transaction)))
         :receipts (reverse (copy-list (mutation-receipts transaction)))))

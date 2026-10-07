@@ -59,6 +59,13 @@
   (set-later-registry-value "*SLASH-COMMANDS*" (getf snapshot :commands))
   t)
 
+(defun rollback-mutation-live-state (transaction)
+  "Restore definitions and registries captured before a live install."
+  (rollback-mutation-definitions transaction)
+  (when (mutation-before-state transaction)
+    (restore-mutation-state (mutation-before-state transaction)))
+  transaction)
+
 (defun propose-extension (filename source)
   "Stage an extension proposal without changing an active extension or image."
   (let* ((bare (normalized-extension-filename filename))
@@ -115,16 +122,14 @@ top-level effects."
     (setf (mutation-before-state transaction) snapshot)
     (handler-case
         (progn
-          (load-extension-file (mutation-staged-source transaction)
-                               :owner (mutation-owner transaction)
-                               :origin (list :mutation (mutation-id transaction)))
+          (load-mutation-extension-file transaction)
           (setf (mutation-state transaction) :installed)
           (mutation-receipt transaction :installed :rollback :registry-snapshot)
           (emit-event :mutation-installed :component (mutation-owner transaction)
                       :payload (mutation->plist transaction))
           transaction)
       (error (condition)
-        (restore-mutation-state snapshot)
+        (rollback-mutation-live-state transaction)
         (setf (mutation-state transaction) :failed)
         (mutation-receipt transaction :rolled-back :phase :install
                           :detail (princ-to-string condition) :rollback :registry-snapshot)
@@ -150,8 +155,7 @@ boundary."
                     :payload (mutation->plist transaction))
         transaction)
     (error (condition)
-      (when (mutation-before-state transaction)
-        (restore-mutation-state (mutation-before-state transaction)))
+      (rollback-mutation-live-state transaction)
       (setf (mutation-state transaction) :failed)
       (mutation-receipt transaction :rolled-back :phase :exercise
                         :detail (princ-to-string condition) :rollback :registry-snapshot)
@@ -163,8 +167,7 @@ boundary."
   "Restore the registry state captured before installation, if still available."
   (unless (member (mutation-state transaction) '(:installed :exercised :failed))
     (error "Only installed, exercised, or failed mutations can be discarded"))
-  (when (mutation-before-state transaction)
-    (restore-mutation-state (mutation-before-state transaction)))
+  (rollback-mutation-live-state transaction)
   (setf (mutation-state transaction) :discarded)
   (mutation-receipt transaction :discarded :rollback :registry-snapshot)
   (emit-event :mutation-discarded :component (mutation-owner transaction)

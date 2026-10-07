@@ -2,6 +2,8 @@
 
 (in-package :cl-agent)
 
+(defvar *mutation-definition-rollback-value* nil)
+
 (deftest mutation-proposal-does-not-change-active-source-or-registry ()
   (with-temp-config-dir ()
     (let ((transaction (propose-extension
@@ -90,3 +92,46 @@
       (check-equal (mutation-state transaction) :failed)
       (check-equal (find-tool "mutation-exercise-fail-tool") nil)
       (check-condition error (commit-mutation transaction)))))
+
+(deftest mutation-discard-restores-a-redefined-function-and-variable ()
+  (with-temp-config-dir ()
+    (defun mutation-definition-rollback-probe () :old)
+    (defparameter *mutation-definition-rollback-value* :old)
+    (let ((transaction
+            (propose-extension
+             "mutation-definition-rollback"
+             "(in-package :cl-agent)
+               (defun mutation-definition-rollback-probe () :new)
+               (defparameter *mutation-definition-rollback-value* :new)
+               (define-tool mutation-definition-rollback-tool (args) (:description \"x\") \"ok\")")))
+      (preflight-mutation transaction)
+      (install-mutation transaction)
+      (check-equal (mutation-definition-rollback-probe) :new)
+      (check-equal *mutation-definition-rollback-value* :new)
+      (exercise-mutation transaction)
+      (discard-mutation transaction)
+      (check-equal (mutation-definition-rollback-probe) :old)
+      (check-equal *mutation-definition-rollback-value* :old)
+      (check-equal (find-tool "mutation-definition-rollback-tool") nil))))
+
+(deftest failed-mutation-exercise-restores-a-redefined-method ()
+  (with-temp-config-dir ()
+    (defgeneric mutation-method-rollback-probe (value))
+    (defmethod mutation-method-rollback-probe ((value integer))
+      (declare (ignore value))
+      :old)
+    (let ((transaction
+            (propose-extension
+             "mutation-method-rollback"
+             "(in-package :cl-agent)
+               (defmethod mutation-method-rollback-probe ((value integer))
+                 (declare (ignore value)) :new)
+               (define-tool mutation-method-rollback-tool (args) (:description \"x\") \"ok\")
+               (define-mutation-exercise mutation-method-rollback-failure ()
+                 (error \"deliberate exercise failure\"))")))
+      (preflight-mutation transaction)
+      (install-mutation transaction)
+      (check-equal (mutation-method-rollback-probe 1) :new)
+      (check-condition error (exercise-mutation transaction))
+      (check-equal (mutation-method-rollback-probe 1) :old)
+      (check-equal (find-tool "mutation-method-rollback-tool") nil))))

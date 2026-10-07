@@ -68,7 +68,7 @@ published."
   (let ((exercises (mutation-exercises-owned-by (mutation-owner transaction))))
     (mutation-receipt transaction :exercise
                        :exercise-id :component-inventory
-                       :status :passed
+                       :result :passed
                        :components (mutation-component-exercise-evidence transaction))
     (dolist (exercise exercises)
       (handler-case
@@ -77,12 +77,12 @@ published."
             (mutation-receipt transaction :exercise
                                :exercise-id (mutation-exercise-id exercise)
                                :description (mutation-exercise-description exercise)
-                               :status :passed))
+                               :result :passed))
         (error (condition)
           (mutation-receipt transaction :exercise
                              :exercise-id (mutation-exercise-id exercise)
                              :description (mutation-exercise-description exercise)
-                             :status :failed
+                             :result :failed
                              :detail (princ-to-string condition))
           (error "Mutation exercise ~a failed: ~a"
                  (mutation-exercise-id exercise) condition))))
