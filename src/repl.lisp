@@ -458,7 +458,10 @@ is NIL) -- there is no provider to borrow outside of one."
 (defun current-turn-review-evidence (session)
   "Render the latest user turn and its tool results for the isolated reviewer."
   (let* ((messages (session-messages session))
-         (start (position "user" messages :from-end t :key (lambda (message) (getf message :role))))
+         ;; Roles arrive as freshly decoded strings, so use STRING= rather
+         ;; than POSITION's default identity comparison.
+         (start (position "user" messages :from-end t :test #'string=
+                         :key (lambda (message) (getf message :role))))
          (turn (if start (subseq messages start) nil)))
     (with-output-to-string (out)
       (dolist (message turn)
@@ -609,11 +612,13 @@ The caller reports this as tool feedback rather than asking the user."
               :reason "The shell-command inspector returned unusable output."
               :alternative "Choose a bounded command with a specific target."))))
 
-(defun inspect-shell-command (session command)
+(defun inspect-shell-command (session command reason result-use)
   "Ask a tool-free reviewer whether COMMAND is a justified shell action.
 
-SESSION supplies the actual task and evidence, preventing the reviewer from
-judging a command in isolation.  It never asks the user for permission."
+SESSION supplies the actual task and evidence, while REASON and RESULT-USE
+state the proposing model's intended intermediate step.  This keeps the
+reviewer from judging a discovery command as though it had to be the final
+answer.  It never asks the user for permission."
   (let ((whole-host-reason (whole-host-shell-search-reason command)))
     (if whole-host-reason
         ;; A model cannot override this: whole-host discovery has no bounded
@@ -623,9 +628,13 @@ judging a command in isolation.  It never asks the user for permission."
         (parse-shell-command-inspection
          (let ((*current-session* session))
            (session-complete
-            (format nil "Current task and evidence:~%~a~%~%Proposed shell command:~%~a"
-                    (current-turn-review-evidence session) command)
-            :system "You are a conservative shell-command inspector for a coding agent. Reject by default unless the command has a concrete, bounded target and a direct evidence need that follows from the task. Allow only if you can state both (1) the exact evidence it will obtain and (2) why the command's scope is the smallest reasonable one. Reject commands that gather information more broadly than the task/evidence justifies, have an unbounded or poorly targeted search space, duplicate available direct evidence, or are unlikely to answer the question. This is not a permission check: do not ask the user anything and do not consider authorization. Reply JSON only: {\"decision\": \"allow\"|\"reject\", \"reason\": string, \"alternative\": string|null}."))))))
+           ;; Keep the goal, rationale, intended downstream use, and command
+           ;; together in the reviewer input.  The model system prompt is
+           ;; deliberately generic; these are call-specific facts.
+           (format nil "Current task and evidence:~%~a~%~%Why the model needs this command:~%~a~%~%How the model will use the result:~%~a~%~%Proposed shell command:~%~a"
+                    (current-turn-review-evidence session) reason result-use command)
+            :system "You are a conservative shell-command inspector for a coding agent. Assess the proposed command as an intermediate step toward the user's goal, not as though it must itself be the final answer. The proposing model must state why it needs the command and how it will use the result. Allow a bounded discovery command when that stated use plausibly and directly leads to the goal--for example, listing a known source directory to select a code file to read. Reject by default unless the command has a concrete, bounded target and a direct evidence need that follows from the task. Allow only if you can state both (1) the exact evidence it will obtain and (2) why the command's scope is the smallest reasonable one. Reject commands that gather information more broadly than the task/evidence justifies, have an unbounded or poorly targeted search space, duplicate available direct evidence, or whose stated reason or result use is vague, inconsistent, or unlikely to advance the goal. This is not a permission check: do not ask the user anything and do not consider authorization. Reply JSON only: {\"decision\": \"allow\"|\"reject\", \"reason\": string, \"alternative\": string|null}."
+            ))))))
 
 (defun rejected-shell-command-result (inspection)
   "Feedback returned to the model when command inspection rejects a shell call."
@@ -653,7 +662,10 @@ entirely."
                       *shell-command-inspection-enabled*
                       (string= (getf tool-call :name) "shell")
                       *current-session*)
-             (inspect-shell-command session (jget (getf tool-call :arguments) "command"))))
+             (inspect-shell-command session
+                                    (jget (getf tool-call :arguments) "command")
+                                    (jget (getf tool-call :arguments) "reason")
+                                    (jget (getf tool-call :arguments) "result_use"))))
          (inspection-error (and shell-inspection
                                 (eq (getf shell-inspection :decision) :reject)
                                 (rejected-shell-command-result shell-inspection)))

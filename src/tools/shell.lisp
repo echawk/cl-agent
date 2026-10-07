@@ -8,11 +8,15 @@
 (in-package :cl-agent)
 
 (define-tool shell (args)
-    (:description "Run a shell command in the current directory. Each call starts a fresh shell; state (cwd, env vars) does not persist between calls, so chain related steps with && in one command."
+    (:description "Run a shell command in the current directory. State why this command is needed and how its result will be used to advance the user's goal; those fields let the command inspector distinguish a justified intermediate discovery step from unfocused exploration. Each call starts a fresh shell; state (cwd, env vars) does not persist between calls, so chain related steps with && in one command."
      :parameters (jobj "type" "object"
                         "properties" (jobj "command" (jobj "type" "string"
-                                                            "description" "The shell command to run."))
-                        "required" (list "command")))
+                                                            "description" "The shell command to run.")
+                                           "reason" (jobj "type" "string"
+                                                          "description" "Why this command is needed now, in relation to the user's goal and available evidence.")
+                                           "result_use" (jobj "type" "string"
+                                                              "description" "What you will do with this command's result to advance the user's goal."))
+                        "required" (list "command" "reason" "result_use")))
   (let ((command (jget args "command")))
     (unless command (error "shell tool called with no \"command\" argument"))
     (unless (stringp command)

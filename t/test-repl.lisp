@@ -118,7 +118,10 @@
       (unwind-protect
            (progn
              (setf (symbol-function 'ui-stats-updated) (lambda (f s) (declare (ignore f)) (push s stats-updates)))
-             (run-tool-call session (list :id "1" :name "shell" :arguments (jobj "command" "echo hi"))))
+             (run-tool-call session (list :id "1" :name "shell"
+                                          :arguments (jobj "command" "echo hi"
+                                                           "reason" "Verify shell execution."
+                                                           "result_use" "Use the output in this test."))))
         (setf (symbol-function 'ui-stats-updated) orig)))
     (check-equal (getf (session-stats-snapshot session) :tool-calls) 1)
     (check stats-updates "UI-STATS-UPDATED fired at least once")))
@@ -137,7 +140,10 @@
            (progn
              (setf (symbol-function 'call-tool) (lambda (name args) (declare (ignore name args)) (setf shell-ran t) "should not run"))
              (add-hook :before-tool-call 'test-veto (lambda (ctx) (declare (ignore ctx)) (error "nope, not today")))
-             (let ((message (run-tool-call session (list :id "1" :name "shell" :arguments (jobj "command" "echo hi")))))
+             (let ((message (run-tool-call session (list :id "1" :name "shell"
+                                                         :arguments (jobj "command" "echo hi"
+                                                                          "reason" "Exercise the hook."
+                                                                          "result_use" "Check whether it permits the call.")))))
                (check (not shell-ran) "the tool itself never ran")
                (check-equal (getf message :role) "tool")
                (check (search "nope, not today" (getf message :content)))))
@@ -152,7 +158,10 @@
          (progn
            (add-hook :before-tool-call 'test-mutate
              (lambda (ctx) (list :tool-name (getf ctx :tool-name) :arguments (jobj "command" "echo mutated"))))
-           (let ((message (run-tool-call session (list :id "1" :name "shell" :arguments (jobj "command" "echo original")))))
+           (let ((message (run-tool-call session (list :id "1" :name "shell"
+                                                       :arguments (jobj "command" "echo original"
+                                                                        "reason" "Exercise argument rewriting."
+                                                                        "result_use" "Confirm the hook's replacement runs.")))))
              (check (search "mutated" (getf message :content)))
              (check (not (search "original" (getf message :content))))))
       (remove-hook :before-tool-call 'test-mutate))))
@@ -211,11 +220,50 @@
                           (lambda (&rest ignored) (declare (ignore ignored)) (setf called t) "ran"))
                     (let ((*current-session* session))
                       (let ((result (run-tool-call session (list :id "inspect" :name "shell"
-                                                                  :arguments (jobj "command" "some command")))))
+                                                                  :arguments (jobj "command" "some command"
+                                                                                   "reason" "Obtain focused evidence."
+                                                                                   "result_use" "Use it to answer the library question.")))))
                         (check (not called))
                         (check (search "Shell command was not run" (getf result :content))))))
                (setf (symbol-function 'call-tool) original))))
       (setf (symbol-function 'session-complete) complete))))
+
+(deftest shell-command-inspector-receives-goal-rationale-and-intended-result-use ()
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (complete (symbol-function 'session-complete))
+         (original-call-tool (symbol-function 'call-tool))
+         (review-prompt nil)
+         (called nil))
+    (setf (session-messages session)
+          (append (session-messages session)
+                  (list (list :role "user" :content "Show me an interesting piece of code in this repository."))))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'session-complete)
+                 (lambda (prompt &key system model)
+                   (declare (ignore system model))
+                   (setf review-prompt prompt)
+                   "{\"decision\":\"allow\",\"reason\":\"The source directory is bounded\",\"alternative\":null}"))
+           (setf (symbol-function 'call-tool)
+                 (lambda (&rest ignored)
+                   (declare (ignore ignored))
+                   (setf called t)
+                   "src/repl.lisp"))
+           (let ((*current-session* session))
+             (run-tool-call
+              session
+              (list :id "contextual-inspect" :name "shell"
+                    :arguments (jobj "command" "ls src/"
+                                     "reason" "Identify candidate source files before choosing a useful code example."
+                                     "result_use" "Read a candidate file and select a snippet to show the user."))))
+           (check called "accepted command runs")
+           (check (search "Show me an interesting piece of code" review-prompt)
+                  "goal is sent to the inspector")
+           (check (search "Identify candidate source files" review-prompt) "rationale is sent to the inspector")
+           (check (search "Read a candidate file and select a snippet" review-prompt) "intended result use is sent to the inspector")
+           (check (search "ls src/" review-prompt) "command is sent to the inspector"))
+      (setf (symbol-function 'session-complete) complete
+            (symbol-function 'call-tool) original-call-tool))))
 
 (deftest shell-command-inspector-rejects-whole-host-discovery-before-model-review ()
   (let* ((session (make-session (make-instance 'ollama-provider)))
@@ -237,7 +285,9 @@
                           (lambda (&rest ignored) (declare (ignore ignored)) (setf called t) "ran"))
                     (let ((*current-session* session))
                       (let ((result (run-tool-call session (list :id "whole-host" :name "shell"
-                                                                  :arguments (jobj "command" "find / -name '*.lisp'")))))
+                                                                  :arguments (jobj "command" "find / -name '*.lisp'"
+                                                                                   "reason" "Locate the library."
+                                                                                   "result_use" "Read the discovered file.")))))
                         (check (not called))
                         (check (search "entire host filesystem" (getf result :content))))))
                (setf (symbol-function 'call-tool) original))))
