@@ -137,6 +137,25 @@ Returns (values diagnostics warnings-p failure-p).  No FASL is retained."
     (:warning 10)
     (otherwise 1)))
 
+(defun review-lisp-input (source lint-path &key (compile-p t))
+  "Review SOURCE, reporting Mallet findings against LINT-PATH.
+
+Compilation deliberately still uses a disposable copy of SOURCE, so checking
+an ordinary project file never leaves a FASL beside that file."
+  (let* ((violations (mallet:lint-file lint-path :config (lisp-review-config)))
+         (missing (missing-type-claims source lint-path)))
+    (multiple-value-bind (diagnostics warnings-p failure-p)
+        (if compile-p (compile-lisp-source source) (values nil nil nil))
+      (list :score (+ (reduce #'+ violations :key #'violation-weight :initial-value 0)
+                      (* 25 (length missing))
+                      (* 10 (length diagnostics))
+                      (if failure-p 1000 0))
+            :violations violations
+            :missing-type-claims missing
+            :compiler-diagnostics diagnostics
+            :compiler-warnings-p warnings-p
+            :compile-failure-p failure-p))))
+
 (defun review-lisp-source (source &key (compile-p t))
   "Review SOURCE with Mallet, type-claim checks, and optionally SBCL.
 
@@ -147,19 +166,21 @@ guidance, not a gate; only :COMPILE-FAILURE-P should prevent code from running."
   (call-with-temporary-lisp-source
    source
    (lambda (path)
-     (let* ((violations (mallet:lint-file path :config (lisp-review-config)))
-            (missing (missing-type-claims source path)))
-       (multiple-value-bind (diagnostics warnings-p failure-p)
-           (if compile-p (compile-lisp-source source) (values nil nil nil))
-         (list :score (+ (reduce #'+ violations :key #'violation-weight :initial-value 0)
-                         (* 25 (length missing))
-                         (* 10 (length diagnostics))
-                         (if failure-p 1000 0))
-               :violations violations
-               :missing-type-claims missing
-               :compiler-diagnostics diagnostics
-               :compiler-warnings-p warnings-p
-               :compile-failure-p failure-p))))))
+     (review-lisp-input source path :compile-p compile-p))))
+
+(defun review-lisp-file (path &key (compile-p t))
+  "Review the Common Lisp source file at PATH without modifying it.
+
+Mallet receives the actual file, preserving useful file/line locations in its
+findings, while compilation runs against a disposable copy to avoid artifacts
+in the project tree."
+  (unless (and (stringp path) (plusp (length (string-trim " " path))))
+    (error "Lisp review path must be a non-empty string"))
+  (let ((resolved (probe-file path)))
+    (unless resolved (error "Lisp review file does not exist: ~a" path))
+    (when (uiop:directory-pathname-p resolved)
+      (error "Lisp review path names a directory, not a file: ~a" path))
+    (review-lisp-input (uiop:read-file-string resolved) resolved :compile-p compile-p)))
 
 (defun format-lisp-review (review)
   "Render REVIEW-LISP-SOURCE's result for a model or human."

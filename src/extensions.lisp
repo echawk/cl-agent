@@ -73,6 +73,16 @@ a bare end-of-file reader error)."
     (unless (zerop depth)
       (list :open-count depth :line last-change-line))))
 
+(defun check-paren-balance-file (path)
+  "Run CHECK-PAREN-BALANCE on the text file at PATH without modifying it."
+  (unless (and (stringp path) (plusp (length (string-trim " " path))))
+    (error "Paren-check path must be a non-empty string"))
+  (let ((resolved (probe-file path)))
+    (unless resolved (error "Paren-check file does not exist: ~a" path))
+    (when (uiop:directory-pathname-p resolved)
+      (error "Paren-check path names a directory, not a file: ~a" path))
+    (check-paren-balance (uiop:read-file-string resolved))))
+
 (defun extensions-directory ()
   (merge-pathnames "extensions/" *config-directory*))
 

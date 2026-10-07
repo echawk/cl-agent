@@ -33,6 +33,29 @@
 (deftest review-lisp-tool-is-registered ()
   (check (find-tool "review-lisp")))
 
+(deftest lisp-quality-tools-analyze-existing-files-without-artifacts ()
+  (let ((path (merge-pathnames "cl-agent-quality-file-test.lisp" (uiop:temporary-directory))))
+    (unwind-protect
+         (progn
+           (with-open-file (out path :direction :output :if-exists :supersede)
+             (format out "(in-package :cl-agent)~%(defun quality-file-fixture (x) x)~%"))
+           (let ((review (call-tool "review-lisp" (jobj "path" (namestring path)))))
+             (check (search "quality-file-fixture" review :test #'char-equal))
+             (check (not (probe-file (compile-file-pathname path)))
+                    "file review does not leave a FASL beside the target"))
+           (check-equal (call-tool "check-parens" (jobj "path" (namestring path)))
+                        "Parentheses are balanced.")
+           (with-open-file (out path :direction :output :if-exists :supersede)
+             (format out "(defun missing-close ()~%  1~%"))
+           (check (search "Unbalanced parentheses"
+                          (call-tool "check-parens" (jobj "path" (namestring path))))))
+      (when (probe-file path) (delete-file path)))))
+
+(deftest lisp-quality-tools-require-one-input-form ()
+  (check (search "requires exactly one" (call-tool "review-lisp" (jobj))))
+  (check (search "not both"
+                 (call-tool "check-parens" (jobj "source" "()" "path" "some.lisp")))))
+
 (deftest common-lisp-fences-are-extracted-selectively ()
   (check-equal
    (extract-common-lisp-code-blocks
