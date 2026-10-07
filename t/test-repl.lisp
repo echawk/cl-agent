@@ -232,6 +232,43 @@
                (setf (symbol-function 'call-tool) original))))
       (setf (symbol-function 'session-complete) complete))))
 
+(deftest shell-command-inspector-accepts-json-wrapped-in-prose-or-a-fence ()
+  (dolist (response (list "Decision follows:\n```json\n{\"decision\":\"allow\",\"reason\":\"bounded source read\",\"alternative\":null}\n```"
+                          "I approve it. {\"decision\":\"reject\",\"reason\":\"too broad\",\"alternative\":\"Read one file\"}"))
+    (let ((inspection (parse-shell-command-inspection response)))
+      (check (getf inspection :valid-p))
+      (check (member (getf inspection :decision) '(:allow :reject))))))
+
+(deftest shell-command-inspector-retries-one-malformed-review ()
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (complete (symbol-function 'session-complete))
+         (original-call-tool (symbol-function 'call-tool))
+         (reviews 0)
+         (called nil))
+    (setf (session-messages session)
+          (append (session-messages session) (list (list :role "user" :content "Read this project file."))))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'session-complete)
+                 (lambda (&rest ignored)
+                   (declare (ignore ignored))
+                   (incf reviews)
+                   (if (= reviews 1)
+                       "I would allow this command."
+                       "{\"decision\":\"allow\",\"reason\":\"the target is bounded\",\"alternative\":null}")))
+           (setf (symbol-function 'call-tool)
+                 (lambda (&rest ignored) (declare (ignore ignored)) (setf called t) "ran"))
+           (let ((*current-session* session))
+             (run-tool-call session
+                            (list :id "format-retry" :name "shell"
+                                  :arguments (jobj "command" "sed -n '1,40p' src/repl.lisp"
+                                                   "reason" "Read the targeted implementation."
+                                                   "result_use" "Use it to explain the behavior."))))
+           (check called)
+           (check-equal reviews 2))
+      (setf (symbol-function 'session-complete) complete
+            (symbol-function 'call-tool) original-call-tool))))
+
 (deftest shell-command-inspector-receives-goal-rationale-and-intended-result-use ()
   (let* ((session (make-session (make-instance 'ollama-provider)))
          (complete (symbol-function 'session-complete))
@@ -370,9 +407,41 @@
                    (list :role "assistant"
                          :content (format nil "```lisp~%(in-package :cl-agent)~%(defun generated-untyped (x) x)~%```~%")
                          :tool-calls nil :usage nil)))
-           (check (search "generated-untyped" (getf (run-agent-turn session) :content))))
+           ;; Lisp presentation normalization uppercases symbols, so verify
+           ;; the generated name without depending on its printed case.
+           (check (search "generated-untyped" (getf (run-agent-turn session) :content)
+                          :test #'char-equal)))
       (setf (symbol-function 'chat-stream) orig))
     (check-equal calls 1 "missing type claims stay advisory for user code")))
+
+(deftest run-agent-turn-preserves-a-draft-during-automatic-lisp-revision ()
+  (let* ((frontend (make-instance 'recording-frontend))
+         (session (make-session (make-instance 'ollama-provider) :frontend frontend))
+         (stream (symbol-function 'chat-stream))
+         (review (symbol-function 'review-assistant-common-lisp))
+         (calls 0))
+    (unwind-protect
+         (progn
+           (setf (symbol-function 'chat-stream)
+                 (lambda (provider messages tools on-delta)
+                   (declare (ignore provider messages tools on-delta))
+                   (incf calls)
+                   (list :role "assistant" :content (if (= calls 1) "draft proposal" "revised proposal")
+                         :tool-calls nil :usage nil)))
+           (setf (symbol-function 'review-assistant-common-lisp)
+                 (lambda (content)
+                   (if (string= content "draft proposal")
+                       (list (list :compile-failure-p t))
+                       nil)))
+           (check-equal (getf (run-agent-turn session) :content) "revised proposal"))
+      (setf (symbol-function 'chat-stream) stream
+            (symbol-function 'review-assistant-common-lisp) review))
+    (let ((texts (mapcar #'second
+                         (remove-if-not (lambda (event) (and (consp event) (eq (first event) :text)))
+                                        (recording-frontend-events frontend)))))
+      (check (member "draft proposal" texts :test #'string=)
+             "the first streamed proposal remains visible while it is revised")
+      (check (member "revised proposal" texts :test #'string=)))))
 
 (deftest plan-review-accepts-a-verified-final-answer ()
   (let* ((session (make-session (make-instance 'ollama-provider) :orchestration-mode :plan-review))

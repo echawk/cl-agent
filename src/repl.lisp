@@ -310,6 +310,14 @@ large tool schema dump. An invalid planner result retains the full catalog."
 
 (defun planning-json-candidate (response)
   "Extract one JSON object from a planner reply that may be fenced in Markdown."
+  (json-object-candidate response))
+
+(defun json-object-candidate (response)
+  "Extract one JSON object from a model reply that may contain prose or fences.
+
+Small models often obey the requested object shape while adding a sentence or
+a Markdown fence.  Callers still validate every field after extraction; this
+only avoids treating that harmless presentation noise as a policy decision."
   (if (stringp response)
       (let ((start (position #\{ response)) (end (position #\} response :from-end t)))
         (and start end (<= start end) (subseq response start (1+ end))))
@@ -760,8 +768,14 @@ The caller reports this as tool feedback rather than asking the user."
       "The command would perform an unscoped search of the entire host filesystem. Use a known project, package-manager, or runtime-specific location instead.")))
 
 (defun parse-shell-command-inspection (response)
-  "Validate the JSON-only result from the isolated shell command inspector."
-  (let* ((decoded (handler-case (and (stringp response) (json-decode response))
+  "Validate the isolated shell-command inspector's result.
+
+The inspector remains fail-closed for a genuinely invalid decision, but
+accepts an otherwise valid object wrapped in incidental prose or a code fence.
+The :VALID-P marker lets INSPECT-SHELL-COMMAND request one format repair
+without confusing a malformed response with a substantive rejection."
+  (let* ((decoded (handler-case (and (stringp response)
+                                     (json-decode (json-object-candidate response)))
                     (error () nil)))
          (decision (jget decoded "decision"))
          (reason (jget decoded "reason"))
@@ -771,12 +785,13 @@ The caller reports this as tool feedback rather than asking the user."
              (stringp reason)
              (or (null alternative) (stringp alternative)))
         (list :decision (intern (string-upcase decision) :keyword)
-              :reason reason :alternative alternative)
+              :reason reason :alternative alternative :valid-p t)
         ;; The inspector is a safety boundary: malformed output must not
         ;; silently permit a command whose relevance was never assessed.
         (list :decision :reject
               :reason "The shell-command inspector returned unusable output."
-              :alternative "Choose a bounded command with a specific target."))))
+              :alternative "Choose a bounded command with a specific target."
+              :valid-p nil))))
 
 (defun inspect-shell-command (session command reason result-use)
   "Ask a tool-free reviewer whether COMMAND is a justified shell action.
@@ -791,16 +806,20 @@ answer.  It never asks the user for permission."
         ;; evidence target, regardless of how confidently it proposes it.
         (list :decision :reject :reason whole-host-reason
               :alternative "Inspect the package manager, language runtime, or another known location.")
-        (parse-shell-command-inspection
-         (let ((*current-session* session))
-           (session-complete
-           ;; Keep the goal, rationale, intended downstream use, and command
-           ;; together in the reviewer input.  The model system prompt is
-           ;; deliberately generic; these are call-specific facts.
-           (format nil "Current task and evidence:~%~a~%~%Why the model needs this command:~%~a~%~%How the model will use the result:~%~a~%~%Proposed shell command:~%~a"
-                    (current-turn-review-evidence session) reason result-use command)
-            :system "You are a conservative shell-command inspector for a coding agent. Assess the proposed command as an intermediate step toward the user's goal, not as though it must itself be the final answer. The proposing model must state why it needs the command and how it will use the result. Allow a bounded discovery command when that stated use plausibly and directly leads to the goal--for example, listing a known source directory to select a code file to read. Reject by default unless the command has a concrete, bounded target and a direct evidence need that follows from the task. Allow only if you can state both (1) the exact evidence it will obtain and (2) why the command's scope is the smallest reasonable one. Reject commands that gather information more broadly than the task/evidence justifies, have an unbounded or poorly targeted search space, duplicate available direct evidence, or whose stated reason or result use is vague, inconsistent, or unlikely to advance the goal. This is not a permission check: do not ask the user anything and do not consider authorization. Reply JSON only: {\"decision\": \"allow\"|\"reject\", \"reason\": string, \"alternative\": string|null}."
-            ))))))
+        (let* ((prompt (format nil "Current task and evidence:~%~a~%~%Why the model needs this command:~%~a~%~%How the model will use the result:~%~a~%~%Proposed shell command:~%~a"
+                               (current-turn-review-evidence session) reason result-use command))
+               (system "You are a shell-command inspector for a coding agent. Assess the proposed command as an intermediate step toward the user's goal, not as though it must itself be the final answer. The proposing model must state why it needs the command and how it will use the result. Allow bounded, read-only inspection of a specific project file or directory when that stated use plausibly and directly leads to the goal--for example, listing a known source directory to select a code file to read. Reject commands that gather information more broadly than the task/evidence justifies, have an unbounded or poorly targeted search space, duplicate available direct evidence, or whose stated reason or result use is vague, inconsistent, or unlikely to advance the goal. This is not a permission check: do not ask the user anything and do not consider authorization. Reply with exactly one JSON object and no surrounding prose: {\"decision\": \"allow\"|\"reject\", \"reason\": string, \"alternative\": string|null}."))
+          (labels ((review (review-prompt)
+                     (let ((*current-session* session))
+                       (parse-shell-command-inspection
+                        (session-complete review-prompt :system system)))))
+            (let ((inspection (review prompt)))
+              (if (getf inspection :valid-p)
+                  inspection
+                  ;; A format-only retry makes an otherwise useful inspector
+                  ;; work with providers that prepend prose despite the prompt.
+                  (review (format nil "Your preceding response could not be parsed as the required JSON object. Reassess the same command and reply with only the required JSON object, no Markdown or explanation outside it.~%~%~a"
+                                  prompt)))))))))
 
 (defun rejected-shell-command-result (inspection)
   "Feedback returned to the model when command inspection rejects a shell call."
@@ -923,6 +942,12 @@ during this turn can call SESSION-COMPLETE."
                  (if request-revision-p
                      (progn
                        (incf lisp-review-retries)
+                       ;; This is a code-quality revision, not an answer
+                       ;; rejection. Preserve the streamed draft before the
+                       ;; follow-up can make a tool call and clear web UI
+                       ;; pending text; otherwise the user sees it vanish.
+                       (when (getf assistant-message :content)
+                         (ui-assistant-text frontend (getf assistant-message :content)))
                        (setf (session-messages session)
                              (append (session-messages session)
                                      (list (list :role "system"
