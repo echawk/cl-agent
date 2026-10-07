@@ -77,7 +77,7 @@
                            (format nil "Cannot read ~a: ~a" path condition)))))))
 
 (defun doctor-mcp-check (config)
-  (let ((servers (config-value config :mcp-servers)))
+  (let ((servers (mcp-server-specs (config-value config :mcp-servers))))
     (handler-case
         (let ((problems
                 (loop for spec in servers

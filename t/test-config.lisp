@@ -22,6 +22,11 @@ of BODY, so config/extensions tests never touch the user's real
       (check-equal (config-value config :model) "m1")
       (check-equal (config-value config :missing-key "fallback") "fallback"))))
 
+(deftest mcp-server-specs-accepts-one-server-plist-for-backward-compatibility ()
+  (let ((spec '(:name "demo" :command ("demo-server" "--stdio"))))
+    (check-equal (mcp-server-specs spec) (list spec))
+    (check-equal (mcp-server-specs (list spec)) (list spec))))
+
 (deftest load-user-config-does-not-eval-reader-macros ()
   (with-temp-config-dir ()
     (ensure-config-directory)

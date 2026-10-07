@@ -386,6 +386,55 @@ Code, Claude Desktop, or any other MCP client at
 `["/path/to/bin/cl-agent", "--mcp-serve"]` as a server command, and it
 can drive this exact running agent.
 
+### Use cl-agent from Codex or Claude Code
+
+Build the executable once, then run the relevant command from this repository
+root. `$PWD/bin/cl-agent` becomes an absolute path, so the client can start
+the server reliably later.
+
+```sh
+make build
+```
+
+**Codex CLI.** Add the stdio server and confirm that Codex discovered it:
+
+```sh
+codex mcp add cl-agent -- "$PWD/bin/cl-agent" --mcp-serve
+codex mcp list
+```
+
+The equivalent user-level `~/.codex/config.toml` entry is:
+
+```toml
+[mcp_servers.cl_agent]
+command = "/absolute/path/to/cl-agent/bin/cl-agent"
+args = ["--mcp-serve"]
+```
+
+Codex shares this MCP configuration between its CLI and IDE extension. See
+the [official Codex MCP setup documentation](https://developers.openai.com/resources/docs-mcp)
+for its server-management commands.
+
+**Claude Code.** Add the same local stdio server and inspect its connection:
+
+```sh
+claude mcp add --scope user cl-agent -- "$PWD/bin/cl-agent" --mcp-serve
+claude mcp list
+```
+
+Use `--scope project` instead when the server is intentionally part of a
+shared project configuration; then Claude Code writes `.mcp.json` for the
+project. Start Claude Code and run `/mcp` to see its connection state. The
+[official Claude Code MCP guide](https://docs.anthropic.com/en/docs/claude-code/mcp)
+documents scopes, inspection, and removal.
+
+Both commands forward all text after `--` to cl-agent. Add a normal cl-agent
+provider option there when needed, for example `--provider apple --mcp-serve`.
+The MCP process inherits the client process's working directory, so its file
+and workspace tools operate in the project the client opens. Since cl-agent
+exports powerful local tools—including shell execution and self-modification—
+only register a local checkout and configuration you trust.
+
 `eval-lisp` and `write-extension` run all submitted Lisp through the same
 quality gate before executing it: strict [Mallet](https://github.com/fukamachi/mallet)
 linting, an explicit type-claim check (DEFSTAR or `declaim ftype`), and an

@@ -90,9 +90,10 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
                    --ui / CL_AGENT_UI the same way :PROVIDER is.
   :MCP-SERVERS    list of (:name STRING :command (STRING...)) plists,
                    each auto-connected at startup via CONNECT-MCP-
-                   SERVER (src/mcp/client.lisp); e.g. (:name
+                   SERVER (src/mcp/client.lisp); e.g. ((:name
                    \"filesystem\" :command (\"npx\" \"-y\"
-                   \"@modelcontextprotocol/server-filesystem\" \"/tmp\")).
+                   \"@modelcontextprotocol/server-filesystem\" \"/tmp\"))).
+                   A single (:name ... :command ...) plist is also accepted.
                    A server that fails to connect is reported and
                    skipped, not fatal to startup.
   LSP servers are configured separately in config-dir/lsp.sexp using
@@ -119,3 +120,17 @@ is not. If you want code to run at startup, write an extension."
   "GETF with a DEFAULT, for readability at call sites: (config-value
 cfg :model \"fallback\")."
   (getf config key default))
+
+(defun mcp-server-specs (value)
+  "Normalize :MCP-SERVERS configuration VALUE to a list of server plists.
+
+The documented form is a list of (:NAME ... :COMMAND ...) plists.  Accept a
+single such plist too: early configuration examples used that natural-looking
+form, and treating its leading :NAME as a list element made every startup
+fail with a bare \"malformed property list\" error."
+  (cond
+    ((null value) nil)
+    ((and (listp value) (keywordp (first value))) (list value))
+    ((listp value) value)
+    (t (error ":MCP-SERVERS must be a server plist or a list of server plists, got ~s"
+              value))))
