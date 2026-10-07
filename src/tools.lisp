@@ -116,13 +116,17 @@ turned into text like \"Error running TOOL: ...\" rather than
 propagating, because the point of a tool call, in an agent loop, is to
 hand the MODEL something it can read and react to -- an unhandled
 Lisp condition here would otherwise kill the whole REPL over (say) a
-single bad shell command. Signals TOOL-NOT-FOUND (which the REPL loop
-also reports as text to the model, so it can try a different tool
-name) if NAME isn't registered."
-  (let ((tool (or (find-tool name) (error 'tool-not-found :name name))))
-    (handler-case (funcall (tool-handler tool) arguments)
-      (error (c)
-        (format nil "Error running ~a: ~a" name c)))))
+single bad shell command. An unknown NAME is returned as actionable
+tool feedback rather than signalled: models occasionally hallucinate a
+familiar tool name and need to choose an advertised tool on their next
+turn."
+  (let ((tool (find-tool name)))
+    (if (null tool)
+        (format nil "Tool ~s does not exist or is no longer available. Use one of the tools supplied in this conversation (or /tools) and try again."
+                name)
+        (handler-case (funcall (tool-handler tool) arguments)
+          (error (c)
+            (format nil "Error running ~a: ~a" name c))))))
 
 (defun tool-json-schema (tool)
   "OpenAI/REALLMS/xAI/Ollama-shaped {\"type\":\"function\",\"function\":{...}}

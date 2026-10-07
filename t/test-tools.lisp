@@ -7,8 +7,12 @@
   (check-equal (call-tool "test-echo" (jobj "text" "hello")) "hello")
   (unregister-tool "test-echo"))
 
-(deftest call-tool-unknown-name-signals ()
-  (check-condition tool-not-found (call-tool "definitely-not-a-real-tool" (jobj))))
+(deftest call-tool-unknown-name-returns-actionable-feedback ()
+  ;; A model can occasionally call a familiar but unadvertised tool such as
+  ;; "readme". It must receive feedback instead of terminating the turn.
+  (let ((result (call-tool "definitely-not-a-real-tool" (jobj))))
+    (check (search "does not exist" result))
+    (check (search "definitely-not-a-real-tool" result))))
 
 (deftest call-tool-catches-handler-errors ()
   (define-tool test-boom (args) (:description "always errors")

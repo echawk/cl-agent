@@ -1,5 +1,15 @@
 (in-package :cl-agent)
 
+(deftest default-prompt-named-tools-are-registered ()
+  ;; Keep the prose capability guide honest. These are the concrete tool
+  ;; names promised in *DEFAULT-SYSTEM-PROMPT*; Lisp functions mentioned as
+  ;; eval-lisp examples are intentionally not included here.
+  (dolist (name '("shell" "eval-lisp" "write-scratch-file" "write-extension"
+                  "ask-llm" "list-models" "lisp-apropos" "lookup-cl-spec"
+                  "review-lisp" "load-asdf-system" "connect-mcp-server"
+                  "disconnect-mcp-server" "list-mcp-servers"))
+    (check (find-tool name) (format nil "prompt promises registered tool ~a" name))))
+
 (deftest dispatch-slash-command-not-a-command-passthrough ()
   (let ((session (make-session (make-instance 'ollama-provider))))
     (check-equal (dispatch-slash-command session "hello there") :not-a-command)))
@@ -29,12 +39,12 @@
     (check (search "0 keys" (get-output-stream-string output))))
   (unregister-tool "test-repl-no-args-tool"))
 
-(deftest slash-call-unknown-tool-reports-error-not-condition ()
+(deftest slash-call-unknown-tool-returns-actionable-feedback ()
   (let ((session (make-session (make-instance 'ollama-provider)))
         (output (make-string-output-stream)))
     (let ((*standard-output* output))
       (check (dispatch-slash-command session "/call no-such-tool-xyz {}")))
-    (check (search "[error]" (get-output-stream-string output)))))
+    (check (search "does not exist" (get-output-stream-string output)))))
 
 (deftest slash-tools-lists-session-tools ()
   (let* ((session (make-session (make-instance 'ollama-provider) :tools (list (find-tool "shell"))))
@@ -169,6 +179,18 @@
              (check (search "JSON arguments are invalid" (getf result :content)))
              (check (search "arguments.count must be a JSON integer" (getf result :content)))))
       (unregister-tool name))))
+
+(deftest run-tool-call-returns-unknown-tool-feedback-and-keeps-the-turn-alive ()
+  ;; Exercise the actual agent dispatch path: a hallucinated tool name used
+  ;; to signal TOOL-NOT-FOUND out of RUN-TOOL-CALL and abort the turn.
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (result (run-tool-call session
+                                (list :id "unknown-tool" :name "readme"
+                                      :arguments (jobj)))))
+    (check-equal (getf result :role) "tool")
+    (check-equal (getf result :tool-call-id) "unknown-tool")
+    (check (search "readme" (getf result :content)))
+    (check (search "does not exist" (getf result :content)))))
 
 (deftest shell-command-inspector-rejects-with-model-feedback ()
   (let* ((session (make-session (make-instance 'ollama-provider)))
