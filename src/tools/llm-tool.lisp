@@ -80,7 +80,18 @@
                        "required" (list "task" "system_prompt")))
   (unless *current-session* (error "delegate-task is available only while an agent session is running"))
   (run-subagent *current-session* (jget args "task") (jget args "system_prompt")
-                (list (find-tool "shell") (find-tool "lisp-apropos")) :profile (jget args "profile")))
+                (subagent-investigation-tools) :profile (jget args "profile")))
+
+(defun subagent-investigation-tools ()
+  "Return the read-only, evidence-gathering tools available to workers.
+
+Workers may inspect a repository and diagnose Lisp files, but cannot write,
+edit, connect external services, or recursively launch another worker. This
+keeps delegation bounded while giving explorers direct file and quality tools
+instead of forcing every investigation through shell commands."
+  (remove nil (mapcar #'find-tool
+                      '("shell" "read-file" "read-file-range" "lisp-apropos"
+                        "review-lisp" "check-parens"))))
 
 (define-tool set-subagent-model-profile (args)
     (:description "Create or update a named model-routing profile for subagents in the current session. Use a profile name, an exact model identifier available from the current provider, and a short description of the work it suits. Profiles are session-local; users can make persistent defaults in config.lisp."
@@ -107,4 +118,4 @@
    (format nil "Parent goal: ~a~%~%Parent evidence so far:~%~a"
            (jget args "goal") (current-turn-review-evidence *current-session*))
    "You are a repository explorer working for a host agent. Explore only enough to answer the parent goal. Use shell commands purposefully, always supplying reason and result_use. Start from the current directory; exclude .git, ocicl, node_modules, caches, and build outputs unless the goal explicitly requires them. Read README/build metadata and a few relevant source files rather than dumping trees. Finish with a concise report containing: project purpose, relevant directories/files, evidence read, and recommended next file(s) for the host. Do not address the end user and do not modify files."
-   (list (find-tool "shell")) :max-tool-iterations 8))
+   (subagent-investigation-tools) :max-tool-iterations 8))

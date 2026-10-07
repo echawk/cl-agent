@@ -140,6 +140,13 @@ suite that only ever runs one of these at a time.")
       (check (search "<h1>Heading</h1>" (jget message "html")))
       (check (search "<strong>formatted</strong>" (jget message "html"))))))
 
+(deftest web-copy-controls-preserve-original-markdown ()
+  ;; The card receives rendered HTML separately from COPY-VALUE, so copying an
+  ;; assistant response returns its Markdown source rather than rendered text.
+  (check (search "copyValue=content" *web-page-html*))
+  (check (search "m.html||m.text,m.role==='assistant','',m.text" *web-page-html*))
+  (check (not (search "querySelectorAll('.card,.activity-line')" *web-page-html*))))
+
 (deftest web-frontend-renders-normal-and-compact-markdown-tables ()
   (dolist (table (list (format nil "| Tool | Purpose |~%|------|---------|~%| shell | Execute commands |")
                        "| Tool | Purpose | |------|---------| | shell | Execute commands |"))

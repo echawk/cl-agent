@@ -14,6 +14,13 @@
   (check (find-tool "delegate-task"))
   (check (find-tool "explore-project")))
 
+(deftest subagents-receive-read-only-investigation-tools ()
+  (let ((names (mapcar #'tool-name (subagent-investigation-tools))))
+    (dolist (name '("shell" "read-file" "read-file-range" "lisp-apropos" "review-lisp" "check-parens"))
+      (check (member name names :test #'string=) (format nil "worker gets ~a" name)))
+    (dolist (name '("write-file" "edit-file" "delegate-task" "explore-project"))
+      (check (not (member name names :test #'string=)) (format nil "worker excludes ~a" name)))))
+
 (deftest dispatch-slash-command-not-a-command-passthrough ()
   (let ((session (make-session (make-instance 'ollama-provider))))
     (check-equal (dispatch-slash-command session "hello there") :not-a-command)))
