@@ -401,6 +401,51 @@ command display: SESSION-RAW-STATS's running totals, plus :PROVIDER,
                                     internal-time-units-per-second))
          (session-raw-stats session)))
 
+(defun approximate-token-count (characters)
+  "Return a deliberately coarse token estimate for CHARACTERS.
+
+This is for context observability, not billing: tokenizers vary by model and
+provider. Four characters per token is a useful display estimate when the
+provider has not returned an exact count."
+  (ceiling characters 4))
+
+(defun message-context-characters (message)
+  "Count the meaningful serialized content of one normalized conversation MESSAGE."
+  (+ (length (or (getf message :role) ""))
+     (length (or (getf message :content) ""))
+     (loop for call in (getf message :tool-calls)
+           sum (+ (length (or (getf call :id) ""))
+                  (length (or (getf call :name) ""))
+                  (length (json-encode (or (getf call :arguments) (jobj))))))))
+
+(defun context-bar (part total)
+  "Render PART's relative share of TOTAL as a fixed-width text bar."
+  (let* ((width 24)
+         (filled (if (plusp total) (round (* width (/ part total))) 0)))
+    (format nil "[~a~a]" (make-string filled :initial-element #\#)
+            (make-string (- width filled) :initial-element #\.))))
+
+(defun session-context-report (session)
+  "Describe the approximate context that the next model request will carry.
+
+The report separates conversation history from advertised tool schemas, which
+are both sent to the model. A provider/model context-window size is not part
+of the current provider protocol, so this deliberately never invents a
+capacity percentage."
+  (let* ((messages (session-messages session))
+         (message-characters (loop for message in messages sum (message-context-characters message)))
+         (tool-characters (loop for tool in (session-tools session)
+                                sum (length (json-encode (tool-json-schema tool)))))
+         (message-tokens (approximate-token-count message-characters))
+         (tool-tokens (approximate-token-count tool-characters))
+         (total (+ message-tokens tool-tokens))
+         (stats (session-stats-snapshot session)))
+    (format nil "Context for the next model request (estimated)~%~%  conversation: ~6d tokens ~a  (~d message~:p)~%  tool schemas: ~6d tokens ~a  (~d tool~:p)~%                    ------~%  total:        ~6d tokens~%~%Context-window capacity: not advertised by the active provider/model, so no percentage is shown.~%Reported session usage: ~d prompt token~:p, ~d completion token~:p across ~d request~:p."
+            message-tokens (context-bar message-tokens total) (length messages)
+            tool-tokens (context-bar tool-tokens total) (length (session-tools session))
+            total
+            (getf stats :prompt-tokens) (getf stats :completion-tokens) (getf stats :requests))))
+
 (defun session-note-request (session assistant-message)
   "Fold one CHAT-STREAM/CHAT round trip into SESSION's running stats:
 always counts the request; adds token counts only if ASSISTANT-MESSAGE
@@ -995,6 +1040,16 @@ Plan mode makes a visible planning request; plan-review also verifies finals."
 (define-slash-command stats (session arg)
   (declare (ignore arg))
   (ui-system (session-frontend session) (format-stats (session-stats-snapshot session)))
+  t)
+
+(define-slash-command context (session arg)
+  "Show the estimated context load for the next model request.
+
+The diagram separates conversation history from the tool schemas currently
+offered to the model. It is an estimate because providers use model-specific
+tokenizers and do not currently expose their context-window size here."
+  (declare (ignore arg))
+  (ui-system (session-frontend session) (session-context-report session))
   t)
 
 (define-slash-command mcp (session arg)

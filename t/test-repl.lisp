@@ -609,6 +609,21 @@
       (check (search "request" text))
       (check (search (provider-display-name (session-provider session)) text)))))
 
+(deftest slash-context-shows-next-request-context-diagram ()
+  (let* ((session (make-session (make-instance 'ollama-provider)
+                                :tools (list (find-tool "shell"))))
+         (output (make-string-output-stream)))
+    (setf (session-messages session)
+          (append (session-messages session)
+                  (list (list :role "user" :content "Inspect this repository."))))
+    (let ((*standard-output* output))
+      (dispatch-slash-command session "/context"))
+    (let ((text (get-output-stream-string output)))
+      (check (search "Context for the next model request" text))
+      (check (search "conversation:" text))
+      (check (search "tool schemas:" text))
+      (check (search "not advertised" text)))))
+
 ;;; --- RUN-AGENT-TURN uses CHAT-STREAM and fires the UI hooks ---
 
 (defclass recording-frontend (agent-frontend)
