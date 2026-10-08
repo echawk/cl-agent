@@ -1652,6 +1652,26 @@ Plan mode makes a visible planning request; plan-review also verifies finals."
   (ui-system (session-frontend session) (format-stats (session-stats-snapshot session)))
   t)
 
+(define-slash-command agents (session arg)
+  "List concurrent subagent tasks, or `/agents cancel ID` to stop one."
+  (let ((frontend (session-frontend session))
+        (words (uiop:split-string (string-trim " " arg) :separator " ")))
+    (cond
+      ((and (string-equal (first words) "cancel") (second words))
+       (handler-case
+           (ui-system frontend (format-subagent-report
+                                (cancel-subagent-task (find-subagent-task (second words)))))
+         (error (c) (ui-system frontend (format nil "~a" c)))))
+      (t
+       (let ((tasks (list-subagent-tasks)))
+         (ui-system frontend
+                    (if tasks
+                        (format nil "Subagents:~%~{~a~^~%~}"
+                                (mapcar (lambda (task) (format-subagent-line (subagent-task-snapshot task)))
+                                        tasks))
+                        "No subagents have been started."))))))
+  t)
+
 (define-slash-command doctor (session arg)
   "Run local configuration diagnostics without contacting providers or starting services."
   (if (plusp (length (string-trim " " arg)))

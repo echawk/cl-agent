@@ -110,3 +110,89 @@
                                     "sk-secret-1")))
     (check-equal (getf result :message) "bad key [redacted]")
     (check-equal (getf result :output) "[redacted]")))
+
+;;; --- Visibility: subagents are shown in every frontend ---
+
+(defclass subagent-recording-frontend (agent-frontend)
+  ((events :initform nil :accessor recorded-events)
+   (panels :initform nil :accessor recorded-panels)
+   (lines :initform nil :accessor recorded-lines)))
+(defmethod ui-subagent-event ((frontend subagent-recording-frontend) snapshot)
+  (push (getf snapshot :state) (recorded-events frontend)))
+(defmethod ui-subagents-updated ((frontend subagent-recording-frontend) snapshots)
+  (push snapshots (recorded-panels frontend)))
+(defmethod ui-system ((frontend subagent-recording-frontend) text)
+  (push text (recorded-lines frontend)))
+
+(defun fixture-snapshot (&rest overrides)
+  (append overrides
+          (list :id "subagent-fixture" :state :running :role "investigator" :model "m"
+                :description "inspect the build" :activity "shell: ls" :tool-calls 3
+                :tokens 1200 :started-at (- (get-universal-time) 75))))
+
+(deftest subagent-lines-describe-state-activity-and-cost ()
+  (let ((running (format-subagent-line (fixture-snapshot))))
+    (check (search "● subagent-fixture (investigator)" running))
+    (check (search "1m15s" running) "elapsed time")
+    (check (search "3 tool calls" running))
+    (check (search "1200 tokens" running))
+    (check (search "shell: ls" running) "current activity"))
+  (let ((failed (format-subagent-line (fixture-snapshot :state :failed :note "boom"
+                                                        :finished-at (get-universal-time)))))
+    (check (search "✗" failed))
+    (check (search "boom" failed))))
+
+(deftest subagent-progress-frontend-writes-and-host-reads-progress ()
+  (let* ((path (merge-pathnames (format nil "progress-test-~d.sexp" (random 1000000))
+                                (uiop:temporary-directory)))
+         (frontend (make-instance 'progress-subagent-frontend :path path))
+         (task (make-instance 'subagent-task :id "progress-fixture"
+                                             :contract (list :progress-file (namestring path)))))
+    (unwind-protect
+         (progn
+           (ui-tool-started frontend "shell" (jobj "command" "ls -la"))
+           (ui-stats-updated frontend (list :requests 2 :total-tokens 90))
+           (poll-subagent-progress task)
+           (let ((snapshot (subagent-task-snapshot task)))
+             (check-equal (getf snapshot :tool-calls) 1)
+             (check-equal (getf snapshot :requests) 2)
+             (check-equal (getf snapshot :tokens) 90)
+             (check (search "ls -la" (getf snapshot :activity))))
+           (ui-tool-finished frontend "shell" nil "ok")
+           (poll-subagent-progress task)
+           (check-equal (getf (subagent-task-snapshot task) :activity) nil))
+      (ignore-errors (delete-file path))
+      (unpublish-component :subagent-task "progress-fixture"))))
+
+(deftest frontend-learns-about-subagent-lifecycle-and-agents-command-lists-it ()
+  (let* ((frontend (make-instance 'subagent-recording-frontend))
+         (parent (make-session (make-instance 'ollama-provider) :frontend frontend)))
+    (call-with-scripted-children
+     "fast"
+     (lambda ()
+       (let ((task (start-subagent-task parent "say hello" "Be brief.")))
+         (wait-subagent-task task :timeout 120)
+         (check (member :running (recorded-events frontend)) "UI told the child started")
+         (check (member :succeeded (recorded-events frontend)) "UI told the child finished")
+         (check (find-if (lambda (panel) (some (lambda (s) (eq (getf s :state) :running)) panel))
+                         (recorded-panels frontend))
+                "panel update included the running child")
+         (dispatch-slash-command parent "/agents")
+         (check (search (subagent-task-id task) (first (recorded-lines frontend)))
+                "/agents lists the task"))))))
+
+(deftest tui-and-web-render-subagent-panels ()
+  (let ((model (make-instance 'tui-chat-model :input-channel nil)))
+    (setf (tui-chat-subagents model)
+          (list (fixture-snapshot)
+                (fixture-snapshot :id "old" :state :succeeded
+                                  :finished-at (- (get-universal-time) 600))))
+    (let ((lines (tui-subagent-panel-lines model)))
+      (check-equal (first lines) "Subagents (1)" "aged-out tasks leave the panel")
+      (check (search "subagent-fixture" (second lines)))))
+  (let ((json (json-decode (json-encode (web-subagent-json (fixture-snapshot))))))
+    (check-equal (jget json "state") "running")
+    (check-equal (jget json "tool_calls") 3)
+    (check-equal (jget json "activity") "shell: ls"))
+  (check (search "renderSubagents(data.subagents||[])" *web-page-html*) "page renders the pane")
+  (check (search "id=\"subagents\"" *web-page-html*)))

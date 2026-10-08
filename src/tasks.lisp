@@ -135,7 +135,14 @@ built; use them to load role-specific code there."
    (note :initform nil :accessor subagent-task-note
          :documentation "Human-readable reason for the terminal state.")
    (created-at :initform (get-universal-time) :reader subagent-task-created-at)
+   (started-at :initform nil :accessor subagent-task-started-at)
    (finished-at :initform nil :accessor subagent-task-finished-at)
+   (frontend :initarg :frontend :initform nil :accessor subagent-task-frontend
+             :documentation "The parent session's frontend, told about changes.")
+   (progress :initform nil :accessor subagent-task-progress
+             :documentation "Latest plist the child reported (:REQUESTS :TOOL-CALLS
+:TOKENS :ACTIVITY), read from the task's progress file.")
+   (poller-stop :initform nil :accessor subagent-task-poller-stop)
    (lock :initform (bordeaux-threads:make-lock "subagent task") :reader subagent-task-lock)))
 
 (defmethod print-object ((task subagent-task) stream)
@@ -150,19 +157,29 @@ built; use them to load role-specific code there."
   (member (subagent-task-state task) '(:succeeded :failed :cancelled)))
 
 (defun subagent-task-snapshot (task)
-  "Inert, printable description of TASK suitable for hooks, events and tools."
-  (let ((contract (subagent-task-contract task)))
+  "Inert, printable description of TASK suitable for hooks, events, tools and UIs."
+  (let* ((contract (subagent-task-contract task))
+         (result (subagent-task-result task))
+         (progress (subagent-task-progress task))
+         (description (getf contract :task)))
     (list :id (subagent-task-id task)
           :state (subagent-task-state task)
           :role (getf contract :role)
+          :profile (getf contract :profile)
           :model (getf (getf contract :provider) :model)
           :tools (getf contract :tools)
           :depth (getf contract :depth)
+          :description (and (stringp description)
+                            (let ((line (substitute #\Space #\Newline description)))
+                              (if (> (length line) 100) (subseq line 0 100) line)))
+          :activity (getf progress :activity)
           :note (subagent-task-note task)
           :created-at (subagent-task-created-at task)
+          :started-at (subagent-task-started-at task)
           :finished-at (subagent-task-finished-at task)
-          :requests (getf (subagent-task-result task) :requests)
-          :tool-calls (getf (subagent-task-result task) :tool-calls))))
+          :requests (or (getf result :requests) (getf progress :requests))
+          :tool-calls (or (getf result :tool-calls) (getf progress :tool-calls))
+          :tokens (or (getf result :total-tokens) (getf progress :tokens)))))
 
 (defun publish-subagent-task (task)
   (publish-component :subagent-task (subagent-task-id task)
@@ -174,8 +191,11 @@ built; use them to load role-specific code there."
   "Set NEXT on TASK (lock held), then notify.  Returns T."
   (setf (subagent-task-state task) next)
   (when note (setf (subagent-task-note task) note))
+  (when (eq next :running)
+    (setf (subagent-task-started-at task) (get-universal-time)))
   (when (member next '(:succeeded :failed :cancelled))
-    (setf (subagent-task-finished-at task) (get-universal-time)))
+    (setf (subagent-task-finished-at task) (get-universal-time)
+          (getf (subagent-task-progress task) :activity) nil))
   t)
 
 (defun notify-subagent-transition (task)
@@ -184,7 +204,11 @@ built; use them to load role-specific code there."
     (emit-event :subagent-task-transition
                 :component (component-id :subagent-task (subagent-task-id task))
                 :payload snapshot)
-    (run-hook :subagent-task-transition snapshot)))
+    (run-hook :subagent-task-transition snapshot)
+    (let ((frontend (subagent-task-frontend task)))
+      (when frontend
+        (ignore-errors (ui-subagent-event frontend snapshot))
+        (refresh-subagent-ui task)))))
 
 (defun transition-subagent-task (task next &key note)
   "Strictly move TASK to NEXT or signal INVALID-SUBAGENT-TRANSITION."
@@ -216,6 +240,111 @@ task (the job body, cancellation, a timeout): the first writer wins."
   (bordeaux-threads:with-lock-held (*subagent-tasks-lock*)
     (sort (loop for task being the hash-values of *subagent-tasks* collect task)
           #'< :key #'subagent-task-created-at)))
+
+;;; ------------------------------------------------------------------
+;;; Visibility: what frontends are shown
+
+(defun subagent-panel-snapshots (frontend &key (linger *subagent-panel-linger-seconds*))
+  "Snapshots of FRONTEND's live subagents plus those finished within LINGER seconds."
+  (let ((now (get-universal-time)))
+    (loop for task in (list-subagent-tasks)
+          when (and (eq (subagent-task-frontend task) frontend)
+                    (or (not (subagent-task-terminal-p task))
+                        (<= (- now (or (subagent-task-finished-at task) now)) linger)))
+            collect (subagent-task-snapshot task))))
+
+(defun refresh-subagent-ui (task)
+  "Tell TASK's frontend the visible set of subagents changed.  Never signals."
+  (let ((frontend (subagent-task-frontend task)))
+    (when frontend
+      (ignore-errors (ui-subagents-updated frontend (subagent-panel-snapshots frontend))))))
+
+(defun subagent-state-glyph (state)
+  (case state (:queued "○") (:running "●") (:succeeded "✓") (:failed "✗")
+    (:cancelled "⊘") (t "?")))
+
+(defun format-duration-seconds (seconds)
+  (let ((seconds (max 0 seconds)))
+    (if (>= seconds 60) (format nil "~dm~2,'0ds" (floor seconds 60) (mod seconds 60))
+        (format nil "~ds" seconds))))
+
+(defun format-subagent-line (snapshot &optional (now (get-universal-time)))
+  "One-line, Claude-Code-style description of a subagent snapshot."
+  (let* ((started (getf snapshot :started-at))
+         (elapsed (and started (- (or (getf snapshot :finished-at) now) started)))
+         (state (getf snapshot :state)))
+    (format nil "~a ~a~@[ (~a)~] · ~(~a~)~@[ ~a~] · ~d tool call~:p~@[ · ~d token~:p~]~@[ · ~a~]"
+            (subagent-state-glyph state) (getf snapshot :id) (getf snapshot :role)
+            state (and elapsed (format-duration-seconds elapsed))
+            (or (getf snapshot :tool-calls) 0)
+            (let ((tokens (getf snapshot :tokens))) (and tokens (plusp tokens) tokens))
+            (or (and (eq state :running) (getf snapshot :activity))
+                (and (member state '(:failed :cancelled)) (getf snapshot :note))
+                (getf snapshot :description)))))
+
+(defun format-subagent-event (snapshot)
+  (format nil "[subagent] ~a~@[ — ~a~]"
+          (format-subagent-line snapshot)
+          (and (eq (getf snapshot :state) :queued) (getf snapshot :model))))
+
+;;; Child progress reporting: the child is busy inside one blocking worker
+;;; request, so it publishes progress to a small file the host polls.
+
+(defclass progress-subagent-frontend (agent-frontend)
+  ((path :initarg :path :initform nil :reader progress-frontend-path)
+   (progress :initform nil :accessor progress-frontend-progress))
+  (:documentation "Silent frontend for a child process that records progress
+(tool calls, current tool, request and token totals) to the task's progress
+file.  It never writes to stdout, which carries the worker protocol."))
+
+(defun write-subagent-progress (frontend &rest changes)
+  (let ((path (progress-frontend-path frontend)))
+    (loop for (key value) on changes by #'cddr
+          do (setf (getf (progress-frontend-progress frontend) key) value))
+    (when path
+      (ignore-errors
+       (write-string-atomically
+        path (let ((*print-readably* nil) (*print-pretty* nil) (*package* (find-package :cl-agent)))
+               (prin1-to-string (progress-frontend-progress frontend))))))))
+
+(defmethod ui-assistant-text ((frontend progress-subagent-frontend) text)
+  (declare (ignore text)) (values))
+(defmethod ui-system ((frontend progress-subagent-frontend) text)
+  (declare (ignore text)) (values))
+(defmethod ui-tool-finished ((frontend progress-subagent-frontend) tool-name arguments result)
+  (declare (ignore tool-name arguments result))
+  (write-subagent-progress frontend :activity nil))
+(defmethod ui-tool-started ((frontend progress-subagent-frontend) tool-name arguments)
+  (write-subagent-progress frontend
+                           :activity (let ((summary (substitute #\Space #\Newline
+                                                                (tool-call-summary tool-name arguments))))
+                                       (if (> (length summary) 80) (subseq summary 0 80) summary))
+                           :tool-calls (1+ (or (getf (progress-frontend-progress frontend) :tool-calls) 0))))
+(defmethod ui-stats-updated ((frontend progress-subagent-frontend) stats)
+  (write-subagent-progress frontend :requests (getf stats :requests)
+                                    :tokens (getf stats :total-tokens)))
+
+(defun subagent-progress-pathname (id)
+  (merge-pathnames (format nil "workers/progress/~a.sexp" id) *config-directory*))
+
+(defun poll-subagent-progress (task)
+  "Read TASK's progress file; refresh the UI when it changed.  Never signals."
+  (ignore-errors
+   (let* ((path (getf (subagent-task-contract task) :progress-file))
+          (progress (and path (probe-file path)
+                         (with-open-file (in path)
+                           (let ((*read-eval* nil) (*package* (find-package :cl-agent)))
+                             (read in nil nil))))))
+     (when (and (consp progress) (not (equal progress (subagent-task-progress task))))
+       (setf (subagent-task-progress task) progress)
+       (refresh-subagent-ui task)))))
+
+(defun start-subagent-progress-poller (task)
+  (bordeaux-threads:make-thread
+   (lambda ()
+     (loop until (subagent-task-poller-stop task)
+           do (sleep 0.5) (poll-subagent-progress task)))
+   :name (format nil "~a progress" (subagent-task-id task))))
 
 ;;; ------------------------------------------------------------------
 ;;; Contract construction
@@ -292,7 +421,8 @@ of keywords, strings and integers."
     (when (and (getf spec :base-url) (slot-exists-p provider 'base-url))
       (setf (slot-value provider 'base-url) (getf spec :base-url)))
     (let ((child (make-session provider
-                               :frontend (make-instance 'silent-subagent-frontend)
+                               :frontend (make-instance 'progress-subagent-frontend
+                                                        :path (getf contract :progress-file))
                                :system-prompt (getf contract :system)
                                :tools tools
                                :max-tool-iterations (getf contract :max-tool-iterations)
@@ -365,6 +495,7 @@ of keywords, strings and integers."
          (secret (getf (getf contract :provider) :api-key)))
     (unless (settle-subagent-task task :running)
       (return-from run-subagent-task-body nil))
+    (start-subagent-progress-poller task)
     (unwind-protect
          (let* ((response (run-subagent-worker-evaluation worker (subagent-worker-form contract)))
                 (result (run-hook-chain :after-subagent-result
@@ -374,7 +505,11 @@ of keywords, strings and integers."
                (settle-subagent-task task :succeeded :result result)
                (settle-subagent-task task :failed :result result
                                      :note (getf result :message))))
-      (ignore-errors (stop-subagent-worker worker)))))
+      (setf (subagent-task-poller-stop task) t)
+      (poll-subagent-progress task)
+      (ignore-errors (stop-subagent-worker worker))
+      (let ((path (getf contract :progress-file)))
+        (when path (ignore-errors (delete-file path)))))))
 
 (defun start-subagent-task (parent task system &rest options &key role profile tools
                                                               max-tool-iterations model)
@@ -383,7 +518,12 @@ of keywords, strings and integers."
   (let* ((contract (apply #'build-subagent-contract parent task system options))
          (id (bordeaux-threads:with-lock-held (*subagent-tasks-lock*)
                (format nil "subagent-~d" (incf *subagent-task-counter*))))
-         (record (make-instance 'subagent-task :id id :contract contract)))
+         (record (progn
+                   (unless (getf contract :progress-file)
+                     (setf (getf contract :progress-file)
+                           (namestring (subagent-progress-pathname id))))
+                   (make-instance 'subagent-task :id id :contract contract
+                                                 :frontend (session-frontend parent)))))
     (bordeaux-threads:with-lock-held (*subagent-tasks-lock*)
       (setf (gethash id *subagent-tasks*) record))
     (notify-subagent-transition record)
@@ -426,6 +566,7 @@ of keywords, strings and integers."
   (when (subagent-task-job task)
     (cl-jobpond:job-cancel (subagent-task-job task) :reason reason))
   (ignore-errors (stop-subagent-worker (subagent-task-id task)))
+  (setf (subagent-task-poller-stop task) t)
   (settle-subagent-task task :cancelled :note (format nil "Cancelled (~(~a~))." reason))
   task)
 

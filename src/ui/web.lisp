@@ -256,6 +256,26 @@ plain-text fallback if rendering fails."
                                                (cdr block))))))
     (error () "")))
 
+(defun universal-to-unix-time (universal)
+  (and universal (- universal 2208988800)))
+
+(defun web-subagent-json (snapshot)
+  "JSON view of one subagent snapshot; times are Unix seconds for the page's clock."
+  (flet ((or-null (value) (if (null value) :null value)))
+    (jobj "id" (getf snapshot :id)
+          "state" (string-downcase (symbol-name (getf snapshot :state)))
+          "role" (or-null (getf snapshot :role))
+          "model" (or-null (getf snapshot :model))
+          "description" (or-null (getf snapshot :description))
+          "activity" (or-null (getf snapshot :activity))
+          "note" (or-null (getf snapshot :note))
+          "tools" (or (getf snapshot :tools) :empty-array)
+          "requests" (or (getf snapshot :requests) 0)
+          "tool_calls" (or (getf snapshot :tool-calls) 0)
+          "tokens" (or (getf snapshot :tokens) 0)
+          "started" (or-null (universal-to-unix-time (getf snapshot :started-at)))
+          "finished" (or-null (universal-to-unix-time (getf snapshot :finished-at))))))
+
 (defun web-frontend-status-json (frontend)
   "The single JSON object /api/messages serves: the transcript so far,
 the in-progress streamed reply (if any), whether a request is
@@ -282,6 +302,8 @@ currently in flight, and the latest stats snapshot."
                                             "text" (getf entry :text)))
                                     (reverse (web-frontend-activity frontend)))
                           :empty-array)
+           "subagents" (or (mapcar #'web-subagent-json (subagent-panel-snapshots frontend))
+                           :empty-array)
            "stats" (let ((s (web-frontend-stats frontend)))
                      (if s
                          (jobj "provider" (getf s :provider) "model" (getf s :model)
@@ -358,6 +380,25 @@ reasonably live without any new transport.")
 
 (enhance-web-page-with-activity-pane)
 
+(defun enhance-web-page-with-subagents ()
+  "Add a live subagent section above the activity feed, like a running-agents list."
+  (flet ((patch (needle replacement)
+           (let ((patched (replace-all-substrings *web-page-html* needle replacement)))
+             (when (string= patched *web-page-html*)
+               (error "Web page patch target not found: ~a" (subseq needle 0 (min 50 (length needle)))))
+             (setf *web-page-html* patched))))
+    (patch "</head><body>"
+           "<style>.subagents{border-bottom:1px solid #273552;padding:10px 12px;display:grid;gap:8px}.subagents:empty{display:none}.sa-card{border:1px solid #2e3c59;border-radius:10px;background:#0d1527;padding:8px 10px;font:12px/1.45 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;color:#c2cce0}.sa-head{display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}.sa-dot{font-size:11px}.sa-running .sa-dot{color:#7dd3fc;animation:sa-pulse 1.2s ease-in-out infinite}.sa-succeeded .sa-dot{color:#86efac}.sa-failed .sa-dot,.sa-cancelled .sa-dot{color:#fb7185}.sa-queued .sa-dot{color:#9aa8c2}.sa-id{font-weight:700;color:#e7edf8}.sa-meta{color:#9aa8c2}.sa-desc{margin-top:3px;color:#9aa8c2;overflow-wrap:anywhere}.sa-activity{margin-top:3px;color:#a9dafe;overflow-wrap:anywhere}.sa-done{opacity:.75}@keyframes sa-pulse{50%{opacity:.35}}</style></head><body>")
+    (patch "<div class=\"activity-scroll\" id=\"activity\"></div>"
+           "<div class=\"subagents\" id=\"subagents\" aria-label=\"Running subagents\"></div><div class=\"activity-scroll\" id=\"activity\"></div>")
+    (patch "function renderActivity(items,thinking){"
+           "function saElapsed(a,b){const s=Math.max(0,Math.floor(b-a));return s>=60?Math.floor(s/60)+'m'+String(s%60).padStart(2,'0')+'s':s+'s'}function renderSubagents(items){const el=document.getElementById('subagents');if(!el)return;const glyph={queued:'○',running:'●',succeeded:'✓',failed:'✗',cancelled:'⊘'};el.innerHTML=items.map(a=>`<div class=\"sa-card sa-${a.state}${a.finished?' sa-done':''}\"><div class=\"sa-head\"><span class=\"sa-dot\">${glyph[a.state]||'?'}</span><span class=\"sa-id\">${esc(a.id)}</span>${a.role?`<span class=\"sa-meta\">${esc(a.role)}</span>`:''}<span class=\"sa-meta\">${esc(a.state)}</span>${a.started?`<span class=\"sa-meta sa-time\" data-start=\"${a.started}\"${a.finished?` data-end=\"${a.finished}\"`:''}>${saElapsed(a.started,a.finished||Date.now()/1000)}</span>`:''}<span class=\"sa-meta\">${a.tool_calls} tool call${a.tool_calls===1?'':'s'}${a.tokens?' · '+a.tokens+' tokens':''}</span>${a.model?`<span class=\"sa-meta\">${esc(a.model)}</span>`:''}</div>${a.activity&&a.state==='running'?`<div class=\"sa-activity\">${esc(a.activity)}</div>`:''}${a.note&&(a.state==='failed'||a.state==='cancelled')?`<div class=\"sa-activity\">${esc(a.note)}</div>`:''}${a.description?`<div class=\"sa-desc\">${esc(a.description)}</div>`:''}</div>`).join('')}setInterval(()=>{for(const e of document.querySelectorAll('.sa-time:not([data-end])'))e.textContent=saElapsed(+e.dataset.start,Date.now()/1000)},1000);function renderActivity(items,thinking){")
+    (patch "renderActivity(data.activity||[],data.thinking);"
+           "renderSubagents(data.subagents||[]);renderActivity(data.activity||[],data.thinking);")
+    (patch "data.thinking,data.activity]" "data.thinking,data.activity,data.subagents]")))
+
+(enhance-web-page-with-subagents)
+
 (hunchentoot:define-easy-handler (cl-agent-web-index :uri "/") ()
   (setf (hunchentoot:content-type*) "text/html; charset=utf-8")
   *web-page-html*)
@@ -367,7 +408,7 @@ reasonably live without any new transport.")
   (if *web-frontend*
       (web-frontend-status-json *web-frontend*)
       (json-encode (jobj "messages" :empty-array "pending" "" "thinking" nil
-                         "activity" :empty-array "stats" :null))))
+                         "activity" :empty-array "subagents" :empty-array "stats" :null))))
 
 (hunchentoot:define-easy-handler (cl-agent-web-send :uri "/api/send") (text)
   (setf (hunchentoot:content-type*) "application/json")

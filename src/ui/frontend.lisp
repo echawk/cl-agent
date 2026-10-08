@@ -173,6 +173,26 @@ turn didn't report it. Default: no-op; a frontend with nowhere
 sensible to put a stats display (the CLI) can just ignore this.")
   (:method ((frontend agent-frontend) stats) (declare (ignore stats)) (values)))
 
+(defvar *subagent-panel-linger-seconds* 15
+  "How long a finished task stays in the live panel before aging out.")
+
+(defgeneric ui-subagent-event (frontend snapshot)
+  (:documentation "A subagent task changed state (queued, running, succeeded,
+failed, cancelled).  SNAPSHOT is the plist SUBAGENT-TASK-SNAPSHOT (tasks.lisp)
+returns.  Default: a one-line status message, so every frontend shows
+concurrent agents starting and finishing without any extra work.")
+  (:method ((frontend agent-frontend) snapshot)
+    (ui-system frontend (format-subagent-event snapshot))))
+
+(defgeneric ui-subagents-updated (frontend snapshots)
+  (:documentation "The set of subagents worth showing changed -- a task
+started, progressed (new tool call, token count), or finished.  SNAPSHOTS is a
+list of task snapshot plists: every live task of this frontend's session plus
+recently finished ones (finished tasks carry :FINISHED-AT so a frontend can
+age them out).  Frontends with a persistent surface (TUI panel, web pane)
+render it; the default is a no-op.")
+  (:method ((frontend agent-frontend) snapshots) (declare (ignore snapshots)) (values)))
+
 (defun tool-call-summary (tool-name arguments)
   "A short, generic one-line summary of a tool call, with no
 knowledge of any particular tool: if ARGUMENTS has exactly one key,

@@ -56,6 +56,11 @@ the viewport -- used for both the \"thinking\" indicator
 (UI-THINKING-STARTED/STOPPED) and the live stats summary
 (UI-STATS-UPDATED), whichever was sent most recently."))
 
+(defclass tui-subagents-msg ()
+  ((snapshots :initarg :snapshots :reader tui-subagents-msg-snapshots))
+  (:documentation "The current set of visible subagent snapshots (see
+UI-SUBAGENTS-UPDATED), replacing the panel shown above the status line."))
+
 (defclass tui-chat-model ()
   ((viewport :accessor tui-chat-viewport)
    (textarea :accessor tui-chat-textarea)
@@ -64,6 +69,10 @@ the viewport -- used for both the \"thinking\" indicator
    (pending :initform "" :accessor tui-chat-pending
             :documentation "Accumulated TUI-DELTA-MSG chunks for the
 reply currently streaming in; see that class's docstring.")
+   (subagents :initform nil :accessor tui-chat-subagents
+              :documentation "Latest subagent snapshots; finished ones age out at view time.")
+   (height :initform nil :accessor tui-chat-height
+           :documentation "Last known terminal height, for fitting the viewport.")
    (status-line :initform "" :accessor tui-chat-status-line
                 :documentation "See TUI-STATUS-MSG's docstring.")
    (input-channel :initarg :input-channel :reader tui-chat-input-channel))
@@ -82,6 +91,31 @@ AGENT-FRONTEND that owns one of these."))
         (tui.viewport:make-viewport :width 78 :height 20
                                      :content "cl-agent -- type a message below."))
   (tui:tick 0.5))
+
+(defparameter *tui-subagent-panel-rows* 6
+  "Most subagent rows shown above the status line; extra rows collapse to a count.")
+
+(defun tui-subagent-panel-lines (model)
+  "Rendered panel rows for MODEL's subagents, newest activity first, aged by view time."
+  (let* ((now (get-universal-time))
+         (visible (remove-if (lambda (snapshot)
+                               (let ((finished (getf snapshot :finished-at)))
+                                 (and finished (> (- now finished) *subagent-panel-linger-seconds*))))
+                             (tui-chat-subagents model)))
+         (shown (subseq visible 0 (min (length visible) *tui-subagent-panel-rows*))))
+    (when visible
+      (append (list (format nil "Subagents (~d)" (length visible)))
+              (mapcar (lambda (snapshot) (concatenate 'string "  " (format-subagent-line snapshot now))) shown)
+              (when (> (length visible) (length shown))
+                (list (format nil "  … ~d more" (- (length visible) (length shown)))))))))
+
+(defun tui-chat-fit-viewport (model)
+  "Size the viewport to the terminal minus the textarea, status and subagent panel."
+  (when (tui-chat-height model)
+    (let ((panel (tui-subagent-panel-lines model)))
+      (setf (tui.viewport:viewport-height (tui-chat-viewport model))
+            (max 3 (- (tui-chat-height model) (tui.textarea:textarea-height (tui-chat-textarea model)) 2
+                      (if panel (1+ (length panel)) 0)))))))
 
 (defun tui-chat-refresh-viewport (model)
   (let ((lines (reverse (tui-chat-lines model))))
@@ -103,6 +137,9 @@ AGENT-FRONTEND that owns one of these."))
        (tui-chat-refresh-viewport model))
       ((typep msg 'tui-status-msg)
        (setf (tui-chat-status-line model) (tui-status-msg-text msg)))
+      ((typep msg 'tui-subagents-msg)
+       (setf (tui-chat-subagents model) (tui-subagents-msg-snapshots msg))
+       (tui-chat-fit-viewport model))
       ((tui:key-press-msg-p msg)
        (let ((key (tui:key-event-code msg))
              (ctrl (tui:mod-contains (tui:key-event-mod msg) tui:+mod-ctrl+)))
@@ -122,10 +159,12 @@ AGENT-FRONTEND that owns one of these."))
        (let ((width (tui:window-size-msg-width msg)) (height (tui:window-size-msg-height msg)))
          (setf (tui.viewport:viewport-width (tui-chat-viewport model)) width)
          (setf (tui.textarea:textarea-width (tui-chat-textarea model)) width)
-         (setf (tui.viewport:viewport-height (tui-chat-viewport model))
-               (max 3 (- height (tui.textarea:textarea-height (tui-chat-textarea model)) 2)))
+         (setf (tui-chat-height model) height)
+         (tui-chat-fit-viewport model)
          (tui-chat-refresh-viewport model)))
-      ((tui:tick-msg-p msg) (setf ta-cmd (tui:tick 0.5))))
+      ((tui:tick-msg-p msg)
+       (tui-chat-fit-viewport model) ; finished subagents age out of the panel
+       (setf ta-cmd (tui:tick 0.5))))
     (when pass-to-textarea
       (multiple-value-bind (new-ta cmd) (tui.textarea:textarea-update (tui-chat-textarea model) msg)
         (setf (tui-chat-textarea model) new-ta ta-cmd cmd)))
@@ -134,7 +173,9 @@ AGENT-FRONTEND that owns one of these."))
     (values model (tui:batch ta-cmd vp-cmd))))
 
 (defmethod tui:view ((model tui-chat-model))
-  (tui:make-view (format nil "~@[~a~%~%~]~a~%~%~a"
+  (tui:make-view (format nil "~@[~a~%~]~@[~a~%~%~]~a~%~%~a"
+                          (let ((panel (tui-subagent-panel-lines model)))
+                            (and panel (format nil "~{~a~^~%~}" panel)))
                           (and (plusp (length (tui-chat-status-line model))) (tui-chat-status-line model))
                           (tui.viewport:viewport-view (tui-chat-viewport model))
                           (tui.textarea:textarea-view (tui-chat-textarea model)))))
@@ -209,5 +250,13 @@ comment for the threading model."))
 
 (defmethod ui-stats-updated ((frontend tui-frontend) stats)
   (tui:send (tui-frontend-program frontend) (make-instance 'tui-status-msg :text (format-stats stats))))
+
+(defmethod ui-subagents-updated ((frontend tui-frontend) snapshots)
+  (tui:send (tui-frontend-program frontend) (make-instance 'tui-subagents-msg :snapshots snapshots)))
+
+(defmethod ui-subagent-event ((frontend tui-frontend) snapshot)
+  ;; The live panel already shows state; keep only the terminal outcomes in the transcript.
+  (when (member (getf snapshot :state) '(:succeeded :failed :cancelled))
+    (ui-system frontend (format-subagent-event snapshot))))
 
 (register-frontend-class :tui 'tui-frontend)
