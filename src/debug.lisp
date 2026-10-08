@@ -61,13 +61,14 @@
   (or (ignore-errors (bounded-text (json-encode arguments) 800)) "<unprintable arguments>"))
 
 (defun persist-failure-receipt (receipt)
-  "Write RECEIPT (a plist of printable data) atomically; return it.  Never signals."
+  "Publish RECEIPT as one SEXP-STORE snapshot; return it.  Never signals.
+
+The store supplies the atomic publication and readable-data contract.  A
+receipt is deliberately a detached plist, so it is safe to persist rather than
+leaving a live condition or restart object in a process-local structure."
   (ignore-errors
-   (write-string-atomically
-    (failure-receipt-pathname (getf receipt :id))
-    (let ((*print-readably* nil) (*print-pretty* t) (*print-right-margin* 100)
-          (*package* (find-package :cl-agent)))
-      (prin1-to-string receipt))))
+   (sexp-store:snapshot-write
+    (failure-receipt-pathname (getf receipt :id)) receipt))
   receipt)
 
 (defun remember-failure-receipt (receipt)
@@ -86,9 +87,11 @@
         (let ((path (failure-receipt-pathname id)))
           (and (probe-file path)
                (ignore-errors
-                (with-open-file (in path)
-                  (let ((*read-eval* nil) (*package* (find-package :cl-agent)))
-                    (read in nil nil)))))))))
+                ;; Do not accept a partial or concatenated receipt: an exact
+                ;; snapshot is the persistence boundary shared by processes.
+                (multiple-value-bind (receipt complete-p)
+                    (sexp-store:snapshot-read path)
+                  (and complete-p receipt))))))))
 
 (defun list-failure-receipts (&key (limit 20))
   "Most recent receipts across this and other processes, newest first."

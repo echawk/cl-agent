@@ -42,6 +42,21 @@ Each of HOOK-FORMS is a function form installed under a fresh hook name."
            (check (search id (call-tool "list-failures" (jobj)))))
       (unregister-tool "test-debug-boom"))))
 
+(deftest failure-receipts-use-complete-sexp-store-snapshots ()
+  (with-debugger-fixture ()
+    (let* ((receipt (list :id "snapshot-receipt" :tool "fixture" :time 1
+                          :condition-type "error" :condition-report "fixture"))
+           (path (failure-receipt-pathname (getf receipt :id))))
+      (persist-failure-receipt receipt)
+      (multiple-value-bind (stored complete-p) (sexp-store:snapshot-read path)
+        (check complete-p "the receipt is exactly one store snapshot")
+        (check-equal stored receipt))
+      ;; A damaged/concatenated file must not be mistaken for a usable receipt.
+      (write-string-atomically path "(:id \"snapshot-receipt\")\n(:id \"extra\")")
+      (setf *failure-receipts* nil)
+      (check-equal (load-failure-receipt "snapshot-receipt") nil
+                   "only complete single-form snapshots are loaded"))))
+
 (deftest failure-decisions-can-retry-restart-and-return-values ()
   (let ((calls 0))
     (define-tool test-debug-flaky (args) (:description "fails twice")

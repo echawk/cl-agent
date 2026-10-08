@@ -96,29 +96,47 @@ lists at the provider boundary.
   family handoff filters private items, and compaction preserves original
   durable items.
 
-### 3. `sexp-store` — durable event/session/mutation storage
+### 3. `sexp-store` — durable event/session/mutation storage (in progress)
 
-Replace ad hoc JSON snapshot replacement and local atomic helpers where the
-data is Lisp-owned with versioned S-expression snapshots and append logs.
+Debugger receipts and committed mutation journals now use
+`sexp-store:snapshot-write` and `snapshot-read` on their production paths.
+This replaces their bespoke printer/read plumbing with atomic one-form
+publication, evaluation-disabled reads, and rejection of partial or
+concatenated snapshots.  Focused tests exercise both paths.
 
-- Start with mutation journals, task receipts, and session-event envelopes.
+- [x] Migrate mutation journals and debugger receipts to snapshots.
+- [ ] Add an append-only, process-locked session-event envelope log and replay
+  it into the session projection.
+- [ ] Migrate task records/receipts from JSON snapshots to store records and
+  logs, including restart recovery for tasks found in `:running` state.
+- [ ] Define versioned schemas for persisted records before settings and
+  generation manifests consume them.
 - Retire duplicated temporary-file publication once equivalent Store-backed
-  paths are proven.
-- Acceptance: torn append tails recover, writes are process-locked, and an
-  event log replays a session projection deterministically.
+  paths are proven; generic text/source writes remain on the local helper.
+- Remaining acceptance: torn event-log tails recover, concurrent writers are
+  process-locked, and an event log replays a session projection deterministically.
 
-### 4. `sbcl-generations` — checkpoints and recovery boot
+### 4. `sbcl-generations` — checkpoints and recovery boot (in progress)
 
-Build generation manifests from committed mutation IDs and use the library’s
-checkpoint backend for retained compatible images.
+`src/generations.lisp` now builds an `sbcl-generations` store over the shared
+S-expression persistence layer.  Checkpoints record the committed-mutation
+frontier, use the library's verified fork-and-probe backend, and atomically
+publish the selected generation pointer only after the core passes its probe.
+The agent has `list-generations`, `checkpoint-generation`, and
+`rollback-generation` tools.  A checkpoint correctly refuses to fork whenever
+the process has more than one live Lisp thread.
 
-- Add checkpoint/list/rollback operations and a `--safe` path that loads no
-  private mutations.
+- [x] Add checkpoint/list/rollback operations and generation manifests.
+- [ ] Add a launcher command that consumes the selected pointer and boots its
+  saved core directly; current source-mode startup intentionally does not
+  replace its own heap.
+- [ ] Add a `--safe` path that loads no private mutations.
 - Do not create checkpoints while Jobpond or UI threads make the image
   multi-threaded; coordinate a single-threaded checkpoint window or use the
   library’s restart backend.
-- Acceptance: a committed mutation generation can be listed and selected; a
-  deliberately broken private extension still permits safe boot.
+- Remaining acceptance: a committed mutation generation can be booted through
+  the launcher, and a deliberately broken private extension still permits safe
+  boot.
 
 ### 5. `setinka` — typed, observable settings
 
@@ -155,8 +173,7 @@ Remaining work:
   thread while a frontend or tool supplies the choice.
 - [ ] Optional diagnostic subagent that reads a redacted receipt and recommends
   a recovery (a recommendation, never authority to invoke a restart).
-- [ ] Journal receipts through `sexp-store` once that migration lands (they are
-  plain files today).
+- [x] Journal debugger receipts through `sexp-store` snapshots.
 
 Wrap extension load, provider requests, worker failures, and mutation exercises
 in observable debugger sessions.  Surface detached condition snapshots in all

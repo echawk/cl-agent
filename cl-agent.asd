@@ -92,6 +92,7 @@
        (:file "exercises")
        (:file "transaction")
        (:file "journal")))
+     (:file "generations")
      (:file "doctor")
      (:module "ui"
       :serial t
@@ -118,7 +119,8 @@
        (:file "mcp-tool")
        (:file "components-tool")
        (:file "dap-tool")
-       (:file "debug-tool")))
+       (:file "debug-tool")
+       (:file "generations-tool")))
      (:file "tasks")
      (:file "repl")
      (:file "main")))))
@@ -145,6 +147,7 @@
    (:file "test-lsp")
    (:file "test-extensions")
    (:file "test-mutations")
+   (:file "test-generations")
    (:file "test-doctor")
    (:file "test-quality")
    (:file "test-clspec")

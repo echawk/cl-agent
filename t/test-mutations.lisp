@@ -56,6 +56,11 @@
       (check (probe-file (mutation-target transaction)))
       (check (extension-enabled-p "mutation-commit.lisp"))
       (check (probe-file (mutation-journal-path transaction)))
+      (multiple-value-bind (stored complete-p)
+          (sexp-store:snapshot-read (mutation-journal-path transaction))
+        (check complete-p "the committed journal is one store snapshot")
+        (check-equal (getf stored :id) (mutation-id transaction)))
+      (check-equal (getf (read-mutation-journal transaction) :state) :committed)
       (unregister-tool "mutation-commit-tool"))))
 
 (deftest mutation-exercises-run-before-commit-and-record-evidence ()
