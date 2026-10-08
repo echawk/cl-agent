@@ -83,6 +83,7 @@
      (:file "clspec")
      (:file "apropos")
      (:file "quality")
+     (:file "structural")
      (:file "extensions")
      (:module "mutation"
       :serial t
@@ -109,6 +110,7 @@
      ((:file "shell")
        (:file "sandbox-tool")
        (:file "file-tool")
+       (:file "structural-tool")
        (:file "lsp-tool")
        (:file "skills-tool")
        (:file "quality-tool")
@@ -152,6 +154,7 @@
    (:file "test-generations")
    (:file "test-doctor")
    (:file "test-quality")
+   (:file "test-structural")
    (:file "test-clspec")
    (:file "test-apropos")
    (:file "test-components")

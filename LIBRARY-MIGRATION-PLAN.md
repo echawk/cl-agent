@@ -190,16 +190,22 @@ frontends before allowing a selected restart/recovery.
 - Acceptance: a fixture restart can be inspected and selected without an
   interactive Lisp debugger, and recovery receipts are journaled.
 
-### 7. `clasted` — structural read/rewrite planning
+### 7. `clasted` — structural read/rewrite planning (in progress)
 
-Expose a structural query/rewrite-plan tool backed by immutable source
-snapshots.  Start with preview-only plans; publication remains the existing
-guarded file-edit path until revision-checked multi-file publication exists.
+`src/structural.lisp` now turns an existing file into an immutable Clasted
+snapshot with a content digest revision.  Plans produce a full non-writing
+preview, reject overlap through Clasted, and can prove stale after the observed
+file changes.  `structural-rewrite-plan` lazily enables Clasted's optional
+ast-grep backend when `ast-grep` is available, and otherwise fails with an
+actionable installation message.  Publication remains the existing guarded
+`edit-file` path.
 
-- Do not require `ast-grep` for the base integration; enable its optional
-  backend only when installed/configured.
-- Acceptance: a fixture rewrite returns a preview and rejects stale source
-  revision or overlapping edits before any file is changed.
+- [x] Do not require `ast-grep` for the base integration; load it only for a
+  structural query/rewrite request.
+- [x] Reject stale source observations and overlapping preview edits before any
+  file is changed.
+- [ ] Add structural query-only results and a revision-checked multi-file
+  publication adapter before permitting plan application.
 
 ### 8. `agentcomms` — ACP server
 
