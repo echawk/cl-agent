@@ -49,6 +49,20 @@ components and emit events.  `run-subagent` (and so `delegate-task` and
 `explore-project`) uses workers whenever the provider is rebuildable, falling
 back to the in-process path otherwise (`*subagent-execution-mode*`).
 
+Remaining work:
+
+- [ ] Cold start: each child loads cl-agent from source (about 20 s).  Use the
+  `sbcl-workers` saved-image support so children boot a prebuilt core.
+- [ ] Children lack extension, MCP and LSP tools; missing tools are reported, and
+  role `:setup-forms` can load them.  Decide how enabled extensions reach children.
+- [ ] Write-enabled children, which need the capability/policy layer and
+  worktree isolation from the roadmap (P4, P7).
+- [ ] Persist task records so tasks survive a restart; tasks left `:running`
+  should become `:unknown` rather than being re-run.
+- [ ] Stream child output, not only tool and token progress.
+- [ ] Provider requests cannot be aborted mid-flight for providers that do not
+  stream; an interrupt lands when the response returns.
+
 Original goal, for reference: replace in-image synchronous `run-subagent` execution with a worker manager
 and child SBCL processes.  A parent task should submit several independent
 worker requests concurrently, retain task/job IDs, stream or poll results, and
@@ -125,10 +139,24 @@ unhandled error is selected while its stack is live, journaled as a receipt
 under `debugger/receipts/`, and passed through the `:tool-failure` chain hook,
 which may choose abort (default), retry, a restart, or replacement values.
 The agent can use `list-failures`, `inspect-failure` and `set-failure-recovery`;
-subagents journal receipts into the parent's config directory.  Still to do:
-provider requests, extension load, worker failures and mutation exercises, and
-surfacing live conditions in frontends.
+subagents journal receipts into the parent's config directory.
 
+Remaining work:
+
+- [ ] Wrap provider requests (retry, use-value and abort restarts around
+  `chat-stream` in `run-agent-turn`).
+- [ ] Wrap extension load and mutation exercises.
+- [ ] Wrap worker failures: `run-subagent-worker-task` still flattens a child
+  failure to a string instead of a detached condition snapshot.
+- [ ] Surface live conditions and receipts in the frontends (TUI panel, web pane,
+  CLI line), alongside the subagent and queue displays.
+- [ ] Interactive restart choice by the user or model.  Restarts are only valid
+  during the failing call, so this needs the failing call to wait on its own
+  thread while a frontend or tool supplies the choice.
+- [ ] Optional diagnostic subagent that reads a redacted receipt and recommends
+  a recovery (a recommendation, never authority to invoke a restart).
+- [ ] Journal receipts through `sexp-store` once that migration lands (they are
+  plain files today).
 
 Wrap extension load, provider requests, worker failures, and mutation exercises
 in observable debugger sessions.  Surface detached condition snapshots in all
