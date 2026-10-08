@@ -79,3 +79,9 @@
   (check-equal (json-schema-validation-error (jobj)
                                             (jobj "type" "object" "required" :empty-array))
                nil))
+
+(deftest json-schema-validation-accepts-union-type-arrays ()
+  (let ((schema (jobj "type" (list "boolean" "string"))))
+    (check-equal (json-schema-validation-error t schema) nil)
+    (check-equal (json-schema-validation-error "enabled" schema) nil)
+    (check (search "boolean or string" (json-schema-validation-error 7 schema)))))

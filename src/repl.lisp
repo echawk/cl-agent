@@ -192,6 +192,8 @@ the proposed final answer with an isolated reviewer.")
                                  :accessor session-context-compaction-threshold
                                  :documentation "Fraction of a provider's context window at which
 automatic compaction runs. Zero and one disable automatic compaction.")
+   (settings :initarg :settings :reader session-settings
+             :documentation "Typed, observable Setinka configuration for this session.")
    (subagent-depth :initarg :subagent-depth :initform 0
                    :accessor session-subagent-depth)
    (max-subagent-depth :initarg :max-subagent-depth :initform 1
@@ -309,32 +311,44 @@ startup rather than silently falling back to the host model."
                             profiles)))))
 
 (defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit
-                              (subagent-depth 0) (max-subagent-depth 1) subagent-model-profiles
+                              (subagent-depth 0) max-subagent-depth subagent-model-profiles settings
                               context-compaction-threshold)
-  (let* ((profiles (normalize-subagent-model-profiles subagent-model-profiles))
-         (base-prompt (or system-prompt *default-system-prompt*)))
-    (make-instance 'agent-session
-                  :provider provider
-                  :frontend (or frontend (make-frontend :cli))
-                  :tools tools
-                  :tool-catalog tools
-                  :orchestration-mode (normalize-orchestration-mode orchestration-mode)
-                  :orchestration-tool-limit (if (and (integerp orchestration-tool-limit)
-                                                     (<= 1 orchestration-tool-limit))
-                                                orchestration-tool-limit
-                                                8)
-                  :messages (list (list :role "system" :content
-                                        (concatenate 'string base-prompt
-                                                     (or (subagent-profile-guidance profiles) ""))))
-                  :max-tool-iterations (or max-tool-iterations 1000)
-                  :context-compaction-threshold
-                  (let ((threshold (or context-compaction-threshold 0.8)))
-                    (if (and (numberp threshold) (<= 0 threshold 1)) threshold 0.8))
-                  :subagent-depth subagent-depth
-                  :subagent-model-profiles profiles
-                  :max-subagent-depth (if (and (integerp max-subagent-depth)
-                                               (not (minusp max-subagent-depth)))
-                                          max-subagent-depth 1))))
+  (let* ((settings (or settings (load-agent-settings)))
+         (profiles (normalize-subagent-model-profiles subagent-model-profiles))
+         (base-prompt (or system-prompt *default-system-prompt*))
+         (configured-depth (or max-subagent-depth
+                               (setinka:config :max-subagent-depth settings))))
+    (let ((session
+            (make-instance 'agent-session
+                           :provider provider
+                           :frontend (or frontend (make-frontend :cli))
+                           :tools tools
+                           :tool-catalog tools
+                           :orchestration-mode (normalize-orchestration-mode
+                                                (or orchestration-mode
+                                                    (setinka:config :orchestration-mode settings)))
+                           :orchestration-tool-limit (if (and (integerp orchestration-tool-limit)
+                                                              (<= 1 orchestration-tool-limit))
+                                                         orchestration-tool-limit
+                                                         8)
+                           :messages (list (list :role "system" :content
+                                                 (concatenate 'string base-prompt
+                                                              (or (subagent-profile-guidance profiles) ""))))
+                           :max-tool-iterations (or max-tool-iterations
+                                                    (setinka:config :max-tool-iterations settings))
+                           :context-compaction-threshold
+                           (let ((threshold (or context-compaction-threshold
+                                                (setting-percent->threshold
+                                                 (setinka:config :compaction-percent settings)))))
+                             (if (and (numberp threshold) (<= 0 threshold 1)) threshold 0.8))
+                           :settings settings
+                           :subagent-depth subagent-depth
+                           :subagent-model-profiles profiles
+                           :max-subagent-depth (if (and (integerp configured-depth)
+                                                        (not (minusp configured-depth)))
+                                                   configured-depth 1))))
+      (install-session-settings-listener session)
+      session)))
 
 (defun find-subagent-model-profile (session name)
   "Find a session-local subagent model profile by NAME."
@@ -1839,6 +1853,43 @@ session settings; LIST displays every saved snapshot."
                       "Usage: /session save [NAME], /session restore NAME, or /session list.")))
       (error (condition)
         (ui-error (session-frontend session) condition))))
+  t)
+
+(define-slash-command settings (session arg)
+  "Usage: /settings [list], /settings get NAME, or /settings set NAME VALUE.
+
+Values are coerced and validated by Setinka. Durable settings are persisted in
+the locked S-expression settings store and immediately update this session."
+  (multiple-value-bind (action rest) (split-session-command-argument arg)
+    (handler-case
+        (cond
+          ((or (zerop (length action)) (string= action "list"))
+           (when (plusp (length rest)) (error "Usage: /settings [list]"))
+           (ui-system (session-frontend session) (format-session-settings session)))
+          ((or (string= action "get") (string= action "set"))
+           (multiple-value-bind (name value) (split-session-command-argument rest)
+             (when (zerop (length name))
+               (error "Usage: /settings ~a NAME~@[ VALUE~]" action (string= action "set")))
+             (let ((setting-name (parse-session-setting-name name)))
+               (if (string= action "get")
+                   (progn
+                     (when (plusp (length value)) (error "Usage: /settings get NAME"))
+                     (ui-system (session-frontend session)
+                                (format nil "~(~a~): ~a [~(~a~)]"
+                                        setting-name
+                                        (setinka:setting-render-value
+                                         (setinka:find-setting setting-name *agent-setting-registry*)
+                                         (session-setting-value session setting-name))
+                                        (or (setinka:configuration-setting-source
+                                             (session-settings session) setting-name) :default))))
+                   (progn
+                     (when (zerop (length value)) (error "Usage: /settings set NAME VALUE"))
+                     (setf (setinka:config setting-name (session-settings session)) value)
+                     (ui-system (session-frontend session)
+                                (format nil "Updated ~(~a~)." setting-name)))))))
+          (t (ui-system (session-frontend session)
+                        "Usage: /settings [list], /settings get NAME, or /settings set NAME VALUE.")))
+      (error (condition) (ui-error (session-frontend session) condition))))
   t)
 
 (define-slash-command mcp (session arg)

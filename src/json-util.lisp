@@ -59,21 +59,38 @@ implement all of JSON Schema.  The non-NIL return value is a model-readable
 description of the first violation."
   (labels ((fail (format-control &rest arguments)
              (apply #'format nil format-control arguments))
-           (matches-type-p (candidate type)
-             (cond ((null type) t)
-                   ((string= type "object") (json-object-p candidate))
+           (matches-one-type-p (candidate type)
+             (cond ((string= type "object") (json-object-p candidate))
                    ((string= type "array") (listp candidate))
                    ((string= type "string") (stringp candidate))
                    ((string= type "integer") (integerp candidate))
                    ((string= type "number") (numberp candidate))
                    ((string= type "boolean") (or (eq candidate t) (null candidate)))
                    ((string= type "null") (eq candidate :null))
+                   ;; Unknown JSON-Schema types are outside this deliberately
+                   ;; small validator and remain the provider's concern.
                    (t t)))
+           (matches-type-p (candidate type)
+             ;; JSON Schema permits either one type string or an array of
+             ;; alternatives. MCP tools commonly use the latter, e.g.
+             ;; ["boolean", "string"]. Treat it as a union instead of
+             ;; passing the whole Lisp list to STRING=.
+             (cond ((null type) t)
+                   ((stringp type) (matches-one-type-p candidate type))
+                   ((listp type) (some (lambda (option)
+                                         (and (stringp option)
+                                              (matches-one-type-p candidate option)))
+                                       type))
+                   (t t)))
+           (type-description (type)
+             (if (listp type)
+                 (format nil "~{~a~^ or ~}" type)
+                 type))
            (validate (candidate current-schema current-path)
              (let ((type (jget current-schema "type")))
                (cond
                  ((and type (not (matches-type-p candidate type)))
-                  (fail "~a must be a JSON ~a" current-path type))
+                  (fail "~a must be a JSON ~a" current-path (type-description type)))
                  ((and (jget current-schema "enum")
                        (not (member candidate (jget current-schema "enum") :test #'equal)))
                   (fail "~a must be one of the values allowed by its enum" current-path))

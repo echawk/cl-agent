@@ -138,17 +138,24 @@ the process has more than one live Lisp thread.
   the launcher, and a deliberately broken private extension still permits safe
   boot.
 
-### 5. `setinka` — typed, observable settings
+### 5. `setinka` — typed, observable settings (in progress)
 
-Layer typed runtime settings over static `config.lisp` defaults.  Begin with
-provider/model, UI, compaction threshold, shell timeout, worker concurrency,
-and policy mode.
+`src/settings.lisp` now owns a dedicated Setinka registry and persists its
+durable values in a versioned, process-locked `sexp-store` snapshot.  The first
+live settings are compaction percentage, tool-call limit, orchestration mode,
+and maximum subagent depth.  They are loaded into every session, validate and
+coerce textual updates, notify a listener that updates the live session, and
+are reflected/edited through `/settings`.  Compatible `config.lisp` values
+remain explicit startup overrides.
 
-- Retire scattered default validation in session construction after compatible
-  settings are exposed.
-- Back durable values with the Sexp Store migration.
-- Acceptance: changing a session setting validates/coerces, notifies listeners,
-  persists when durable, and is visible through one reflection API.
+- [x] Back durable values with Setinka and the Sexp Store transaction layer.
+- [x] Move compatible session defaults and validation into typed settings.
+- [x] Provide a reflection/update surface with `/settings`.
+- [ ] Add typed provider/model and UI settings after provider/frontend discovery
+  can supply their dynamic choice lists.
+- [ ] Migrate shell timeout, worker concurrency, and sandbox-policy mode.
+- [ ] Replace remaining direct session field mutation in legacy slash commands
+  with setting writes where the setting owns that field.
 
 ### 6. `lambda-debugger` — conditions and restarts workbench (first slice done)
 
