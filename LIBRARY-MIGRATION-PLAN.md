@@ -51,7 +51,13 @@ cancel an individual worker without sharing the parent image’s mutable session
 - Acceptance: two fixture workers overlap in wall-clock time; cancelling one
   leaves the other’s result usable; no child can mutate the parent session.
 
-### 2. `clinker-transcript` — provider-facing transcript projection
+### 2. `clinker-transcript` — provider-facing transcript projection (in progress)
+
+`src/transcript.lisp` now maps normalized session messages into Clinker items,
+uses `reconcile-items` immediately before each provider request, and projects
+the verified ordering back to existing provider-neutral message plists. This
+prevents malformed tool-call histories from reaching a provider without a
+provider-specific rewrite.
 
 Introduce a transcript projection alongside `session-messages`; append
 normalized user/assistant/tool items through it and derive provider message

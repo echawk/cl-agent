@@ -65,6 +65,7 @@
      (:file "sandbox")
      (:file "dap")
      (:file "workers")
+     (:file "transcript")
      (:module "providers"
       :serial t
       :components

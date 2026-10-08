@@ -1292,7 +1292,7 @@ during this turn can call SESSION-COMPLETE."
          (loop for iteration from 1
           do (auto-compact-if-needed session)
              (let* ((ctx (run-hook-chain :before-request
-                                          (list :messages (session-messages session)
+                                          (list :messages (session-provider-messages session)
                                                 ;; A denied budget becomes a no-tool final-answer pass.
                                                 :tools (unless tool-budget-finalization-p
                                                          (session-tools session)))))

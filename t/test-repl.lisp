@@ -907,6 +907,15 @@
              (check-equal (length (session-messages parent)) 1)))
       (setf (symbol-function 'run-agent-turn) original))))
 
+(deftest transcript-projection-reconciles-tool-calls-before-provider-use ()
+  (let ((session (make-session (make-instance 'ollama-provider))))
+    (setf (session-messages session)
+          (list (list :role "system" :content "rules")
+                (list :role "assistant" :content nil
+                      :tool-calls (list (list :id "call-1" :name "shell" :arguments (jobj "command" "true"))))
+                (list :role "tool" :tool-call-id "call-1" :content "ok")))
+    (check-equal (session-provider-messages session) (session-messages session))))
+
 (deftest sbcl-workers-run-in-an-isolated-persistent-process ()
   (let ((name (format nil "test-worker-~d" (random 1000000))))
     (unwind-protect
