@@ -14,13 +14,28 @@ dependency alone does not count.
 | `idsmall` | durable task records | New task IDs are short timestamped, collision-checked identifiers. |
 | `sexp-config` | `config.lisp` reader | Bounded inert-data grammar replaces direct project-owned `READ` plumbing. |
 | `cl-jobpond` | managed shell jobs | A bounded supervisor pool owns shell-job admission, waiting, cancellation delivery, and lifecycle state; the existing EWMA deadline estimate and explicit OS-process kill remain. |
+| `cl-exec-sandbox` | shell-tool policy adapter | Sandbox policy construction and execution are exposed as tools; it is the deterministic enforcement boundary replacing the LLM shell inspector. |
+| `daphne` | debug-adapter client tools | DAP lifecycle and request tools are available through the normal tool registry. |
+
+## Migration coverage
+
+Every library added for this migration is listed below.  “Installed only” is
+intentional debt, not a claim of integration.  Existing project dependencies
+such as `cl-mcp`, `cl-lsp`, and `cl-skills` are outside this migration because
+they predate the library-adoption effort and already own their respective
+surfaces.
 
 The LLM shell-command inspector has been removed from the execution path.  The
 sandbox and normal tool hooks are the policy/enforcement boundary.
 
 ## Next migrations
 
-### 1. `sbcl-workers` — real concurrent, isolated subagents
+### 1. `sbcl-workers` — real concurrent, isolated subagents (in progress)
+
+The first executable seam is now present: `src/workers.lisp` owns a named,
+persistent child-SBCL pool.  `run-subagent-worker-evaluation` exposes readable
+`:eval` protocol responses and `stop-subagent-worker` delivers cancellation
+before process teardown.  The test proves both heap isolation and persistence.
 
 Replace in-image synchronous `run-subagent` execution with a worker manager
 and child SBCL processes.  A parent task should submit several independent

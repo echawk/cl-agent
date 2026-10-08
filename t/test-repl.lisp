@@ -907,6 +907,18 @@
              (check-equal (length (session-messages parent)) 1)))
       (setf (symbol-function 'run-agent-turn) original))))
 
+(deftest sbcl-workers-run-in-an-isolated-persistent-process ()
+  (let ((name (format nil "test-worker-~d" (random 1000000))))
+    (unwind-protect
+         (let ((first (run-subagent-worker-evaluation name
+                                                       "(progn (defparameter *worker-isolation-fixture* 41) (incf *worker-isolation-fixture*))"))
+               (second (run-subagent-worker-evaluation name "(incf *worker-isolation-fixture*)")))
+           (check-equal (getf first :status) :ok)
+           (check-equal (getf second :status) :ok)
+           (check (search "43" (first (getf second :values)))
+                  "same named worker retains its own heap"))
+      (stop-subagent-worker name))))
+
 (deftest compact-subagent-model-profiles-route-and-guide-workers ()
   (let* ((parent (make-session
                   (make-instance 'ollama-provider :model "host-model")

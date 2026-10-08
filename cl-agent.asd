@@ -64,6 +64,7 @@
        (:file "server")))
      (:file "sandbox")
      (:file "dap")
+     (:file "workers")
      (:module "providers"
       :serial t
       :components
