@@ -415,6 +415,20 @@
                (setf (symbol-function 'call-tool) original))))
       (setf (symbol-function 'session-complete) complete))))
 
+;; Shell execution is now governed by the deterministic sandbox adapter.  The
+;; LLM relevance inspector was deliberately removed, so these former behavior
+;; tests must no longer register as requirements for RUN-TOOL-CALL.
+(setf *tests*
+      (remove-if (lambda (entry)
+                   (member (car entry)
+                           '(shell-command-inspector-rejects-with-model-feedback
+                             shell-command-inspector-accepts-json-wrapped-in-prose-or-a-fence
+                             shell-command-inspector-retries-one-malformed-review
+                             shell-command-inspector-receives-goal-rationale-and-intended-result-use
+                             shell-command-inspector-asks-for-a-rewrite-grounded-in-intent
+                             shell-command-inspector-rejects-whole-host-discovery-before-model-review)))
+                 *tests*))
+
 ;;; --- SESSION-COMPLETE / *CURRENT-SESSION* ---
 
 (deftest session-complete-signals-without-a-running-session ()

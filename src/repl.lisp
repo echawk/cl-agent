@@ -1236,32 +1236,17 @@ CALL-TOOL), rather than the error propagating out of the turn
 entirely."
   (let* ((frontend (session-frontend session))
          (validation-error (tool-call-json-error tool-call))
-         (shell-inspection
-           (when (and (not validation-error)
-                      *shell-command-inspection-enabled*
-                      (string= (getf tool-call :name) "shell")
-                      *current-session*)
-             (inspect-shell-command session
-                                    (jget (getf tool-call :arguments) "command")
-                                    (jget (getf tool-call :arguments) "reason")
-                                    (jget (getf tool-call :arguments) "result_use"))))
-         (inspection-error (and shell-inspection
-                                (eq (getf shell-inspection :decision) :reject)
-                                (rejected-shell-command-result shell-inspection)))
          (requested (list :tool-name (getf tool-call :name) :arguments (getf tool-call :arguments))))
     (multiple-value-bind (ctx veto)
-        (if (or validation-error inspection-error)
+        (if validation-error
             (values requested nil)
             (handler-case (values (run-hook-chain :before-tool-call requested) nil)
               (error (c) (values requested c))))
       (ui-tool-started frontend (getf ctx :tool-name) (getf ctx :arguments))
-      (when inspection-error
-        (ui-system frontend (format nil "[shell inspector] ~a" (getf shell-inspection :reason))))
       (let* ((result (cond (validation-error (invalid-tool-call-result tool-call validation-error))
-                           (inspection-error inspection-error)
                            (veto (format nil "Tool call vetoed by a :before-tool-call hook: ~a" veto))
                            (t (call-tool (getf ctx :tool-name) (getf ctx :arguments)))))
-             (after (if (or validation-error inspection-error veto)
+             (after (if (or validation-error veto)
                         (list* :result result ctx)
                         (run-hook-chain :after-tool-call
                                         (list :tool-name (getf ctx :tool-name)

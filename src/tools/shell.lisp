@@ -5,16 +5,33 @@
   ((id :initarg :id :reader shell-job-id) (process :initarg :process :reader shell-job-process)
    (output :initarg :output :reader shell-job-output) (error-output :initarg :error-output :reader shell-job-error-output)
    (started-at :initarg :started-at :reader shell-job-started-at) (expected :initarg :expected :reader shell-job-expected)
+   ;; The operating-system process remains the authority for output and exit
+   ;; status.  Jobpond owns admission, waiting, cancellation delivery, and the
+   ;; bounded worker pool around that process.
+   (supervisor :initform nil :accessor shell-job-supervisor)
    (finished-p :initform nil :accessor shell-job-finished-p) (result :initform nil :accessor shell-job-result)))
 
 (defvar *shell-jobs* (make-hash-table :test 'equal))
 (defvar *shell-job-counter* 0)
 (defvar *shell-job-lock* (bordeaux-threads:make-lock "shell jobs"))
+(defvar *shell-job-pool-lock* (bordeaux-threads:make-lock "shell job pool"))
+(defvar *shell-job-pool* nil)
 ;; TCP-style EWMA error model: agents' estimates improve through feedback.
 (defparameter *shell-duration-bias* 0d0)
 (defparameter *shell-duration-deviation* 1d0)
 (defparameter *shell-default-expected-seconds* 10)
 (defparameter *shell-maximum-seconds* 300)
+
+(defun shell-job-pool ()
+  "Return the lazily-created Jobpond supervisor for shell processes."
+  (or *shell-job-pool*
+      (bordeaux-threads:with-lock-held (*shell-job-pool-lock*)
+        (or *shell-job-pool*
+            (setf *shell-job-pool*
+                  (cl-jobpond:make-job-pool :name "cl-agent shell jobs"
+                                             :maximum-concurrency 4
+                                             :maximum-live-jobs 64
+                                             :maximum-runtime-milliseconds 0))))))
 
 (defun shell-now () (/ (get-internal-real-time) internal-time-units-per-second))
 (defun shell-elapsed (job) (- (shell-now) (shell-job-started-at job)))
@@ -55,7 +72,21 @@ agent loop's JSON-Schema validation."
            (process (uiop:launch-program (list "/bin/sh" "-c" command) :output :stream :error-output :stream))
            (job (make-instance 'shell-job :id id :process process :output (uiop:process-info-output process)
                                :error-output (uiop:process-info-error-output process) :started-at (shell-now) :expected expected)))
-      (setf (gethash id *shell-jobs*) job) job)))
+      (setf (gethash id *shell-jobs*) job)
+      (setf (shell-job-supervisor job)
+            (cl-jobpond:job-pool-submit
+             (shell-job-pool)
+             (lambda (supervisor)
+               ;; A Jobpond cancellation interrupts this worker.  Always reap
+               ;; the child in that path, preserving STOP-SHELL-JOB's promise
+               ;; that managed work can be killed without ps/kill.
+               (declare (ignore supervisor))
+               (unwind-protect
+                    (uiop:wait-process process)
+                 (when (uiop:process-alive-p process)
+                   (ignore-errors (uiop:terminate-process process :urgent t)))))
+             :name id :maximum-runtime-milliseconds 0))
+      job)))
 (defun find-shell-job (id) (or (gethash id *shell-jobs*) (error "No managed shell job named ~s" id)))
 
 (defun finish-shell-job (job &key interrupted)
@@ -75,16 +106,26 @@ agent loop's JSON-Schema validation."
 (defun stop-shell-job (id &key urgent)
   (let ((job (find-shell-job id)))
     (if (shell-job-finished-p job) (shell-job-result job)
-        (progn (uiop:terminate-process (shell-job-process job) :urgent urgent) (finish-shell-job job :interrupted t)))))
+        (progn
+          (when (shell-job-supervisor job)
+            (cl-jobpond:job-cancel (shell-job-supervisor job) :reason :stopped))
+          (when (uiop:process-alive-p (shell-job-process job))
+            (uiop:terminate-process (shell-job-process job) :urgent urgent))
+          (finish-shell-job job :interrupted t)))))
 (defun shell-job-status (id)
   (let ((job (find-shell-job id)))
     (if (shell-job-finished-p job) (format nil "Job ~a finished.~%~a" id (shell-job-result job))
-        (format nil "Job ~a is running for ~,2fs (estimate ~ds)." id (shell-elapsed job) (shell-job-expected job)))))
+        (let ((state (and (shell-job-supervisor job)
+                          (getf (cl-jobpond:job-snapshot (shell-job-supervisor job)) :state))))
+          (format nil "Job ~a is ~a for ~,2fs (estimate ~ds)."
+                  id (or state :running) (shell-elapsed job) (shell-job-expected job))))))
 (defun wait-for-shell-job (job deadline)
-  (loop while (uiop:process-alive-p (shell-job-process job))
-        when (>= (shell-elapsed job) deadline) do (return (stop-shell-job (shell-job-id job)))
-        do (sleep .05))
-  (finish-shell-job job))
+  (multiple-value-bind (snapshot terminal-p)
+      (cl-jobpond:job-await (shell-job-supervisor job) :timeout-seconds deadline)
+    (declare (ignore snapshot))
+    (if terminal-p
+        (finish-shell-job job)
+        (stop-shell-job (shell-job-id job)))))
 
 (define-tool shell (args)
     (:description "Run a shell command with loop detection. Supply expected_seconds whenever possible. Commands are interrupted at one learned standard deviation past that estimate, or at explicit warning_after_seconds. An interruption is feedback to inspect for a loop; use managed background jobs for intentional long work."
