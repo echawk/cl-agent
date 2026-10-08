@@ -151,9 +151,12 @@ remain explicit startup overrides.
 - [x] Back durable values with Setinka and the Sexp Store transaction layer.
 - [x] Move compatible session defaults and validation into typed settings.
 - [x] Provide a reflection/update surface with `/settings`.
+- [x] Move managed-shell default/deadline bounds, live Jobpond subagent
+  concurrency, and sandbox network policy into typed settings.  Shell and
+  sandbox settings are resolved from the active session; the shared worker
+  pool updates its admission limit atomically.
 - [ ] Add typed provider/model and UI settings after provider/frontend discovery
   can supply their dynamic choice lists.
-- [ ] Migrate shell timeout, worker concurrency, and sandbox-policy mode.
 - [ ] Replace remaining direct session field mutation in legacy slash commands
   with setting writes where the setting owns that field.
 
@@ -204,8 +207,10 @@ actionable installation message.  Publication remains the existing guarded
   structural query/rewrite request.
 - [x] Reject stale source observations and overlapping preview edits before any
   file is changed.
-- [ ] Add structural query-only results and a revision-checked multi-file
-  publication adapter before permitting plan application.
+- [x] Add structural query-only results and a revision-checked multi-file
+  publication adapter.  The adapter validates every snapshot before its first
+  atomic write; a later filesystem I/O failure remains visibly partial because
+  portable cross-file transactions do not exist.
 
 ### 8. `agentcomms` — ACP server
 

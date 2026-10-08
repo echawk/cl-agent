@@ -9,14 +9,15 @@
   (cl-exec-sandbox:sandbox-supported-p :available-p))
 
 (defun make-agent-sandbox-policy (&key (workspace-roots (list (uiop:getcwd)))
-                                       (network :isolated))
+                                       network)
   "Create cl-agent's conservative workspace-write policy.
 
 The policy protects repository/agent metadata through cl-exec-sandbox's
 defaults.  Callers must still make authority decisions; this is enforcement,
 not an approval system."
   (cl-exec-sandbox:workspace-write-sandbox-policy
-   :workspace-roots workspace-roots :network network))
+   :workspace-roots workspace-roots
+   :network (or network (current-agent-setting :sandbox-network-mode :isolated))))
 
 (defun sandbox-result->plist (result)
   (list :exit-code (cl-exec-sandbox:sandbox-result-exit-code result)

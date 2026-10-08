@@ -19,8 +19,10 @@
 ;; TCP-style EWMA error model: agents' estimates improve through feedback.
 (defparameter *shell-duration-bias* 0d0)
 (defparameter *shell-duration-deviation* 1d0)
-(defparameter *shell-default-expected-seconds* 10)
-(defparameter *shell-maximum-seconds* 300)
+(defparameter *shell-default-expected-seconds* 10
+  "Fallback used before a session's typed settings are available.")
+(defparameter *shell-maximum-seconds* 300
+  "Fallback used before a session's typed settings are available.")
 
 (defun shell-job-pool ()
   "Return the lazily-created Jobpond supervisor for shell processes."
@@ -40,7 +42,8 @@
     (setf *shell-duration-deviation* (+ (* .75d0 *shell-duration-deviation*) (* .25d0 (abs (- error old))))
           *shell-duration-bias* (+ (* .875d0 old) (* .125d0 error)))))
 (defun shell-warning-delay (expected explicit)
-  (min *shell-maximum-seconds* (or explicit (ceiling (+ expected (max 1d0 *shell-duration-deviation*))))))
+  (min (current-agent-setting :shell-maximum-seconds *shell-maximum-seconds*)
+       (or explicit (ceiling (+ expected (max 1d0 *shell-duration-deviation*))))))
 
 (defun required-shell-command (arguments)
   "Return the required command string from a tool ARGUMENTS object.
@@ -140,7 +143,9 @@ agent loop's JSON-Schema validation."
                        (jobj "command" (jobj "type" "string") "reason" (jobj "type" "string") "result_use" (jobj "type" "string")
                               "expected_seconds" (jobj "type" "integer" "minimum" 1) "warning_after_seconds" (jobj "type" "integer" "minimum" 1))
                        "required" (list "command" "reason" "result_use")))
-  (let* ((expected (jget args "expected_seconds" *shell-default-expected-seconds*))
+  (let* ((expected (jget args "expected_seconds"
+                        (current-agent-setting :shell-default-expected-seconds
+                                               *shell-default-expected-seconds*)))
          (job (launch-shell-job (required-shell-command args) expected)))
     (wait-for-shell-job job (shell-warning-delay expected (jget args "warning_after_seconds")))))
 

@@ -26,6 +26,27 @@
   :documentation "Maximum nesting depth permitted for delegated subagents."
   :environment "CL_AGENT_MAX_SUBAGENT_DEPTH" :minimum 0 :maximum 16 :default 1)
 
+(setinka:define-setting :shell-default-expected-seconds (setinka:integer-setting :registry *agent-setting-registry*)
+  :label "Shell expected duration" :group :tools :scope :durable
+  :documentation "Default expected duration for managed shell commands when a tool call does not supply expected_seconds."
+  :environment "CL_AGENT_SHELL_DEFAULT_EXPECTED_SECONDS" :minimum 1 :maximum 300 :default 10)
+
+(setinka:define-setting :shell-maximum-seconds (setinka:integer-setting :registry *agent-setting-registry*)
+  :label "Shell maximum duration" :group :tools :scope :durable
+  :documentation "Hard upper bound for a managed shell command deadline, even when its estimate is larger."
+  :environment "CL_AGENT_SHELL_MAXIMUM_SECONDS" :minimum 1 :maximum 3600 :default 300)
+
+(setinka:define-setting :subagent-concurrency (setinka:integer-setting :registry *agent-setting-registry*)
+  :label "Subagent concurrency" :group :workers :scope :durable
+  :documentation "Maximum concurrent isolated subagent tasks in the shared Jobpond pool."
+  :environment "CL_AGENT_SUBAGENT_CONCURRENCY" :minimum 1 :maximum 32 :default 3)
+
+(setinka:define-setting :sandbox-network-mode (setinka:choice-setting :registry *agent-setting-registry*)
+  :label "Sandbox network mode" :group :security :scope :durable :type 'keyword
+  :documentation "Network policy for sandbox-shell: isolated, enabled, or proxy-only when the host supports it."
+  :environment "CL_AGENT_SANDBOX_NETWORK_MODE"
+  :options '(:isolated :enabled :proxy-only) :default :isolated)
+
 (defun agent-settings-path ()
   (merge-pathnames "state/settings.sexp" *config-directory*))
 
@@ -83,7 +104,11 @@
       (setf overrides (list* :compaction-percent (round (* threshold 100)) overrides)))
     (dolist (mapping '((:max-tool-iterations . :max-tool-iterations)
                        (:orchestration-mode . :orchestration-mode)
-                       (:max-subagent-depth . :max-subagent-depth)))
+                       (:max-subagent-depth . :max-subagent-depth)
+                       (:shell-default-expected-seconds . :shell-default-expected-seconds)
+                       (:shell-maximum-seconds . :shell-maximum-seconds)
+                       (:subagent-concurrency . :subagent-concurrency)
+                       (:sandbox-network-mode . :sandbox-network-mode)))
       (let ((value (config-value legacy-config (car mapping) nil)))
         (when value (setf overrides (list* (cdr mapping) value overrides)))))
     overrides))
@@ -101,6 +126,15 @@
 (defun session-setting-value (session name)
   (setinka:config name (session-settings session)))
 
+(defun current-agent-setting (name fallback)
+  "Return NAME from the running session when one exists, otherwise FALLBACK.
+
+Tool helpers also run in tests, worker setup, and startup paths where no
+session is dynamically bound; those paths retain their conservative defaults."
+  (if (and (boundp '*current-session*) *current-session*)
+      (setinka:config name (session-settings *current-session*))
+      fallback))
+
 (defun update-session-from-setting (session setting value)
   "Apply a live Setinka setting update to SESSION's existing mechanics."
   (case (setinka:setting-name setting)
@@ -108,10 +142,28 @@
      (setf (session-context-compaction-threshold session) (setting-percent->threshold value)))
     (:max-tool-iterations (setf (session-max-tool-iterations session) value))
     (:orchestration-mode (setf (session-orchestration-mode session) value))
-    (:max-subagent-depth (setf (session-max-subagent-depth session) value)))
+    (:max-subagent-depth (setf (session-max-subagent-depth session) value))
+    (:subagent-concurrency
+     ;; The Jobpond pool is process-wide, so concurrency cannot be scoped to
+     ;; one session.  Updating it is atomic; active jobs continue and new
+     ;; admission observes the new bound.
+     (setf *subagent-max-concurrency* value)
+     (when *subagent-task-pool*
+       (cl-jobpond:job-pool-update-limits
+        *subagent-task-pool* :maximum-concurrency value
+        :maximum-batch-size (cl-jobpond:job-pool-maximum-batch-size *subagent-task-pool*)
+        :maximum-live-jobs (cl-jobpond:job-pool-maximum-live-jobs *subagent-task-pool*)
+        :maximum-runtime-milliseconds
+        (cl-jobpond:job-pool-maximum-runtime-milliseconds *subagent-task-pool*)))))
   session)
 
 (defun install-session-settings-listener (session)
+  ;; Only the shared worker pool needs an initial application.  Session-owned
+  ;; values are already copied by MAKE-SESSION, including explicit per-session
+  ;; initargs, so reapplying all durable settings here would overwrite those.
+  (let ((setting (setinka:find-setting :subagent-concurrency *agent-setting-registry*)))
+    (update-session-from-setting session setting
+                                 (session-setting-value session :subagent-concurrency)))
   (setinka:configuration-add-listener
    (session-settings session)
    (lambda (configuration setting old new)
