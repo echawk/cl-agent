@@ -76,6 +76,19 @@ it was refused -- see repl.lisp).")
 change what the model is told the tool produced.")
     (:on-error . "Notify hook, called with one argument: the CONDITION
 that was signalled and caught by the top-level error handler.")
+    (:before-subagent-start . "Chain hook. Argument/return is the inert
+contract plist for a subagent about to start in a child SBCL (:task :role
+:profile :system :provider :tools :max-tool-iterations :max-seconds :depth
+:max-depth :setup-forms). Rewrite :system, :tools or :max-seconds, add
+:setup-forms, or signal an error to veto the launch. The contract is plain
+data; it never carries parent objects.")
+    (:after-subagent-result . "Chain hook. Argument/return is a plist
+(:task-id ID :status :ok-or-:error :report STRING ...) describing a finished
+child's outcome, before the task is settled. Rewrite :report, or change
+:status to :error to fail the task.")
+    (:subagent-task-transition . "Notify hook, called with a snapshot plist
+(:id :state :role :model :tools :note ...) each time a subagent task changes
+state (queued, running, succeeded, failed, cancelled, unknown).")
     (:before-extension-load . "Notify hook, called with one argument:
 the pathname about to be LOADed by LOAD-EXTENSION-FILE.")
     (:after-extension-load . "Notify hook, called with one argument:

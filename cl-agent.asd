@@ -117,6 +117,7 @@
        (:file "mcp-tool")
        (:file "components-tool")
        (:file "dap-tool")))
+     (:file "tasks")
      (:file "repl")
      (:file "main")))))
 
@@ -148,6 +149,7 @@
    (:file "test-apropos")
    (:file "test-components")
    (:file "test-repl")
+   (:file "test-tasks")
    (:file "test-mcp")
    (:file "test-integrations")
    (:file "test-ui"))

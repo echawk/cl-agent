@@ -31,6 +31,11 @@ bindings can leak into the worker heap."
           "--eval" (format nil "(asdf:load-asd #P~S)"
                              (namestring (merge-pathnames "cl-agent.asd" root)))
           "--eval" "(asdf:load-system :cl-agent)"
+          ;; Loading can leave an unterminated progress line on stdout (SBCL
+          ;; prints \";;; Computing Hangul syllable names\" without a newline).
+          ;; The host reads this stream as Lisp, where the handshake would then
+          ;; be swallowed as part of that comment.  End the line first.
+          "--eval" "(progn (terpri) (finish-output))"
           "--eval" "(cl-agent::run-subagent-worker-runtime)")))
 
 (defun subagent-worker-environment ()

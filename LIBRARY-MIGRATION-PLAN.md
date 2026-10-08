@@ -37,7 +37,19 @@ persistent child-SBCL pool.  `run-subagent-worker-evaluation` exposes readable
 `:eval` protocol responses and `stop-subagent-worker` delivers cancellation
 before process teardown.  The test proves both heap isolation and persistence.
 
-Replace in-image synchronous `run-subagent` execution with a worker manager
+`src/tasks.lisp` adds the task runtime on top of it: an inert child contract
+(`build-subagent-contract`), a worker-side entry (`run-subagent-worker-task`)
+that rebuilds a real provider and a silent session in the child, a task state
+machine with Jobpond admission/timeout/cancellation, registered roles, a
+grantable-tool allowlist, and `start-subagent`/`wait-subagent`/`cancel-subagent`/
+`list-subagents` tools.  Extension points: hooks `:before-subagent-start`,
+`:after-subagent-result`, `:subagent-task-transition`; `register-subagent-role`;
+`provider-worker-spec`; `*subagent-grantable-tools*`; tasks and roles are
+components and emit events.  `run-subagent` (and so `delegate-task` and
+`explore-project`) uses workers whenever the provider is rebuildable, falling
+back to the in-process path otherwise (`*subagent-execution-mode*`).
+
+Original goal, for reference: replace in-image synchronous `run-subagent` execution with a worker manager
 and child SBCL processes.  A parent task should submit several independent
 worker requests concurrently, retain task/job IDs, stream or poll results, and
 cancel an individual worker without sharing the parent image’s mutable session.

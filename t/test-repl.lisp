@@ -889,6 +889,7 @@
     (check (search "1000 tokens" (session-context-report session)))))
 
 (deftest run-subagent-isolated-and-reports-to-its-parent ()
+  (let ((*subagent-execution-mode* :in-process))
   (let* ((parent (make-session (make-instance 'ollama-provider)))
          (original (symbol-function 'run-agent-turn))
          (child nil))
@@ -905,7 +906,7 @@
              (check-equal (session-max-tool-iterations child) 1000)
              (check-equal (mapcar #'tool-name (session-tools child)) '("shell"))
              (check-equal (length (session-messages parent)) 1)))
-      (setf (symbol-function 'run-agent-turn) original))))
+      (setf (symbol-function 'run-agent-turn) original)))))
 
 (deftest transcript-projection-reconciles-tool-calls-before-provider-use ()
   (let ((session (make-session (make-instance 'ollama-provider))))
@@ -922,13 +923,14 @@
          (let ((first (run-subagent-worker-evaluation name
                                                        "(progn (defparameter *worker-isolation-fixture* 41) (incf *worker-isolation-fixture*))"))
                (second (run-subagent-worker-evaluation name "(incf *worker-isolation-fixture*)")))
-           (check-equal (getf first :status) :ok)
-           (check-equal (getf second :status) :ok)
-           (check (search "43" (first (getf second :values)))
+           (check-equal (getf (rest first) :status) :ok)
+           (check-equal (getf (rest second) :status) :ok)
+           (check (search "43" (first (getf (rest second) :values)))
                   "same named worker retains its own heap"))
       (stop-subagent-worker name))))
 
 (deftest compact-subagent-model-profiles-route-and-guide-workers ()
+  (let ((*subagent-execution-mode* :in-process))
   (let* ((parent (make-session
                   (make-instance 'ollama-provider :model "host-model")
                   :subagent-model-profiles
@@ -953,7 +955,7 @@
            (check (search "Profile guidance:" (getf (first (session-messages child)) :content)))
            (check-equal (getf (find-subagent-model-profile parent :deep-research) :model)
                         "glm-5.2"))
-      (setf (symbol-function 'run-agent-turn) original))))
+      (setf (symbol-function 'run-agent-turn) original)))))
 
 (deftest unknown-subagent-model-profile-does-not-fall-back-silently ()
   (let ((parent (make-session (make-instance 'ollama-provider)

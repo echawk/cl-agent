@@ -1461,6 +1461,12 @@ its configured depth limit."
         (format nil "Subagent was not started: unknown model profile ~s. Configured profiles: ~{~a~^, ~}."
                 profile (mapcar (lambda (entry) (getf entry :name))
                                  (session-subagent-model-profiles parent)))))
+    (when (and (eq *subagent-execution-mode* :worker)
+               (provider-worker-spec (session-provider parent)
+                                     (provider-model (session-provider parent))))
+      (return-from run-subagent
+        (run-subagent-in-worker parent task system tools :profile profile
+                                                         :max-tool-iterations max-tool-iterations)))
     (let* ((profile-limit (and selected-profile (getf selected-profile :max-tool-iterations)))
            (model (or (and selected-profile (getf selected-profile :model))
                       (provider-model (session-provider parent))))
@@ -1823,6 +1829,7 @@ can still call SESSION-COMPLETE."
                              (session-submit-user-text session line)
                              (run-agent-turn session))
                             ((null result) (return))))))))
+             (stop-all-subagent-tasks)
              (run-hook :on-shutdown)))
       (ui-stop frontend)))
   (values))
