@@ -217,6 +217,111 @@ STATS themselves)."
           (getf stats :requests) (getf stats :tool-calls)
           (and (plusp (getf stats :total-tokens 0)) (getf stats :total-tokens))))
 
+;;; ------------------------------------------------------------------
+;;; Input while the agent is working: queueing and interrupting
+;;;
+;;; The core asks a frontend for messages typed during a turn
+;;; (UI-POLL-INPUT) and whether the user asked to stop (UI-INTERRUPT-
+;;; REQUESTED-P) at safe points: between model requests, between tool calls,
+;;; while streaming, and while waiting on long tools.  A frontend that can
+;;; accept input while busy mixes in QUEUED-INPUT-MIXIN and routes each
+;;; submitted line through FRONTEND-ACCEPT-INPUT.
+
+(defgeneric ui-poll-input (frontend)
+  (:documentation "Return, without blocking, the list of message strings the user
+queued while the agent was busy, oldest first, and forget them.  Default: NIL.")
+  (:method ((frontend agent-frontend)) nil))
+
+(defgeneric ui-interrupt-requested-p (frontend)
+  (:documentation "True when the user asked to interrupt the running turn.")
+  (:method ((frontend agent-frontend)) nil))
+
+(defgeneric ui-clear-interrupt (frontend)
+  (:documentation "Acknowledge an interrupt request.")
+  (:method ((frontend agent-frontend)) (values)))
+
+(defgeneric ui-queue-updated (frontend queued)
+  (:documentation "The list of queued, not-yet-delivered message strings changed.
+Frontends with a persistent surface show it (\"Queued: ...\").  Default: no-op.")
+  (:method ((frontend agent-frontend) queued) (declare (ignore queued)) (values)))
+
+(defgeneric ui-input-delivered (frontend text)
+  (:documentation "A queued message was handed to the agent; a frontend that did
+not echo it when it was typed shows it in the transcript now.  Default: no-op.")
+  (:method ((frontend agent-frontend) text) (declare (ignore text)) (values)))
+
+(defclass queued-input-mixin (agent-frontend)
+  ((input-queue :initform nil :accessor frontend-input-queue)
+   (input-lock :initform (bordeaux-threads:make-lock "cl-agent input queue")
+               :reader frontend-input-lock)
+   (busy-p :initform nil :accessor frontend-busy-p
+           :documentation "True from the start of planning/thinking until the turn ends.")
+   (interrupt-flag :initform nil :accessor frontend-interrupt-flag))
+  (:documentation "Mixin giving a frontend a thread-safe queue of messages typed
+while the agent is busy, plus an interrupt flag."))
+
+(defun parse-interrupt-command (text)
+  "Return (values interrupt-p remaining-text) for TEXT, recognising a leading
+/interrupt.  \"/interrupt\" alone interrupts; \"/interrupt do X instead\" interrupts
+and then sends \"do X instead\"."
+  (let ((trimmed (string-trim '(#\Space #\Tab #\Newline) text)))
+    (if (and (>= (length trimmed) 10)
+             (string-equal "/interrupt" trimmed :end2 10)
+             (or (= (length trimmed) 10)
+                 (member (char trimmed 10) '(#\Space #\Tab #\Newline))))
+        (values t (string-trim '(#\Space #\Tab #\Newline) (subseq trimmed 10)))
+        (values nil trimmed))))
+
+(defun frontend-request-interrupt (frontend)
+  "Ask the running turn to stop at its next safe point.  A no-op when idle."
+  (when (frontend-busy-p frontend)
+    (setf (frontend-interrupt-flag frontend) t)))
+
+(defun frontend-enqueue-input (frontend text)
+  (let ((snapshot (bordeaux-threads:with-lock-held ((frontend-input-lock frontend))
+                    (setf (frontend-input-queue frontend)
+                          (append (frontend-input-queue frontend) (list text)))
+                    (copy-list (frontend-input-queue frontend)))))
+    (ui-queue-updated frontend snapshot)
+    snapshot))
+
+(defun frontend-accept-input (frontend text)
+  "Classify a line the user submitted.  Returns (values STATUS TEXT):
+  :IMMEDIATE  the agent is idle; the caller delivers TEXT as usual,
+  :QUEUED     the agent is busy; TEXT waits for its next safe point,
+  :INTERRUPTED  a bare /interrupt stopped the running turn,
+  :IGNORED    nothing to do.
+\"/interrupt TEXT\" interrupts a busy turn and queues TEXT to run next."
+  (multiple-value-bind (interrupt-p remainder) (parse-interrupt-command text)
+    (let ((busy (frontend-busy-p frontend)))
+      (when (and interrupt-p busy) (frontend-request-interrupt frontend))
+      (cond ((zerop (length remainder)) (values (if (and interrupt-p busy) :interrupted :ignored) nil))
+            (busy (frontend-enqueue-input frontend remainder) (values :queued remainder))
+            (t (values :immediate remainder))))))
+
+(defmethod ui-poll-input ((frontend queued-input-mixin))
+  (let ((texts (bordeaux-threads:with-lock-held ((frontend-input-lock frontend))
+                 (prog1 (frontend-input-queue frontend)
+                   (setf (frontend-input-queue frontend) nil)))))
+    (when texts
+      (ui-queue-updated frontend nil)
+      (dolist (text texts) (ui-input-delivered frontend text)))
+    texts))
+
+(defmethod ui-interrupt-requested-p ((frontend queued-input-mixin))
+  (and (frontend-interrupt-flag frontend) t))
+
+(defmethod ui-clear-interrupt ((frontend queued-input-mixin))
+  (setf (frontend-interrupt-flag frontend) nil))
+
+(defmethod ui-planning-started :before ((frontend queued-input-mixin))
+  (setf (frontend-busy-p frontend) t))
+(defmethod ui-thinking-started :before ((frontend queued-input-mixin))
+  (setf (frontend-busy-p frontend) t))
+(defmethod ui-thinking-stopped :after ((frontend queued-input-mixin))
+  (setf (frontend-busy-p frontend) nil
+        (frontend-interrupt-flag frontend) nil))
+
 (defvar *frontend-registry* (make-hash-table :test 'eq)
   "keyword -> class-name, e.g. :cli -> 'cli-frontend. See providers/
 registry.lisp's *PROVIDER-REGISTRY* for the identical pattern.")

@@ -198,6 +198,8 @@ automatic compaction runs. Zero and one disable automatic compaction.")
                        :accessor session-max-subagent-depth)
    (subagent-model-profiles :initarg :subagent-model-profiles :initform nil
                             :accessor session-subagent-model-profiles)
+   (deferred-input :initform nil :accessor session-deferred-input
+                   :documentation "Queued slash commands and lines waiting for the REPL loop.")
    (start-time :initform (get-internal-real-time) :accessor session-start-time)
    (raw-stats :initform (list :requests 0 :tool-calls 0 :prompt-tokens 0 :completion-tokens 0 :total-tokens 0)
               :accessor session-raw-stats
@@ -1220,6 +1222,40 @@ answer.  It never asks the user for permission."
           (getf inspection :reason) (getf inspection :alternative)
           (getf inspection :rewritten-command)))
 
+(defun current-turn-interrupted-p ()
+  "True when the running turn's user asked to interrupt.  For long-running tools."
+  (and *current-session* (ui-interrupt-requested-p (session-frontend *current-session*))))
+
+(defun session-absorb-queued-input (session)
+  "Deliver what the user typed while this turn was running, as user messages.
+
+Plain lines join the conversation now, so the agent sees them before its next
+request.  Slash commands are deferred to the REPL loop, which runs them between
+turns.  Returns the delivered texts."
+  (let ((delivered nil))
+    (dolist (text (ui-poll-input (session-frontend session)))
+      (if (and (plusp (length text)) (char= (char text 0) #\/))
+          (setf (session-deferred-input session)
+                (append (session-deferred-input session) (list text)))
+          (let ((ctx (run-hook-chain :user-message (list :text text))))
+            (setf (session-messages session)
+                  (append (session-messages session)
+                          (list (list :role "user" :content (getf ctx :text)))))
+            (push text delivered))))
+    (nreverse delivered)))
+
+(defun interrupt-agent-turn (session)
+  "End the running turn at the user's request, leaving valid history behind."
+  (let ((frontend (session-frontend session)))
+    (ui-clear-interrupt frontend)
+    (ui-discard-assistant-pending frontend)
+    (setf (session-messages session)
+          (append (session-messages session)
+                  (list (list :role "system"
+                              :content "The user interrupted your previous turn before it finished. Stop what you were doing and wait for their next instruction."))))
+    (ui-system frontend "[interrupted]")
+    (finish-agent-turn session nil "interrupted" "Interrupted by the user.")))
+
 (defun run-tool-call (session tool-call)
   "Run one normalized tool-call plist (:id :name :arguments), wrapped
 in the :before-tool-call / :after-tool-call chain hooks and
@@ -1234,6 +1270,10 @@ for it to react to), and the condition's REPORT text becomes the
 refused and can adjust, the same as any other tool error (see
 CALL-TOOL), rather than the error propagating out of the turn
 entirely."
+  (when (ui-interrupt-requested-p (session-frontend session))
+    (return-from run-tool-call
+      (list :role "tool" :tool-call-id (getf tool-call :id)
+            :content "Skipped: the user interrupted this turn before the tool ran.")))
   (let* ((frontend (session-frontend session))
          (validation-error (tool-call-json-error tool-call))
          (requested (list :tool-name (getf tool-call :name) :arguments (getf tool-call :arguments))))
@@ -1290,21 +1330,32 @@ during this turn can call SESSION-COMPLETE."
     (ui-thinking-started frontend)
     (unwind-protect
          (loop for iteration from 1
-          do (auto-compact-if-needed session)
+          do (when (ui-interrupt-requested-p frontend)
+               (return-from run-agent-turn (interrupt-agent-turn session)))
+             (session-absorb-queued-input session)
+             (auto-compact-if-needed session)
              (let* ((ctx (run-hook-chain :before-request
                                           (list :messages (session-provider-messages session)
                                                 ;; A denied budget becomes a no-tool final-answer pass.
                                                 :tools (unless tool-budget-finalization-p
                                                          (session-tools session)))))
                     (assistant-message
-                      (handler-case
-                          (chat-stream (session-provider session) (getf ctx :messages) (getf ctx :tools)
-                                       (lambda (chunk) (ui-assistant-delta frontend chunk)))
-                        (provider-error (c)
-                          (run-hook :on-error c)
-                          (ui-error frontend c)
-                          (return-from run-agent-turn
-                            (finish-agent-turn session nil "blocked" (princ-to-string c)))))))
+                      (let ((response
+                              (catch :turn-interrupted
+                                (handler-case
+                                    (chat-stream (session-provider session) (getf ctx :messages) (getf ctx :tools)
+                                                 (lambda (chunk)
+                                                   (when (ui-interrupt-requested-p frontend)
+                                                     (throw :turn-interrupted :interrupted))
+                                                   (ui-assistant-delta frontend chunk)))
+                                  (provider-error (c)
+                                    (run-hook :on-error c)
+                                    (ui-error frontend c)
+                                    (return-from run-agent-turn
+                                      (finish-agent-turn session nil "blocked" (princ-to-string c))))))))
+                        (when (eq response :interrupted)
+                          (return-from run-agent-turn (interrupt-agent-turn session)))
+                        response)))
                (setf assistant-message (run-hook-chain :after-response assistant-message))
                ;; Normalize harmless formatting noise before it is visible or
                ;; reaches the strict Lisp reviewer, avoiding spurious warnings.
@@ -1840,7 +1891,14 @@ can still call SESSION-COMPLETE."
                     (session-submit-user-text session initial-task)
                     (run-agent-turn session))
                   (loop
-                    (let ((line (ui-prompt-input frontend)))
+                    (let ((line (or (pop (session-deferred-input session))
+                                    ;; Messages queued during the last turn run before we prompt.
+                                    (let ((queued (ui-poll-input frontend)))
+                                      (when queued
+                                        (setf (session-deferred-input session)
+                                              (append (rest queued) (session-deferred-input session)))
+                                        (first queued)))
+                                    (ui-prompt-input frontend))))
                       (unless line (return))
                       (when (plusp (length (string-trim " " line)))
                         (let ((result (dispatch-slash-command session line)))

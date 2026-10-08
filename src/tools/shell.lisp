@@ -120,12 +120,19 @@ agent loop's JSON-Schema validation."
           (format nil "Job ~a is ~a for ~,2fs (estimate ~ds)."
                   id (or state :running) (shell-elapsed job) (shell-job-expected job))))))
 (defun wait-for-shell-job (job deadline)
-  (multiple-value-bind (snapshot terminal-p)
-      (cl-jobpond:job-await (shell-job-supervisor job) :timeout-seconds deadline)
-    (declare (ignore snapshot))
-    (if terminal-p
-        (finish-shell-job job)
-        (stop-shell-job (shell-job-id job)))))
+  "Wait up to DEADLINE seconds for JOB, stopping it early if the user interrupts."
+  (let ((end (+ (get-internal-real-time) (* deadline internal-time-units-per-second))))
+    (loop
+      (let ((remaining (/ (- end (get-internal-real-time)) internal-time-units-per-second)))
+        (multiple-value-bind (snapshot terminal-p)
+            (cl-jobpond:job-await (shell-job-supervisor job)
+                                  :timeout-seconds (max 0 (min 0.5 remaining)))
+          (declare (ignore snapshot))
+          (cond (terminal-p (return (finish-shell-job job)))
+                ((current-turn-interrupted-p)
+                 (return (format nil "Stopped because the user interrupted the turn.~%~a"
+                                 (stop-shell-job (shell-job-id job)))))
+                ((<= remaining 0) (return (stop-shell-job (shell-job-id job))))))))))
 
 (define-tool shell (args)
     (:description "Run a shell command with loop detection. Supply expected_seconds whenever possible. Commands are interrupted at one learned standard deviation past that estimate, or at explicit warning_after_seconds. An interruption is feedback to inspect for a loop; use managed background jobs for intentional long work."

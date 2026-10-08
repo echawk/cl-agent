@@ -35,7 +35,7 @@
 hunchentoot-style) easy-handlers below can reach its state. Single-
 session PoC simplification -- see this file's header comment.")
 
-(defclass web-frontend (agent-frontend)
+(defclass web-frontend (queued-input-mixin)
   ((port :initarg :port :initform 4567 :accessor web-frontend-port)
    (acceptor :accessor web-frontend-acceptor)
    (transcript :initform nil :accessor web-frontend-transcript
@@ -48,6 +48,8 @@ delivers the complete, final text for the same turn.")
              :documentation "True between UI-THINKING-STARTED and
 UI-THINKING-STOPPED -- shown by the page while PENDING is still empty
 (once text starts streaming in, PENDING itself is the live indicator).")
+   (queued :initform nil :accessor web-frontend-queued
+           :documentation "Messages typed while the agent was busy, until delivered.")
    (activity :initform nil :accessor web-frontend-activity
              :documentation "Inspectable agent lifecycle and tool events, newest
 first. These remain available in the activity pane while the main transcript
@@ -296,6 +298,7 @@ currently in flight, and the latest stats snapshot."
                           :empty-array)
            "pending" (web-frontend-pending frontend)
            "thinking" (web-frontend-thinking-p frontend)
+           "queued" (or (copy-list (web-frontend-queued frontend)) :empty-array)
            "activity" (or (mapcar (lambda (entry)
                                       (jobj "kind" (getf entry :kind)
                                             "label" (getf entry :label)
@@ -395,7 +398,20 @@ reasonably live without any new transport.")
            "function saElapsed(a,b){const s=Math.max(0,Math.floor(b-a));return s>=60?Math.floor(s/60)+'m'+String(s%60).padStart(2,'0')+'s':s+'s'}function renderSubagents(items){const el=document.getElementById('subagents');if(!el)return;const glyph={queued:'○',running:'●',succeeded:'✓',failed:'✗',cancelled:'⊘'};el.innerHTML=items.map(a=>`<div class=\"sa-card sa-${a.state}${a.finished?' sa-done':''}\"><div class=\"sa-head\"><span class=\"sa-dot\">${glyph[a.state]||'?'}</span><span class=\"sa-id\">${esc(a.id)}</span>${a.role?`<span class=\"sa-meta\">${esc(a.role)}</span>`:''}<span class=\"sa-meta\">${esc(a.state)}</span>${a.started?`<span class=\"sa-meta sa-time\" data-start=\"${a.started}\"${a.finished?` data-end=\"${a.finished}\"`:''}>${saElapsed(a.started,a.finished||Date.now()/1000)}</span>`:''}<span class=\"sa-meta\">${a.tool_calls} tool call${a.tool_calls===1?'':'s'}${a.tokens?' · '+a.tokens+' tokens':''}</span>${a.model?`<span class=\"sa-meta\">${esc(a.model)}</span>`:''}</div>${a.activity&&a.state==='running'?`<div class=\"sa-activity\">${esc(a.activity)}</div>`:''}${a.note&&(a.state==='failed'||a.state==='cancelled')?`<div class=\"sa-activity\">${esc(a.note)}</div>`:''}${a.description?`<div class=\"sa-desc\">${esc(a.description)}</div>`:''}</div>`).join('')}setInterval(()=>{for(const e of document.querySelectorAll('.sa-time:not([data-end])'))e.textContent=saElapsed(+e.dataset.start,Date.now()/1000)},1000);function renderActivity(items,thinking){")
     (patch "renderActivity(data.activity||[],data.thinking);"
            "renderSubagents(data.subagents||[]);renderActivity(data.activity||[],data.thinking);")
-    (patch "data.thinking,data.activity]" "data.thinking,data.activity,data.subagents]")))
+    (patch "data.thinking,data.activity]" "data.thinking,data.activity,data.subagents,data.queued]")
+    ;; Queued messages and a Stop button for interrupting the running turn.
+    (patch "</head><body>"
+           "<style>.queued{max-width:820px;margin:0 auto 6px;display:grid;gap:4px}.queued:empty{display:none}.queued-item{border:1px dashed #3a4d70;border-radius:8px;padding:5px 10px;color:#9aa8c2;font:12px/1.4 ui-sans-serif,system-ui;white-space:pre-wrap;overflow-wrap:anywhere}.queued-item::before{content:'Queued · ';color:#7dd3fc;font-weight:700}.stop{border:1px solid #8a3b4a;border-radius:8px;background:#3a1620;color:#fda4af;padding:0 14px;font:600 13px ui-sans-serif,system-ui;cursor:pointer}.stop[hidden]{display:none}</style></head><body>")
+    (patch "<form class=\"composer\""
+           "<div class=\"queued\" id=\"queued\" aria-label=\"Queued messages\"></div><form class=\"composer\"")
+    (patch "<button class=\"send\" id=\"send\" type=\"submit\">Send</button>"
+           "<button class=\"stop\" id=\"stop\" type=\"button\" hidden title=\"Stop the current turn (Esc)\">Stop</button><button class=\"send\" id=\"send\" type=\"submit\">Send</button>")
+    (patch "function renderSubagents(items){"
+           "function renderQueued(items){const el=document.getElementById('queued');if(el)el.innerHTML=items.map(t=>`<div class=\"queued-item\">${esc(t)}</div>`).join('')}function renderSubagents(items){")
+    (patch "renderSubagents(data.subagents||[]);"
+           "renderSubagents(data.subagents||[]);renderQueued(data.queued||[]);document.getElementById('stop').hidden=!data.thinking;")
+    (patch "poll();"
+           "document.getElementById('stop').onclick=()=>fetch('/api/interrupt',{method:'POST'});input.addEventListener('keydown',e=>{if(e.key==='Escape'&&!document.getElementById('stop').hidden)fetch('/api/interrupt',{method:'POST'})});poll();")))
 
 (enhance-web-page-with-subagents)
 
@@ -408,13 +424,23 @@ reasonably live without any new transport.")
   (if *web-frontend*
       (web-frontend-status-json *web-frontend*)
       (json-encode (jobj "messages" :empty-array "pending" "" "thinking" nil
-                         "activity" :empty-array "subagents" :empty-array "stats" :null))))
+                         "activity" :empty-array "subagents" :empty-array "queued" :empty-array
+                         "stats" :null))))
 
 (hunchentoot:define-easy-handler (cl-agent-web-send :uri "/api/send") (text)
   (setf (hunchentoot:content-type*) "application/json")
-  (when (and *web-frontend* text (plusp (length text)))
-    (web-frontend-push *web-frontend* "user" text)
-    (trivial-channels:sendmsg (web-frontend-input-channel *web-frontend*) text))
+  (let ((frontend *web-frontend*))
+    (if (and frontend text (plusp (length text)))
+        (multiple-value-bind (status payload) (frontend-accept-input frontend text)
+          (when (eq status :immediate)
+            (web-frontend-push frontend "user" payload)
+            (trivial-channels:sendmsg (web-frontend-input-channel frontend) payload))
+          (json-encode (jobj "status" (string-downcase (symbol-name status)))))
+        "{}")))
+
+(hunchentoot:define-easy-handler (cl-agent-web-interrupt :uri "/api/interrupt") ()
+  (setf (hunchentoot:content-type*) "application/json")
+  (when *web-frontend* (frontend-request-interrupt *web-frontend*))
   "{}")
 
 (hunchentoot:define-easy-handler (cl-agent-web-quit :uri "/api/quit") ()
@@ -515,5 +541,12 @@ reasonably live without any new transport.")
 
 (defmethod ui-stats-updated ((frontend web-frontend) stats)
   (bt:with-lock-held ((web-frontend-state-lock frontend)) (setf (web-frontend-stats frontend) stats)))
+
+(defmethod ui-queue-updated ((frontend web-frontend) queued)
+  (bt:with-lock-held ((web-frontend-state-lock frontend))
+    (setf (web-frontend-queued frontend) queued)))
+
+(defmethod ui-input-delivered ((frontend web-frontend) text)
+  (web-frontend-push frontend "user" text))
 
 (register-frontend-class :web 'web-frontend)

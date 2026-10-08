@@ -150,6 +150,7 @@
    (:file "test-components")
    (:file "test-repl")
    (:file "test-tasks")
+   (:file "test-input")
    (:file "test-mcp")
    (:file "test-integrations")
    (:file "test-ui"))

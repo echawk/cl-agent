@@ -643,10 +643,19 @@ of keywords, strings and integers."
                        "required" (list "task_id")))
   (let ((timeout (jget args "timeout_seconds" 60)))
     (unless (and (integerp timeout) (>= timeout 0)) (error "timeout_seconds must be a non-negative integer"))
-    (multiple-value-bind (record terminal-p) (wait-subagent-task (%task-by-arg args) :timeout timeout)
-      (if terminal-p
-          (format-subagent-report record)
-          (format nil "~a is still ~(~a~)." (subagent-task-id record) (subagent-task-state record))))))
+    (let* ((record (%task-by-arg args))
+           (end (+ (get-internal-real-time) (* timeout internal-time-units-per-second)))
+           (terminal-p nil))
+      ;; Wait in short slices so a user interrupt is honoured promptly.
+      (loop
+        (let ((remaining (/ (- end (get-internal-real-time)) internal-time-units-per-second)))
+          (setf terminal-p (nth-value 1 (wait-subagent-task record :timeout (max 0 (min 0.5 remaining)))))
+          (when (or terminal-p (<= remaining 0) (current-turn-interrupted-p)) (return))))
+      (cond (terminal-p (format-subagent-report record))
+            ((current-turn-interrupted-p)
+             (format nil "Stopped waiting because the user interrupted the turn; ~a is still ~(~a~)."
+                     (subagent-task-id record) (subagent-task-state record)))
+            (t (format nil "~a is still ~(~a~)." (subagent-task-id record) (subagent-task-state record)))))))
 
 (define-tool cancel-subagent (args)
     (:description "Cancel a running or queued subagent task and kill its process."

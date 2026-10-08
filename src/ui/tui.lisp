@@ -61,6 +61,10 @@ the viewport -- used for both the \"thinking\" indicator
   (:documentation "The current set of visible subagent snapshots (see
 UI-SUBAGENTS-UPDATED), replacing the panel shown above the status line."))
 
+(defclass tui-queue-msg ()
+  ((texts :initarg :texts :reader tui-queue-msg-texts))
+  (:documentation "The queued, not-yet-delivered messages (see UI-QUEUE-UPDATED)."))
+
 (defclass tui-chat-model ()
   ((viewport :accessor tui-chat-viewport)
    (textarea :accessor tui-chat-textarea)
@@ -69,6 +73,10 @@ UI-SUBAGENTS-UPDATED), replacing the panel shown above the status line."))
    (pending :initform "" :accessor tui-chat-pending
             :documentation "Accumulated TUI-DELTA-MSG chunks for the
 reply currently streaming in; see that class's docstring.")
+   (frontend :initarg :frontend :initform nil :accessor tui-chat-frontend
+             :documentation "Owning TUI-FRONTEND; consulted for busy state and the input queue.")
+   (queued :initform nil :accessor tui-chat-queued
+           :documentation "Messages typed while the agent was busy, shown until delivered.")
    (subagents :initform nil :accessor tui-chat-subagents
               :documentation "Latest subagent snapshots; finished ones age out at view time.")
    (height :initform nil :accessor tui-chat-height
@@ -109,10 +117,24 @@ AGENT-FRONTEND that owns one of these."))
               (when (> (length visible) (length shown))
                 (list (format nil "  … ~d more" (- (length visible) (length shown)))))))))
 
+(defun tui-queue-panel-lines (model)
+  "Rows listing messages waiting for the agent."
+  (let ((queued (tui-chat-queued model)))
+    (when queued
+      (append (list (format nil "Queued (~d) — delivered when the agent has a moment; Esc interrupts" (length queued)))
+              (mapcar (lambda (text)
+                        (let ((line (substitute #\Space #\Newline text)))
+                          (format nil "  › ~a" (if (> (length line) 90) (concatenate 'string (subseq line 0 90) "…") line))))
+                      (subseq queued 0 (min 4 (length queued))))
+              (when (> (length queued) 4) (list (format nil "  … ~d more" (- (length queued) 4))))))))
+
+(defun tui-panel-lines (model)
+  (append (tui-subagent-panel-lines model) (tui-queue-panel-lines model)))
+
 (defun tui-chat-fit-viewport (model)
-  "Size the viewport to the terminal minus the textarea, status and subagent panel."
+  "Size the viewport to the terminal minus the textarea, status and panels."
   (when (tui-chat-height model)
-    (let ((panel (tui-subagent-panel-lines model)))
+    (let ((panel (tui-panel-lines model)))
       (setf (tui.viewport:viewport-height (tui-chat-viewport model))
             (max 3 (- (tui-chat-height model) (tui.textarea:textarea-height (tui-chat-textarea model)) 2
                       (if panel (1+ (length panel)) 0)))))))
@@ -137,6 +159,9 @@ AGENT-FRONTEND that owns one of these."))
        (tui-chat-refresh-viewport model))
       ((typep msg 'tui-status-msg)
        (setf (tui-chat-status-line model) (tui-status-msg-text msg)))
+      ((typep msg 'tui-queue-msg)
+       (setf (tui-chat-queued model) (tui-queue-msg-texts msg))
+       (tui-chat-fit-viewport model))
       ((typep msg 'tui-subagents-msg)
        (setf (tui-chat-subagents model) (tui-subagents-msg-snapshots msg))
        (tui-chat-fit-viewport model))
@@ -144,16 +169,33 @@ AGENT-FRONTEND that owns one of these."))
        (let ((key (tui:key-event-code msg))
              (ctrl (tui:mod-contains (tui:key-event-mod msg) tui:+mod-ctrl+)))
          (cond
-           ((or (and ctrl (characterp key) (char= key #\c)) (eq key :escape))
+           ((or (and ctrl (characterp key) (char= key #\c))
+                (and (eq key :escape)
+                     (not (and (tui-chat-frontend model) (frontend-busy-p (tui-chat-frontend model))))))
             (trivial-channels:sendmsg (tui-chat-input-channel model) nil)
             (return-from tui:update (values model (tui:quit-cmd))))
+           ((eq key :escape)
+            ;; Busy: Esc interrupts the running turn instead of quitting.
+            (frontend-request-interrupt (tui-chat-frontend model))
+            (push "[interrupt requested]" (tui-chat-lines model))
+            (tui-chat-refresh-viewport model)
+            (setf pass-to-textarea nil))
            ((eq key :enter)
             (let ((text (tui.textarea:textarea-value (tui-chat-textarea model))))
               (when (plusp (length (string-trim '(#\space #\tab #\newline) text)))
-                (push (format nil "> ~a" text) (tui-chat-lines model))
-                (tui-chat-refresh-viewport model)
                 (tui.textarea:textarea-reset (tui-chat-textarea model))
-                (trivial-channels:sendmsg (tui-chat-input-channel model) text)))
+                (multiple-value-bind (status payload)
+                    (if (tui-chat-frontend model)
+                        (frontend-accept-input (tui-chat-frontend model) text)
+                        (values :immediate text))
+                  (case status
+                    (:immediate
+                     (push (format nil "> ~a" payload) (tui-chat-lines model))
+                     (tui-chat-refresh-viewport model)
+                     (trivial-channels:sendmsg (tui-chat-input-channel model) payload))
+                    (:interrupted
+                     (push "[interrupt requested]" (tui-chat-lines model))
+                     (tui-chat-refresh-viewport model))))))
             (setf pass-to-textarea nil)))))
       ((tui:window-size-msg-p msg)
        (let ((width (tui:window-size-msg-width msg)) (height (tui:window-size-msg-height msg)))
@@ -174,13 +216,13 @@ AGENT-FRONTEND that owns one of these."))
 
 (defmethod tui:view ((model tui-chat-model))
   (tui:make-view (format nil "~@[~a~%~]~@[~a~%~%~]~a~%~%~a"
-                          (let ((panel (tui-subagent-panel-lines model)))
+                          (let ((panel (tui-panel-lines model)))
                             (and panel (format nil "~{~a~^~%~}" panel)))
                           (and (plusp (length (tui-chat-status-line model))) (tui-chat-status-line model))
                           (tui.viewport:viewport-view (tui-chat-viewport model))
                           (tui.textarea:textarea-view (tui-chat-textarea model)))))
 
-(defclass tui-frontend (agent-frontend)
+(defclass tui-frontend (queued-input-mixin)
   ((model :accessor tui-frontend-model)
    (program :accessor tui-frontend-program)
    (thread :initform nil :accessor tui-frontend-thread)
@@ -189,7 +231,8 @@ AGENT-FRONTEND that owns one of these."))
 comment for the threading model."))
 
 (defmethod ui-start ((frontend tui-frontend))
-  (let* ((model (make-instance 'tui-chat-model :input-channel (tui-frontend-input-channel frontend)))
+  (let* ((model (make-instance 'tui-chat-model :input-channel (tui-frontend-input-channel frontend)
+                                      :frontend frontend))
          (program (tui:make-program model)))
     (setf (tui-frontend-model frontend) model
           (tui-frontend-program frontend) program
@@ -258,5 +301,12 @@ comment for the threading model."))
   ;; The live panel already shows state; keep only the terminal outcomes in the transcript.
   (when (member (getf snapshot :state) '(:succeeded :failed :cancelled))
     (ui-system frontend (format-subagent-event snapshot))))
+
+(defmethod ui-queue-updated ((frontend tui-frontend) queued)
+  (when (slot-boundp frontend 'program)
+    (tui:send (tui-frontend-program frontend) (make-instance 'tui-queue-msg :texts queued))))
+
+(defmethod ui-input-delivered ((frontend tui-frontend) text)
+  (ui-system frontend (format nil "delivered to the agent: ~a" text)))
 
 (register-frontend-class :tui 'tui-frontend)
