@@ -80,6 +80,8 @@ could change between calls."
                           :description "Frontend to run: cli (default), tui, web, or one an extension registered. See src/ui/frontend.lisp.")
     (clingon:make-option :flag :long-name "mcp-serve" :key :mcp-serve
                           :description "Run as an MCP server over stdio instead of the chat REPL, exposing every registered tool to an external MCP client (see src/mcp/server.lisp).")
+    (clingon:make-option :flag :long-name "acp-serve" :key :acp-serve
+                          :description "Run as an ACP server over stdio instead of the chat REPL, serving independent cl-agent sessions to an editor or ACP client (see src/acp.lisp).")
     (clingon:make-option :flag :long-name "doctor" :key :doctor
                           :description "Report local configuration and capability health without contacting providers or starting external services."))
    :handler #'cli-handler))
@@ -111,7 +113,9 @@ message and a non-zero exit, not a Lisp backtrace."
                                          :base-url (config-value config :base-url)
                                          :api-key-env (config-value config :api-key-env)
                                          :ensure-ready t)))
-          (unless configured-model
+          ;; An ACP/MCP stdio server must never prompt on its protocol stream.
+          (unless (or configured-model (clingon:getopt cmd :acp-serve)
+                      (clingon:getopt cmd :mcp-serve))
             (setf (provider-model provider) (prompt-for-provider-model provider)))
           (multiple-value-bind (loaded failed) (load-enabled-extensions)
             (declare (ignore loaded))
@@ -128,8 +132,30 @@ message and a non-zero exit, not a Lisp backtrace."
                   (format *error-output* "~&[lsp] unavailable commands: ~{~a~^, ~}~%" unavailable)))
             (error (c) (format *error-output* "~&[lsp] ~a~%" c)))
           (connect-configured-mcp-servers config)
-          (if (clingon:getopt cmd :mcp-serve)
-              (run-cl-agent-mcp-server :name (provider-display-name provider))
+          (cond
+            ((and (clingon:getopt cmd :mcp-serve) (clingon:getopt cmd :acp-serve))
+             (error "--mcp-serve and --acp-serve cannot be used together."))
+            ((clingon:getopt cmd :mcp-serve)
+              (run-cl-agent-mcp-server :name (provider-display-name provider)))
+            ((clingon:getopt cmd :acp-serve)
+             (let ((factory (lambda ()
+                              ;; MAKE-PROVIDER consumes the API-key environment
+                              ;; variable at startup.  Clone the configured
+                              ;; provider instead so every ACP session retains
+                              ;; the resolved credential without re-reading it.
+                              (provider-for-model provider (provider-model provider)))))
+               (run-cl-agent-acp-server factory
+                                        :session-options
+                                        (list :settings (load-agent-settings config)
+                                              :system-prompt (config-value config :system-prompt)
+                                              :orchestration-mode (config-value config :orchestration-mode)
+                                              :orchestration-tool-limit (config-value config :orchestration-tool-limit)
+                                              :max-tool-iterations (config-value config :max-tool-iterations)
+                                              :max-subagent-depth (config-value config :max-subagent-depth 1)
+                                              :subagent-model-profiles (config-value config :subagent-model-profiles)
+                                              :context-compaction-threshold
+                                              (config-value config :context-compaction-threshold 0.8)))))
+            (t
               (progn
                 (format t "~&cl-agent -- ~a (~a)~%Type /help for commands, Ctrl-D to exit.~%"
                         (provider-display-name provider) (provider-model provider))
@@ -144,7 +170,7 @@ message and a non-zero exit, not a Lisp backtrace."
                                         :subagent-model-profiles (config-value config :subagent-model-profiles)
                                         :context-compaction-threshold
                                         (config-value config :context-compaction-threshold 0.8))
-                          :initial-task task))))
+                          :initial-task task)))))
       (provider-not-found (c)
         (format *error-output* "~&~a~%" c) (uiop:quit 1))
       (missing-api-key (c)

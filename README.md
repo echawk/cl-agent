@@ -444,6 +444,27 @@ is necessary; compiler failures prevent execution/writing and are returned to
 the model to fix. The `review-lisp` tool exposes that pipeline directly for
 code destined for a normal reply or another file.
 
+## ACP (Agent Client Protocol)
+
+`cl-agent --acp-serve` runs an [Agent Client Protocol](https://agentclientprotocol.com/)
+peer over stdio through `agentcomms`. Unlike MCP mode, which exposes tools to
+another agent, ACP mode exposes complete independent cl-agent conversations to
+an ACP-capable editor or client. Each `session/new` receives a fresh provider
+instance and cl-agent session; `session/prompt` streams assistant text and
+tool/status activity, while `session/cancel`, `session/list`, `session/close`,
+and `session/delete` operate on those live sessions.
+
+```sh
+./bin/cl-agent --provider ollama --acp-serve
+```
+
+ACP uses standard input and output exclusively for JSON-RPC, so diagnostics
+are written to standard error and the server never opens the interactive model
+picker. `--acp-serve` and `--mcp-serve` are separate modes and cannot be used
+together. Session snapshots remain available within each conversation through
+the existing `/session` command; durable ACP session restore is intentionally
+not advertised yet.
+
 ## Language servers and Skills
 
 Language-server support is built on the included

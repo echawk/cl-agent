@@ -126,6 +126,7 @@
        (:file "generations-tool")))
      (:file "tasks")
      (:file "repl")
+     (:file "acp")
      (:file "main")))))
 
 ;; `(asdf:test-op :cl-agent)` / `make test` runs the offline suite, which
@@ -162,6 +163,7 @@
    (:file "test-tasks")
    (:file "test-input")
    (:file "test-debugger")
+   (:file "test-acp")
    (:file "test-mcp")
    (:file "test-integrations")
    (:file "test-ui"))
