@@ -118,7 +118,17 @@ and policy mode.
 - Acceptance: changing a session setting validates/coerces, notifies listeners,
   persists when durable, and is visible through one reflection API.
 
-### 6. `lambda-debugger` — conditions and restarts workbench
+### 6. `lambda-debugger` — conditions and restarts workbench (first slice done)
+
+Tool execution now runs under `call-with-debugger` (`src/debug.lisp`).  An
+unhandled error is selected while its stack is live, journaled as a receipt
+under `debugger/receipts/`, and passed through the `:tool-failure` chain hook,
+which may choose abort (default), retry, a restart, or replacement values.
+The agent can use `list-failures`, `inspect-failure` and `set-failure-recovery`;
+subagents journal receipts into the parent's config directory.  Still to do:
+provider requests, extension load, worker failures and mutation exercises, and
+surfacing live conditions in frontends.
+
 
 Wrap extension load, provider requests, worker failures, and mutation exercises
 in observable debugger sessions.  Surface detached condition snapshots in all

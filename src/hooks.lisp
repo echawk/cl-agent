@@ -76,6 +76,16 @@ it was refused -- see repl.lisp).")
 change what the model is told the tool produced.")
     (:on-error . "Notify hook, called with one argument: the CONDITION
 that was signalled and caught by the top-level error handler.")
+    (:tool-failure . "Chain hook. Argument/return is a plist describing a tool
+call that raised an unhandled ERROR while its stack is still live under
+lambda-debugger: (:id RECEIPT-ID :tool-name STRING :arguments HASH :attempt N
+:snapshot PLIST :decision NIL). The snapshot holds :condition-type,
+:condition-report, :restarts (each with :id and :report) and a bounded
+:backtrace. Set :decision to :ABORT (default), :RETRY (repeats the call and its
+side effects, capped by *FAILURE-RETRY-LIMIT*), (:RESTART INDEX [\"source\"])
+to invoke the INDEXth available restart, or (:RETURN-VALUES \"source\") to
+return replacement values; optionally set :decision-note. Errors in a hook
+here are recorded and the call is aborted -- they never escape.")
     (:before-subagent-start . "Chain hook. Argument/return is the inert
 contract plist for a subagent about to start in a child SBCL (:task :role
 :profile :system :provider :tools :max-tool-iterations :max-seconds :depth

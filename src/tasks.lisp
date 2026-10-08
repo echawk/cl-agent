@@ -44,7 +44,8 @@ rebuilt there, :IN-PROCESS always uses the legacy synchronous path.")
 
 (defvar *subagent-grantable-tools*
   '("shell" "sandbox-shell" "read-file" "read-file-range" "lisp-apropos"
-    "review-lisp" "check-parens" "lookup-cl-spec" "ask-llm")
+    "review-lisp" "check-parens" "lookup-cl-spec" "ask-llm"
+    "list-failures" "inspect-failure")
   "Tools a parent may grant to a child.  Deliberately read-oriented: write
 tools and task tools are absent.  An extension may push more names.")
 
@@ -401,7 +402,9 @@ profile is unknown, or the provider cannot be rebuilt in a child."
            :max-seconds (or (getf role-plist :max-seconds) *subagent-default-max-seconds*)
            :depth (1+ (session-subagent-depth parent))
            :max-depth (session-max-subagent-depth parent)
-           :setup-forms (getf role-plist :setup-forms)))))
+           :setup-forms (getf role-plist :setup-forms)
+           ;; Children journal failure receipts where the parent can read them.
+           :config-directory (namestring *config-directory*)))))
 
 ;;; ------------------------------------------------------------------
 ;;; Child side
@@ -410,6 +413,8 @@ profile is unknown, or the provider cannot be rebuilt in a child."
   "Entry point evaluated inside a child SBCL.  Builds a provider and a silent,
 isolated session from CONTRACT, runs one agent turn, and returns an inert plist
 of keywords, strings and integers."
+  (when (getf contract :config-directory)
+    (setf *config-directory* (uiop:ensure-directory-pathname (getf contract :config-directory))))
   (dolist (source (getf contract :setup-forms))
     (let ((*read-eval* nil)) (eval (read-from-string source))))
   (let* ((spec (getf contract :provider))

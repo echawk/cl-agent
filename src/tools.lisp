@@ -142,7 +142,11 @@ turn."
     (if (null tool)
         (format nil "Tool ~s does not exist or is no longer available. Use one of the tools supplied in this conversation (or /tools) and try again."
                 name)
-        (handler-case (funcall (tool-handler tool) arguments)
+        (handler-case (if *debugger-enabled*
+                          (call-tool-handler-with-debugger tool arguments)
+                          (funcall (tool-handler tool) arguments))
+          ;; Backstop: an error in the debugger machinery itself must never
+          ;; escape into the agent loop.
           (error (c)
             (format nil "Error running ~a: ~a" name c))))))
 
