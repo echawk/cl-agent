@@ -204,6 +204,19 @@ silently inventing history."
              ((eq kind :conversation-rewound)
               (setf messages (project-session-messages events
                                                         (getf payload :through-sequence))))
+             ((eq kind :context-compacted)
+              ;; The historical events remain intact; this event changes only
+              ;; the active provider projection.  Keep the root system prompt
+              ;; and a verbatim recent tail, with the generated continuity
+              ;; note between them.
+              (let* ((root (first messages))
+                     (keep (min (or (getf payload :keep-recent) 0)
+                                (max 0 (1- (length messages)))))
+                     (recent (if (plusp keep) (last messages keep) nil))
+                     (summary (copy-tree (getf payload :message))))
+                (setf messages (append (if root (list root) nil)
+                                       (if summary (list summary) nil)
+                                       recent))))
              ((and (member kind '(:session-created :user-message-accepted
                                   :assistant-response-finished :tool-result-recorded
                                   :tool-call-unknown-outcome :system-message-recorded))

@@ -111,3 +111,21 @@
         (check-equal (uiop:read-file-string path) before))
       (write-string-atomically path "someone else")
       (check-condition error (rewind-session-files session (read-session-events (session-id session)) 1)))))
+
+(deftest durable-compaction-is-a-replayable-projection ()
+  (with-temp-config-dir ()
+    (let ((session (make-session (make-instance 'ollama-provider))))
+      (session-submit-user-text session "old request")
+      (record-session-event session :assistant-response-finished :component "fixture"
+                            :payload (list :message (list :role "assistant" :content "old answer")))
+      (setf (session-messages session)
+            (append (session-messages session) (list (list :role "assistant" :content "old answer"))))
+      (let ((summary (list :role "system" :content "[User-requested context compaction]~%old work summary")))
+        (setf (session-messages session) (list (first (session-messages session)) summary))
+        (record-session-event session :context-compacted :component "context" :status "finished"
+                              :payload (list :keep-recent 0 :message summary)))
+      (multiple-value-bind (events messages) (replay-session (session-id session))
+        (declare (ignore events))
+        (check-equal (mapcar (lambda (message) (getf message :content)) messages)
+                     (list (getf (first (session-messages session)) :content)
+                           "[User-requested context compaction]~%old work summary"))))))

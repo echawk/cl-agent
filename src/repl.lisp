@@ -1066,6 +1066,13 @@ positive KEEP-RECENT so fresh tool calls and results remain verbatim."
                                                         "Context compaction")
                                                     summary))
                              recent-messages))
+                ;; The summary is an active projection, never destructive
+                ;; replacement of its source events.  Replay applies this
+                ;; marker to the same pre-compaction history.
+                (record-session-event
+                 session :context-compacted :component "context" :status "finished"
+                 :payload (list :keep-recent keep-recent
+                                :message (second (session-messages session))))
                 (values t before
                         (approximate-token-count
                          (loop for message in (session-messages session)
