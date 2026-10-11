@@ -174,3 +174,18 @@
                (check request)
                (check-equal (getf response :parent-id) (getf request :id))))
         (setf (symbol-function 'chat-stream) stream)))))
+
+(deftest hook-execution-events-preserve-identity-and-outcome ()
+  (with-temp-config-dir ()
+    (let ((session (make-session (make-instance 'ollama-provider))))
+      (unwind-protect
+           (progn
+             (add-hook :user-message 'durable-hook-fixture
+                       (lambda (context)
+                         (setf (getf context :text) "rewritten") context))
+             (let ((*current-session* session))
+               (run-hook-chain :user-message (list :text "original")))
+             (let ((events (read-session-events (session-id session))))
+               (check (find :hook-started events :key (lambda (event) (getf event :kind))))
+               (check (find :hook-finished events :key (lambda (event) (getf event :kind))))))
+        (remove-hook :user-message 'durable-hook-fixture)))))

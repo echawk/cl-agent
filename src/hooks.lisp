@@ -167,6 +167,21 @@ supplied."
       (loop for point being the hash-keys of *hooks* using (hash-value fns)
             collect (cons point (mapcar #'car fns)))))
 
+(defun record-hook-execution (kind hook-point name &key parent-id condition)
+  "Append a small session receipt for one hook invocation when applicable.
+
+Hook inputs and outputs can contain credentials, full prompts, or arbitrary
+extension objects, so the durable receipt deliberately records identity and
+outcome only.  The surrounding request/tool event already records the safe
+protocol data needed for replay."
+  (when *current-session*
+    (record-session-event *current-session* kind
+                          :parent-id parent-id
+                          :component (format nil "hook:~(~a~)/~(~a~)" hook-point name)
+                          :status (if condition "failed" "finished")
+                          :payload (list :hook-point hook-point :hook-name (string name)
+                                         :detail (and condition (princ-to-string condition))))))
+
 (defun run-hook (hook-point &rest args)
   "Call every NOTIFY hook function registered on HOOK-POINT with ARGS,
 in registration order. Return values are ignored. A function that
@@ -174,11 +189,18 @@ signals an error is reported to *ERROR-OUTPUT* and skipped; it does
 not stop the remaining hook functions or propagate to the caller, so a
 buggy extension cannot take down the agent from a notify hook."
   (dolist (entry (gethash hook-point *hooks*))
-    (handler-case (apply (cdr entry) args)
+    (let ((intent (record-hook-execution :hook-started hook-point (car entry))))
+      (handler-case
+          (progn
+            (apply (cdr entry) args)
+            (record-hook-execution :hook-finished hook-point (car entry)
+                                   :parent-id (and intent (getf intent :id))))
       (error (c)
+        (record-hook-execution :hook-failed hook-point (car entry)
+                               :parent-id (and intent (getf intent :id)) :condition c)
         (format *error-output* "~&[hook ~a/~a] error: ~a~%"
                 hook-point (car entry) c))))
-  (values))
+  (values)))
 
 (defun run-hook-chain (hook-point value)
   "Thread VALUE through every CHAIN hook function registered on
@@ -189,4 +211,13 @@ propagates to the caller -- a chain hook is in the critical path of a
 request, so silently swallowing its failure could hide a real bug in
 an extension that the agent (or its author) needs to see."
   (dolist (entry (gethash hook-point *hooks*) value)
-    (setf value (funcall (cdr entry) value))))
+    (let ((intent (record-hook-execution :hook-started hook-point (car entry))))
+      (handler-case
+          (progn
+            (setf value (funcall (cdr entry) value))
+            (record-hook-execution :hook-finished hook-point (car entry)
+                                   :parent-id (and intent (getf intent :id))))
+        (error (condition)
+          (record-hook-execution :hook-failed hook-point (car entry)
+                                 :parent-id (and intent (getf intent :id)) :condition condition)
+          (error condition))))))

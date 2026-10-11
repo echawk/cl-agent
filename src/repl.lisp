@@ -989,7 +989,8 @@ RUN-REPL calls this instead of appending a message directly; so should
 anything else that wants to feed the model a user turn."
   (setf (session-current-turn-id session)
         (allocate-session-turn-id))
-  (let* ((ctx (run-hook-chain :user-message (list :text text)))
+  (let* ((ctx (let ((*current-session* session))
+                (run-hook-chain :user-message (list :text text))))
          (prepared-text (getf ctx :text))
          (execution-text (if (planning-mode-p session)
                              (unwind-protect
