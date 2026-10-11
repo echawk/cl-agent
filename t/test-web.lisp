@@ -480,3 +480,13 @@
     (check (search "(defun answer () 42)" html))
     (check (search "It returns the answer" html))
     (check (not (search "CLAGENT-CODE-BLOCK" html)))))
+
+(deftest web-acceptor-does-not-log-dropped-connections ()
+  (let* ((log (make-string-output-stream))
+         (acceptor (make-instance 'web-ui-acceptor :port 0 :message-log-destination log)))
+    (hunchentoot:acceptor-log-message acceptor :error "Error while processing connection: ~A"
+                                      (make-condition 'usocket:connection-aborted-error))
+    (check-equal (get-output-stream-string log) "" "a browser hanging up is routine")
+    (hunchentoot:acceptor-log-message acceptor :error "Error while processing connection: ~A"
+                                      (make-condition 'simple-error :format-control "real trouble"))
+    (check (search "real trouble" (get-output-stream-string log)) "real errors are still logged")))

@@ -115,6 +115,20 @@ with whatever content type BODY set), or NIL (an empty JSON object).
   (:default-initargs :access-log-destination nil)
   (:documentation "Loopback hunchentoot acceptor dispatching to *WEB-ROUTES*."))
 
+(defun web-client-disconnect-p (object)
+  "True for the error a browser causes by dropping its connection (a reload,
+a closed tab, an event stream going away): routine, so not logged."
+  (or (typep object '(or usocket:connection-aborted-error usocket:connection-reset-error))
+      (and (typep object 'stream-error)
+           (let ((text (ignore-errors (princ-to-string object))))
+             (and text (or (search "Broken pipe" text) (search "Connection reset" text)))))))
+
+(defmethod hunchentoot:acceptor-log-message ((acceptor web-ui-acceptor) log-level format-string
+                                             &rest format-arguments)
+  (declare (ignore log-level format-string))
+  (unless (some #'web-client-disconnect-p format-arguments)
+    (call-next-method)))
+
 (defun loopback-host-p (host)
   "True when HOST (a Host header value) names this machine's loopback interface."
   (let* ((host (string-downcase (or host "")))
