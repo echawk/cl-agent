@@ -43,10 +43,12 @@
   </div>
 
   <main class="desk" id="desk">
-    <section class="pane listener-pane" aria-label="Listener">
-      <div class="pane-title"><span>Listener</span><span class="pane-title-right" id="listener-info"></span></div>
-      <div class="listener" id="listener" aria-live="polite"></div>
-      <button class="jump" id="jump" type="button" hidden data-doc="Scroll to the newest output">▼ More below</button>
+    <section class="pane main-pane" id="main-pane" aria-label="Main">
+      <div class="main-tabs-bar"><nav class="tabs main-tabs" id="main-tabs" role="tablist"></nav><span class="pane-title-right" id="listener-info"></span></div>
+      <div class="view listener-view" data-view="listener">
+        <div class="listener" id="listener" aria-live="polite"></div>
+        <button class="jump" id="jump" type="button" hidden data-doc="Scroll to the newest output">▼ More below</button>
+      </div>
     </section>
     <div class="splitter" id="splitter" data-doc="Drag: resize the side panes"></div>
     <aside class="pane side-pane" id="side" aria-label="Side panes">

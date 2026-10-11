@@ -16,6 +16,10 @@ changes restyle in place, anything else reloads the page.
 | `composer.js` | The input line: send, history, tab-completion menu, abort. |
 | `panels.js` | The side-pane tab host plus the Activity, Tools and UI panels. |
 | `agents.js` | The Agents panel: the subagent constellation, tree/timeline, details. |
+| `views.js` | The main pane's tabs: the Listener, the Lisp tab, and views plugins register. |
+| `menu.js` | The completion menu, shared by the input line and the Lisp editors. |
+| `lisp-editor.js` | The Lisp code editor: highlighting, rainbow parens, indentation, key sequences. |
+| `lisp.js` | The Lisp tab (REPL, scratch buffer, debugger, echo area) and the Inspect panel. |
 | `main.js` | Boot, `window.CLAgent`, who-line, mouse-doc line, keys, toasts, live reload. |
 | `patches/*.css`, `patches/*.js` | **Your additions.** Loaded after the core files, in name order. |
 
@@ -53,8 +57,10 @@ Surfaces `--paper --paper-2 --paper-3 --desk --desk-dot`; ink `--ink --ink-2
 --ink-3 --rule --rule-soft`; pops `--pink --blue --yellow --green --orange
 --violet --cyan --red`, each with a readable text color `--on-<pop>`; roles
 `--user --assistant --system --tool --error --select --code-inline`; chrome
-`--title-bg --title-fg --shadow-color --shadow`; shape `--font --font-size
---line --border --gap --side-width`. Utility classes `fill-<pop>`, `chip`,
+`--title-bg --title-fg --shadow-color --shadow --stripes`; Lisp code
+`--syn-comment --syn-string --syn-number --syn-keyword --syn-operator --syn-def
+--syn-constant --syn-special` and the rainbow parentheses `--paren-0` …
+`--paren-5`; shape `--font --font-size --line --border --gap --side-width`. Utility classes `fill-<pop>`, `chip`,
 `btn`, `btn-small`, `btn-primary`, `btn-danger`, `panel`, `panel-section`,
 `empty`, `field`, `mouse` (hover box), `muted`, `faint` are free to reuse.
 Put `data-doc="..."` on any element to show help in the mouse-doc line
@@ -69,18 +75,23 @@ A.state                 // live: messages, pending, thinking, planning, queued, 
                         // stats, activity, subagents, session, ui, connected, seq
 A.on(type, fn)          // returns an unsubscribe function; fn(detail, state)
                         // types: state change message delta pending activity status
-                        // subagents asset ui ui:<command> connection theme panels
+                        // subagents asset ui ui:<command> connection theme panels views
+                        // lisp-entry lisp-output lisp-scratch lisp-clear (the Lisp tab)
 A.api(path, {method, body, params})   // fetch JSON; POSTs carry the CSRF header
 A.send(text)            // send a line as if typed; A.interrupt() aborts the turn
 A.insert(text)          // put text in the input box
 A.toast(text, color)    // color: pink blue yellow green orange violet cyan red ink
 A.setTheme('light' | 'dark' | 'toggle'); A.theme()
-A.showPanel(id)
+A.showPanel(id)         // a side panel: agents inspector activity tools ui ...
+A.showView(id)          // the main pane: listener lisp ...
+A.lisp.evaluate(text)   // run Lisp in the Lisp tab's REPL; A.lisp.inspect(id)
+A.lisp.insert(text)     // put text in its input; A.lisp.scratch() -> the buffer
 A.el(tag, attrs, ...children)   // DOM helper: attrs {class, dataset, style, onclick, html, ...}
 A.esc(text); A.fmtDuration(s); A.fmtCount(n); A.fmtClock(unix); A.copyText(text)
 A.storage(key, fallback); A.store(key, value)    // per-browser preferences
 
 A.registerPanel({ id, title, color, order, doc, badge(state), render(el, state), update(el, ev), events })
+A.registerView({ id, title, color, order, doc, badge(state), mount(el), show(el), hide(el) })  // a main-pane tab
 A.registerRenderer(role, (message, bodyEl, entryEl) => { ... })
 A.registerMessageDecorator((entryEl, message) => { ... })
 A.registerCommand(name, async argString => { ... }, doc)   // a /name handled in the browser
@@ -121,6 +132,18 @@ window.CLAgent.registerMessageDecorator((entry, message) => {
     window.CLAgent.el('div', { class: 'faint' }, `${message.text.split(/\s+/).length} words`));
 });
 ```
+
+## The Lisp tab
+
+A SLY-style REPL on the agent's own image beside a scratch buffer shared with
+the agent. Server side: `ui/web/lisp-repl.lisp` (evaluation threads, the
+debugger, presentations, the scratch file `~/.config/cl-agent/repl/scratch.lisp`),
+`ui/web/lisp-introspect.lisp` (completion, autodoc, describe, definitions,
+macroexpansion, the inspector) and `ui/web/lisp-routes.lisp` (`/api/lisp/...`,
+listed in its header). The agent reads and edits the buffer with the
+`lisp-scratch` and `lisp-scratch-write` tools. Editor key bindings are plain
+keymaps in `lisp.js` (`{"C-c C-c": editor => ...}`), so adding one is a small
+`old`/`new` edit there.
 
 ## Lisp side (write-extension files)
 

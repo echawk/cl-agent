@@ -62,6 +62,23 @@
   --select: #ffe08a;          /* highlighted menu item, text selection */
   --code-inline: #fdecc0;
 
+  /* Lisp code (the Lisp tab's editors and transcript) */
+  --syn-comment: #8c7d62;
+  --syn-string: #2e8b34;
+  --syn-number: #c55a11;
+  --syn-keyword: #8e3d97;
+  --syn-operator: #0b6bd3;
+  --syn-def: #e4157d;
+  --syn-constant: #00868b;
+  --syn-special: #c62f35;
+  /* Rainbow parentheses: the six bands, darkened to read on paper */
+  --paren-0: #2e8b34;
+  --paren-1: #b07d06;
+  --paren-2: #d4580f;
+  --paren-3: #c62f35;
+  --paren-4: #8e3d97;
+  --paren-5: #0b6bd3;
+
   /* Chrome */
   --title-bg: var(--ink);
   --title-fg: var(--paper);
@@ -117,6 +134,21 @@
 
   --select: #5b1d57;
   --code-inline: #2b2452;
+
+  --syn-comment: #8a84b8;
+  --syn-string: var(--green);
+  --syn-number: var(--orange);
+  --syn-keyword: var(--violet);
+  --syn-operator: var(--blue);
+  --syn-def: var(--pink);
+  --syn-constant: var(--cyan);
+  --syn-special: var(--red);
+  --paren-0: var(--green);
+  --paren-1: var(--yellow);
+  --paren-2: var(--orange);
+  --paren-3: var(--red);
+  --paren-4: var(--violet);
+  --paren-5: var(--blue);
 
   --title-bg: #2b1f63;         /* deep violet bars: the neon reads on them */
   --title-fg: var(--ink);

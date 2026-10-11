@@ -10,14 +10,16 @@ import * as core from './core.js';
 import * as render from './render.js';
 import * as composer from './composer.js';
 import * as panels from './panels.js';
+import * as views from './views.js';
 import './agents.js';
+import { lispApi } from './lisp.js';
 
 const { state, on, el, boot } = core;
 const $ = id => document.getElementById(id);
 
 // ---------- toasts and the mouse-documentation line ----------
 
-const DEFAULT_DOC = 'Enter: send · Tab: complete · ↑↓: history · Esc: abort · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
+const DEFAULT_DOC = 'Enter: send · Tab: complete · ↑↓: history · Esc: abort · Alt-L: Lisp tab · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
 let docOverride = null;
 let docTimer = null;
 
@@ -119,6 +121,11 @@ function installSplitter() {
 function installKeys() {
   document.addEventListener('keydown', e => {
     if (e.altKey && (e.key === 't' || e.key === 'T' || e.code === 'KeyT')) { e.preventDefault(); core.setTheme('toggle'); return; }
+    if (e.altKey && !e.ctrlKey && e.code === 'KeyL') {
+      e.preventDefault();
+      views.showView(views.activeView() === 'lisp' ? 'listener' : 'lisp');
+      return;
+    }
     if (e.altKey && /^Digit[1-9]$/.test(e.code)) {
       const id = panels.panelIds()[Number(e.code.slice(5)) - 1];
       if (id) { e.preventDefault(); panels.showPanel(id); }
@@ -170,6 +177,7 @@ function installCommands() {
   core.registerUICommand('toast', args => toast(String(args.text ?? ''), args.color || 'ink', args.ms || 4200));
   core.registerUICommand('theme', args => core.setTheme(args.theme || 'toggle'));
   core.registerUICommand('panel', args => panels.showPanel(args.id));
+  core.registerUICommand('view', args => views.showView(args.id));
   core.registerUICommand('insert', args => composer.insert(String(args.text ?? '')));
   core.registerUICommand('reload', () => location.reload());
 
@@ -199,6 +207,8 @@ const CLAgent = {
   insert: composer.insert,
   complete: composer.complete,
   showPanel: panels.showPanel,
+  showView: views.showView,
+  lisp: lispApi,
   sanitize: render.sanitize,
   scrollToLatest: render.scrollToLatest,
 };
@@ -210,6 +220,7 @@ installCommands();
 render.install();
 composer.install();
 panels.install();
+views.install();
 installMousedoc();
 installKeys();
 installSplitter();

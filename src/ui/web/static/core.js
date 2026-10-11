@@ -10,7 +10,8 @@
 // streams every later event (Server-Sent Events).  apply() folds each event
 // into `state` with a reducer and re-emits it, so UI code subscribes with
 // on('message' | 'delta' | 'pending' | 'activity' | 'status' | 'subagents'
-// | 'asset' | 'ui' | 'change' | 'state' | 'connection', fn).
+// | 'asset' | 'ui' | 'change' | 'state' | 'connection' | 'lisp-entry'
+// | 'lisp-output' | 'lisp-scratch' | 'lisp-clear', fn).
 
 export const boot = window.CL_AGENT_BOOT || { safe: false, assets: '/assets' };
 
@@ -158,6 +159,14 @@ export const panels = new Map();
 export function registerPanel(panel) {
   panels.set(panel.id, { order: 50, color: 'blue', ...panel });
   emit('panels', panels);
+}
+
+/** Main-pane views (tabs beside the Listener): {id, title, color, order, doc,
+ *  badge(state), mount(el) (once, when first shown), show(el)?, hide(el)?}. */
+export const views = new Map();
+export function registerView(view) {
+  views.set(view.id, { order: 50, color: 'blue', ...view });
+  emit('views', views);
 }
 
 /** Render a transcript role yourself: fn(message, element) fills element. */

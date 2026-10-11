@@ -10,6 +10,7 @@
 import {
   state, on, el, api, send, interrupt, clientCommands, completers, storage, store,
 } from './core.js';
+import { createMenu, commonPrefix } from './menu.js';
 
 const $ = id => document.getElementById(id);
 let input, menu;
@@ -115,7 +116,6 @@ async function submit() {
 
 // ---------- completion ----------
 
-let menuState = null;   // {result, index}
 let requestNumber = 0;
 
 function clientCommandCandidates(token) {
@@ -140,17 +140,6 @@ async function fetchCompletions(text, cursor) {
   }
   result.common = commonPrefix(result.candidates.map(c => c.value));
   return result;
-}
-
-function commonPrefix(values) {
-  if (!values.length) return '';
-  let prefix = values[0];
-  for (const value of values) {
-    let i = 0;
-    while (i < prefix.length && i < value.length && prefix[i].toLowerCase() === value[i].toLowerCase()) i += 1;
-    prefix = prefix.slice(0, i);
-  }
-  return prefix;
 }
 
 function replaceRange(start, end, text) {
@@ -190,42 +179,9 @@ export async function complete({ quiet = false, live = false } = {}) {
   if (!quiet || candidates.length <= 40) showMenu(result, 0);
 }
 
-function showMenu(result, index) {
-  menuState = { result, index };
-  const { candidates, total } = result;
-  const title = result.source?.startsWith('command:') ? `/${result.source.slice(8)} arguments`
-    : ({ 'slash-commands': 'Commands', paths: 'Files', 'lisp-symbols': 'Lisp symbols' }[result.source] || 'Possibilities');
-  menu.replaceChildren(
-    el('div', { class: 'completions-title' },
-      el('span', {}, title),
-      el('span', {}, `${candidates.length}${total > candidates.length ? ` of ${total}` : ''} · Tab ↑↓ Enter Esc`)),
-    el('div', { class: 'completions-list', role: 'listbox' },
-      candidates.map((c, i) => el('div', {
-        class: `completion kind-${c.kind || 'other'} ${i === index ? 'selected' : ''}`,
-        role: 'option',
-        'data-doc': c.doc || c.value,
-        onmousedown: e => { e.preventDefault(); accept(c, result); },
-      }, el('span', { class: 'c-value' }, c.display || c.value),
-         el('span', { class: 'c-kind' }, c.kind || ''),
-         el('span', { class: 'c-doc' }, c.doc || '')))));
-  // One value column for every row, sized to the longest candidate.
-  const widest = Math.max(...candidates.map(c => (c.display || c.value).length));
-  menu.style.setProperty('--completion-value-width', `${Math.min(Math.max(widest, 8), 36) + 1}ch`);
-  menu.hidden = false;
-  menu.querySelector('.completion.selected')?.scrollIntoView({ block: 'nearest' });
-}
-
-function moveSelection(delta) {
-  const { result, index } = menuState;
-  const n = result.candidates.length;
-  showMenu(result, index < 0 ? (delta > 0 ? 0 : n - 1) : (index + delta + n) % n);
-}
-
-function hideMenu() {
-  menuState = null;
-  menu.hidden = true;
-  menu.replaceChildren();
-}
+function showMenu(result, index) { menu.show(result, index); }
+function moveSelection(delta) { menu.move(delta); }
+function hideMenu() { menu?.hide(); }
 
 // ---------- keys ----------
 
@@ -233,6 +189,7 @@ function caretOnFirstLine() { return !input.value.slice(0, input.selectionStart)
 function caretOnLastLine() { return !input.value.slice(input.selectionEnd).includes('\n'); }
 
 function onKeyDown(e) {
+  const menuState = menu.state;
   if (menuState) {
     if (e.key === 'Tab') { e.preventDefault(); if (menuState.index < 0 && !e.shiftKey) moveSelection(1); else moveSelection(e.shiftKey ? -1 : 1); return; }
     if (e.key === 'ArrowDown') { e.preventDefault(); moveSelection(1); return; }
@@ -273,12 +230,12 @@ function onInput() {
   try { sessionStorage.setItem('cl-agent.draft', input.value); } catch (err) { /* ignore */ }
   const before = input.value.slice(0, input.selectionStart);
   if (/^\/\S*$/.test(before)) complete({ live: true });
-  else if (menuState) hideMenu();
+  else if (menu.state) hideMenu();
 }
 
 export function install() {
   input = $('input');
-  menu = $('completions');
+  menu = createMenu($('completions'), { onAccept: accept });
   input.addEventListener('keydown', onKeyDown);
   input.addEventListener('input', onInput);
   input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) hideMenu(); }, 150));

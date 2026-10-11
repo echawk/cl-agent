@@ -124,6 +124,10 @@
            (:static-file "agents.js")
            (:static-file "panels.js")
            (:static-file "main.js")
+           (:static-file "menu.js")
+           (:static-file "views.js")
+           (:static-file "lisp-editor.js")
+           (:static-file "lisp.js")
            (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"
@@ -151,10 +155,16 @@
      (:file "repl")
      (:file "completion")
      ;; Web UI slash commands need DEFINE-SLASH-COMMAND (repl.lisp) and
-     ;; DEFINE-COMMAND-COMPLETER (completion.lisp), so they load late.
+     ;; DEFINE-COMMAND-COMPLETER (completion.lisp), and the Lisp tab's REPL
+     ;; uses completion.lisp, clspec.lisp and apropos.lisp, so they load late.
      (:module "web-commands"
       :pathname "ui/web"
-      :components ((:file "commands")))
+      :serial t
+      :components ((:file "commands")
+                   (:file "lisp-repl")
+                   (:file "lisp-introspect")
+                   (:file "lisp-routes")))
+     (:file "tools/lisp-scratch-tool")
      (:file "acp")
      (:file "main")))))
 
@@ -198,7 +208,8 @@
    (:file "test-integrations")
    (:file "test-ui")
    (:file "test-web")
-   (:file "test-completion"))
+   (:file "test-completion")
+   (:file "test-lisp-repl"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

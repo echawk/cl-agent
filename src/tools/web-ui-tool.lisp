@@ -155,7 +155,7 @@ otherwise Node's error message."
     (error (condition) (format nil "Not reset: ~a" condition))))
 
 (define-tool web-ui-command (args)
-    (:description "Act on every open browser page right now, without changing any file: command \"toast\" {text, color?} shows a notice; \"theme\" {theme: light|dark|toggle}; \"panel\" {id: agents|activity|tools|ui|<plugin panel id>} opens a side panel; \"insert\" {text} puts text in the input box; \"reload\" reloads the page; or the name of a command a plugin registered with CLAgent.registerUICommand. Does nothing when no web page is open."
+    (:description "Act on every open browser page right now, without changing any file: command \"toast\" {text, color?} shows a notice; \"theme\" {theme: light|dark|toggle}; \"panel\" {id: agents|inspector|activity|tools|ui|<plugin panel id>} opens a side panel; \"view\" {id: listener|lisp} switches the main pane; \"insert\" {text} puts text in the input box; \"reload\" reloads the page; or the name of a command a plugin registered with CLAgent.registerUICommand. Does nothing when no web page is open."
      :effects '(:self-modify)
      :parameters
      (jobj "type" "object"

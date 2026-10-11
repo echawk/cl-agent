@@ -595,6 +595,45 @@ default; switch to dark with the ◐ button, `Alt-T`, or `/theme dark`.
 - **Who-line and mouse-documentation line**, as on a Lisp machine: clock,
   user, provider/model, totals, agent state, and help for whatever the
   pointer is over.
+- **Lisp tab** (`Alt-L`): a SLY-style REPL on the agent's own image, beside
+  a scratch buffer the agent shares (see below).
+
+### The Lisp tab
+
+A Common Lisp REPL in the browser, on the running agent's image, with what
+you would expect from SLY or SLIME:
+
+- **Editing**: syntax highlighting with rainbow parentheses, paren matching,
+  Lisp indentation (`RET`, `Tab` in the indentation), and `Tab` completion of
+  symbols, `pkg:` names, keywords and abbreviations (`m-v-b`).
+- **Echo area**: the argument list of the call at the cursor, with the
+  current argument highlighted.
+- **REPL**: `RET` evaluates once the input is complete. Output streams in as it
+  is printed, `*`, `+` and `/` work, and `in-package` moves the prompt.
+  `M-p`/`M-n` (or `↑`/`↓`) recall inputs.
+- **Debugger**: an error, `break` or interrupt (`C-c C-c`) opens an SLDB-style
+  box with the condition, the backtrace and the real restarts. `USE-VALUE`
+  and friends read their value from a box. Number keys pick a restart and
+  `q` aborts.
+- **Presentations and the inspector**: every printed value is clickable. It
+  opens in the **Inspect** side panel, where you can drill into slots,
+  elements and hash-table entries. Alt-click puts
+  `(lisp-repl-object N)` in the input, to use the object itself.
+- **Scratch buffer** (`~/.config/cl-agent/repl/scratch.lisp`, saved as you
+  type):
+  - `C-c C-c` compiles the toplevel form, `C-M-x` / `C-x C-e` evaluate,
+    and `C-c C-k` compiles and loads the whole buffer. Compiler warnings show
+    as notes.
+  - `M-.` shows a definition's source (and can copy it into the buffer).
+  - `C-c C-d d` / `h` / `a` describe, look up in the HyperSpec, and search
+    apropos.
+  - `C-c RET` / `C-c M-m` macroexpand.
+- **Shared with the agent**: "review my scratch buffer" or "why did my REPL
+  error?" works because the agent reads both with the `lisp-scratch` tool,
+  and edits the buffer with `lisp-scratch-write` when you ask. Its edits show
+  up live, a clash with unsaved typing asks which version to keep, and the
+  text it replaced is kept in `repl/.history/`. **Ask the agent** buttons on the
+  buffer and in the debugger pre-fill the question.
 
 Updates are pushed over Server-Sent Events (`/api/events`) against a sequenced
 event log, so a reconnecting page catches up without missing or repeating
@@ -605,7 +644,8 @@ anything. Mutating requests require an `X-CL-Agent` header and a loopback
 
 The client is a set of plain files in `src/ui/web/static/`: `theme.css`
 holds every color and size, and `app.css`, `core.js`, `render.js`,
-`composer.js`, `panels.js`, `agents.js` and `main.js` hold the rest. Each
+`composer.js`, `panels.js`, `agents.js`, `views.js`, `menu.js`,
+`lisp-editor.js`, `lisp.js` and `main.js` hold the rest. Each
 request resolves through three layers: an **override** in
 `~/.config/cl-agent/web/`, then an **extension** (registered from Lisp),
 then the **built-in** file. Any `patches/*.css` / `patches/*.js` loads
@@ -621,7 +661,11 @@ showing my git branches") and it uses these tools:
 | `web-ui-assets` | Read the guide (`static/EXTENDING.md`), list assets, read one. |
 | `web-ui-write-asset` | Write or snippet-edit an override or patch. JS is checked with `node --check`, CSS for balanced braces. |
 | `web-ui-reset-asset` | Undo: back to built-in, or one version back. History is kept. |
-| `web-ui-command` | Drive open pages now: toast, theme, open a panel, insert text, reload. |
+| `web-ui-command` | Drive open pages now: toast, theme, open a panel or tab, insert text, reload. |
+
+The Lisp tab has two tools of its own: `lisp-scratch` (read the scratch
+buffer, or the REPL transcript with its errors and backtraces) and
+`lisp-scratch-write` (replace, edit or append to the buffer).
 
 Open pages restyle (CSS) or reload (anything else) as soon as a file changes,
 including edits to the repository's own `static/` files. When an edit breaks
