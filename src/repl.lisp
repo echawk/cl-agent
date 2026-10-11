@@ -182,6 +182,9 @@ code (and tests) that doesn't care about UI can ignore this slot.")
                  :documentation "The full, session-scoped tool inventory. In
 :PLAN mode SESSION-TOOLS is a curated working subset of this catalog; direct
 mode exposes the full catalog.")
+   (capability-mode :initarg :capability-mode :initform :full
+                    :accessor session-capability-mode
+                    :documentation "Deterministic authority mode for tool effects.")
    (orchestration-tool-limit :initarg :orchestration-tool-limit :initform 8
                              :accessor session-orchestration-tool-limit
                              :documentation "Maximum number of tool schemas exposed in
@@ -246,6 +249,53 @@ command strings. Unknown or absent values safely select :DIRECT."
 (defun completion-review-mode-p (session)
   "True only when final answers require phase-three verification."
   (eq (session-orchestration-mode session) :plan-review))
+
+(defparameter *capability-modes* '(:full :accept-edits :inspect)
+  "Deterministic tool-authority modes supported by this first policy pass.")
+
+(defun normalize-capability-mode (mode)
+  "Return MODE as a supported capability-mode keyword, or signal an error."
+  (let ((keyword (cond ((keywordp mode) mode)
+                       ((stringp mode) (intern (string-upcase mode) :keyword))
+                       (t nil))))
+    (or (find keyword *capability-modes*)
+        (error "Unknown capability mode ~s; choose one of ~{~(~a~)~^, ~}."
+               mode *capability-modes*))))
+
+(defun capability-mode-decision (mode effects)
+  "Return the deterministic decision and matching rule for MODE and EFFECTS.
+
+Restricted modes deliberately reject unannotated tools.  This keeps a new
+extension from silently acquiring authority merely because it omitted effect
+metadata."
+  (let ((allowed-effects (ecase mode
+                           (:full nil)
+                           (:accept-edits '(:read-workspace :write-workspace))
+                           (:inspect '(:read-workspace)))))
+    (cond ((eq mode :full) (values :allow :mode/full))
+          ((null effects) (values :deny :mode/undeclared-effects))
+          ((every (lambda (effect) (member effect allowed-effects)) effects)
+           (values :allow (if (eq mode :inspect) :mode/inspect-read-only
+                              :mode/accept-edits-workspace)))
+          (t (values :deny (if (eq mode :inspect) :mode/inspect-read-only
+                               :mode/accept-edits-workspace))))))
+
+(defun authorize-tool-call (session tool)
+  "Record and return a local capability decision for TOOL in SESSION.
+
+This has no model or hook involvement: policy is an authority boundary, not a
+reasoning suggestion.  The returned plist has :ALLOWED-P, :DECISION, and
+:RULE-ID keys."
+  (let ((effects (copy-list (tool-effects tool))))
+    (multiple-value-bind (decision rule-id)
+        (capability-mode-decision (session-capability-mode session) effects)
+      (record-session-event
+       session :tool-capability-decided :component (tool-name tool)
+       :status (string-downcase (symbol-name decision))
+       :payload (list :tool-name (tool-name tool) :mode (session-capability-mode session)
+                      :effects effects :rule-id rule-id))
+      (list :allowed-p (eq decision :allow) :decision decision :rule-id rule-id
+            :effects effects))))
 
 (defun subagent-profile-name-string (name)
   "Return NAME in the stable string form used for model-profile lookup."
@@ -325,7 +375,7 @@ startup rather than silently falling back to the host model."
 
 (defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit
                               (subagent-depth 0) max-subagent-depth subagent-model-profiles settings
-                              context-compaction-threshold)
+                              context-compaction-threshold (capability-mode :full))
   (let* ((settings (or settings (load-agent-settings)))
          (profiles (normalize-subagent-model-profiles subagent-model-profiles))
          (base-prompt (or system-prompt *default-system-prompt*))
@@ -337,6 +387,7 @@ startup rather than silently falling back to the host model."
                            :frontend (or frontend (make-frontend :cli))
                            :tools tools
                            :tool-catalog tools
+                           :capability-mode (normalize-capability-mode capability-mode)
                            :orchestration-mode (normalize-orchestration-mode
                                                 (or orchestration-mode
                                                     (setinka:config :orchestration-mode settings)))
@@ -1622,23 +1673,37 @@ entirely."
       (list :role "tool" :tool-call-id (getf tool-call :id)
             :content "Skipped: the user interrupted this turn before the tool ran.")))
   (let* ((frontend (session-frontend session))
+         (tool (find-tool (getf tool-call :name)))
          (validation-error (tool-call-json-error tool-call))
          (requested (list :tool-name (getf tool-call :name) :arguments (getf tool-call :arguments)))
+         ;; Policy runs before hook code. Hooks can still veto a permitted
+         ;; call, but cannot make a denied capability executable.
+         (authorization (and tool (authorize-tool-call session tool)))
          ;; This durable intent is committed before validation hooks or the
          ;; tool handler can cause an observable side effect.
-         (tool-intent (record-session-event session :tool-call-started :component (getf tool-call :name)
-                                            :payload (list :tool-call-id (getf tool-call :id)
-                                                           :tool-name (getf tool-call :name)))))
+         (tool-intent (and (or (null authorization) (getf authorization :allowed-p))
+                           (record-session-event session :tool-call-started :component (getf tool-call :name)
+                                                 :payload (list :tool-call-id (getf tool-call :id)
+                                                                :tool-name (getf tool-call :name))))))
     (multiple-value-bind (ctx veto)
-        (if validation-error
+        (if (or validation-error (and authorization (not (getf authorization :allowed-p))))
             (values requested nil)
             (handler-case (values (run-hook-chain :before-tool-call requested) nil)
               (error (c) (values requested c))))
       (ui-tool-started frontend (getf ctx :tool-name) (getf ctx :arguments))
-      (let* ((result (cond (validation-error (invalid-tool-call-result tool-call validation-error))
+      (let* ((denied-p (and authorization (not (getf authorization :allowed-p))))
+             (result (cond (validation-error (invalid-tool-call-result tool-call validation-error))
+                           ((and authorization (not (getf authorization :allowed-p)))
+                            (with-output-to-string (stream)
+                              (princ (make-condition 'capability-denied
+                                                     :tool-name (tool-name tool)
+                                                     :mode (session-capability-mode session)
+                                                     :effects (getf authorization :effects)
+                                                     :rule-id (getf authorization :rule-id))
+                                     stream)))
                            (veto (format nil "Tool call vetoed by a :before-tool-call hook: ~a" veto))
                            (t (call-tool (getf ctx :tool-name) (getf ctx :arguments)))))
-             (after (if (or validation-error veto)
+             (after (if (or validation-error denied-p veto)
                         (list* :result result ctx)
                         (run-hook-chain :after-tool-call
                                         (list :tool-name (getf ctx :tool-name)
@@ -2079,6 +2144,27 @@ Plan mode makes a visible planning request; plan-review also verifies finals."
                      (ui-system frontend (format nil "Orchestration mode switched to ~a." requested)))
               (ui-system frontend (format nil "Unknown mode ~s. Available: ~{~(~a~)~^, ~}."
                                           choice *orchestration-modes*))))))
+  t)
+
+(define-slash-command capabilities (session arg)
+  "Usage: /capabilities [full|accept-edits|inspect].
+
+Select the deterministic authority mode for subsequent tool calls. Inspect
+permits only explicitly declared workspace reads; accept-edits additionally
+permits explicitly declared workspace writes; full preserves the current
+unrestricted compatibility behavior."
+  (let* ((frontend (session-frontend session)) (choice (string-trim " " arg)))
+    (if (zerop (length choice))
+        (ui-system frontend
+                   (format nil "Capability mode: ~(~a~). Available: ~{~(~a~)~^, ~}."
+                           (session-capability-mode session) *capability-modes*))
+        (handler-case
+            (let ((mode (normalize-capability-mode choice)))
+              (setf (session-capability-mode session) mode)
+              (record-session-event session :capability-mode-changed :component "policy"
+                                    :status "finished" :payload (list :mode mode))
+              (ui-system frontend (format nil "Capability mode switched to ~(~a~)." mode)))
+          (error (condition) (ui-error frontend condition)))))
   t)
 
 (define-slash-command stats (session arg)

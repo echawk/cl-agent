@@ -139,6 +139,7 @@ agent loop's JSON-Schema validation."
 
 (define-tool shell (args)
     (:description "Run a shell command with loop detection. Supply expected_seconds whenever possible. Commands are interrupted at one learned standard deviation past that estimate, or at explicit warning_after_seconds. An interruption is feedback to inspect for a loop; use managed background jobs for intentional long work."
+     :effects '(:process)
      :parameters (jobj "type" "object" "properties"
                        (jobj "command" (jobj "type" "string") "reason" (jobj "type" "string") "result_use" (jobj "type" "string")
                               "expected_seconds" (jobj "type" "integer" "minimum" 1) "warning_after_seconds" (jobj "type" "integer" "minimum" 1))
@@ -151,6 +152,7 @@ agent loop's JSON-Schema validation."
 
 (define-tool start-shell-job (args)
     (:description "Start a managed background shell job. Then use shell-job-status, collect-shell-job, or stop-shell-job instead of ps/kill."
+     :effects '(:process)
      :parameters (jobj "type" "object" "properties" (jobj "command" (jobj "type" "string") "expected_seconds" (jobj "type" "integer" "minimum" 1)) "required" (list "command" "expected_seconds")))
   (let ((job (launch-shell-job (required-shell-command args) (jget args "expected_seconds"))))
     (format nil "Started managed shell job ~a." (shell-job-id job))))

@@ -64,6 +64,17 @@ function. CALL-TOOL catches tool handler errors and turns them into
 this condition (and, in the normal agent loop, into a tool-result
 message the model can see and recover from -- see repl.lisp)."))
 
+(define-condition capability-denied (cl-agent-error)
+  ((tool-name :initarg :tool-name :reader capability-denied-tool-name)
+   (mode :initarg :mode :reader capability-denied-mode)
+   (effects :initarg :effects :reader capability-denied-effects)
+   (rule-id :initarg :rule-id :reader capability-denied-rule-id))
+  (:report (lambda (c stream)
+             (format stream "Tool ~s is denied by capability mode ~(~a~) (rule ~a; effects: ~{~a~^, ~})."
+                     (capability-denied-tool-name c) (capability-denied-mode c)
+                     (capability-denied-rule-id c) (capability-denied-effects c))))
+  (:documentation "Reports a deterministic local policy denial before a tool hook or handler runs."))
+
 (define-condition frontend-not-found (cl-agent-error)
   ((name :initarg :name :reader frontend-not-found-name))
   (:report (lambda (c stream)

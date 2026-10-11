@@ -73,6 +73,7 @@ and end positions express insertion without a separate operation."
 
 (define-tool read-file (args)
     (:description "Read a text file directly by explicit path. Use this instead of shell commands such as cat, sed, or head when you need file contents. Optional max_chars bounds large reads; if omitted, 30000 characters are returned. This tool reads files, not directories or globs."
+     :effects '(:read-workspace)
      :parameters (jobj "type" "object"
                        "properties" (jobj "path" (jobj "type" "string" "description" "Explicit file path, relative to the current directory or absolute.")
                                           "max_chars" (jobj "type" "integer" "description" "Optional positive maximum number of characters to return."))
@@ -91,6 +92,7 @@ and end positions express insertion without a separate operation."
 
 (define-tool write-file (args)
     (:description "Write text to an explicit file path, creating parent directories when needed and replacing an existing file's contents. Use this for ordinary project files; use write-scratch-file for a disposable config scratch artifact and write-extension only for a durable cl-agent capability that must load into the agent."
+     :effects '(:write-workspace)
      :parameters (jobj "type" "object"
                        "properties" (jobj "path" (jobj "type" "string" "description" "Explicit output file path, relative to the current directory or absolute.")
                                           "contents" (jobj "type" "string" "description" "Complete replacement contents for the file."))
@@ -106,6 +108,7 @@ and end positions express insertion without a separate operation."
 
 (define-tool read-file-range (args)
     (:description "Read an exact half-open range from an existing text file using 1-based line and column positions. The start is included and the end is excluded. Use this before edit-file to obtain the precise current text and positions; equal positions select an empty insertion point. For a whole line including its newline, end at column 1 of the next line."
+     :effects '(:read-workspace)
      :parameters (jobj "type" "object"
                        "properties" (jobj "path" (jobj "type" "string" "description" "Existing file path, relative to the current directory or absolute.")
                                           "start_line" (jobj "type" "integer" "minimum" 1 "description" "1-based inclusive start line.")
@@ -123,6 +126,7 @@ and end positions express insertion without a separate operation."
 
 (define-tool edit-file (args)
     (:description "Precisely replace or insert text in an existing file using a half-open, 1-based line/column range. The start is included and the end is excluded; set start and end equal to insert. Supply expected_text whenever possible: the edit aborts unless the currently selected text exactly matches it, protecting against stale positions or an unintended overwrite. Workflow: read-file-range, then edit-file with its returned text as expected_text."
+     :effects '(:write-workspace)
      :parameters (jobj "type" "object"
                        "properties" (jobj "path" (jobj "type" "string" "description" "Existing file path, relative to the current directory or absolute.")
                                           "start_line" (jobj "type" "integer" "minimum" 1 "description" "1-based inclusive start line.")
