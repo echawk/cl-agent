@@ -373,6 +373,37 @@ startup rather than silently falling back to the host model."
   (let ((events (read-session-events session-id)))
     (values events (project-session-messages events through-sequence))))
 
+(defun session-event-summary (event)
+  "Return a compact, data-only inspection view of a durable EVENT."
+  (list :sequence (getf event :sequence) :id (getf event :id)
+        :parent-id (getf event :parent-id) :kind (getf event :kind)
+        :component (getf event :component) :status (getf event :status)
+        :turn-id (getf event :turn-id)
+        :task-id (getf (getf event :payload) :task-id)))
+
+(defun session-timeline (session-id &key limit)
+  "Return ordered summary rows from SESSION-ID without executing any work."
+  (unless (or (null limit) (and (integerp limit) (plusp limit)))
+    (error "Timeline limit must be a positive integer"))
+  (let ((rows (mapcar #'session-event-summary (read-session-events session-id))))
+    (if limit (last rows limit) rows)))
+
+(defun format-session-timeline (rows)
+  "Render timeline ROWS for the shared frontend system-message surface."
+  (if rows
+      (format nil "Session timeline:~%~{~a~%~}"
+              (mapcar (lambda (row)
+                        (let ((component (getf row :component))
+                              (status (getf row :status))
+                              (parent-id (getf row :parent-id)))
+                          (format nil "  #~d · ~(~a~)~a~a~a"
+                                  (getf row :sequence) (getf row :kind)
+                                  (if component (format nil " · ~a" component) "")
+                                  (if status (format nil " · ~a" status) "")
+                                  (if parent-id (format nil " · parent ~a" parent-id) ""))))
+                      rows))
+      "Session timeline is empty."))
+
 (defun rename-session (session name)
   "Give SESSION a durable human-readable NAME and return it.
 
@@ -2159,7 +2190,7 @@ with a tool-free continuity summary. It is never invoked automatically."
 
 (define-slash-command session (session arg)
   "Usage: /session save [NAME], /session restore NAME, /session list,
-or /session durable-list|resume ID|replay ID|branch [SEQUENCE]|export PATH|rewind SEQUENCE [files].
+or /session durable-list|resume ID|replay ID|timeline [LIMIT]|branch [SEQUENCE]|export PATH|rewind SEQUENCE [files].
 
 SAVE writes a named local JSON snapshot (or a generated timestamped name when
 NAME is omitted). RESTORE replaces the current conversation and compatible
@@ -2210,6 +2241,10 @@ session settings; LIST displays every saved snapshot."
                  (ui-system (session-frontend session)
                             (format nil "Replay ~a: ~d event~:p, ~d provider message~:p. No tools were executed."
                                     name (length events) (length messages))))))
+          ((string= action "timeline")
+           (let ((limit (and (plusp (length name)) (parse-integer name :junk-allowed t))))
+             (ui-system (session-frontend session)
+                        (format-session-timeline (session-timeline (session-id session) :limit limit)))))
           ((string= action "branch")
            (let ((sequence (and (plusp (length name)) (parse-integer name :junk-allowed t))))
              (branch-session session :through-sequence sequence)
@@ -2266,7 +2301,7 @@ session settings; LIST displays every saved snapshot."
                                       sequence files-p restored))))))
           (t
            (ui-system (session-frontend session)
-                      "Usage: /session save [NAME], /session restore NAME, /session list, or /session durable-list|resume ID|replay ID|branch [SEQUENCE]|rename NAME|checkpoint NAME|checkpoints|restore-checkpoint NAME|export PATH|rewind SEQUENCE [files].")))
+                      "Usage: /session save [NAME], /session restore NAME, /session list, or /session durable-list|resume ID|replay ID|timeline [LIMIT]|branch [SEQUENCE]|rename NAME|checkpoint NAME|checkpoints|restore-checkpoint NAME|export PATH|rewind SEQUENCE [files].")))
       (error (condition)
         (ui-error (session-frontend session) condition))))
   t)

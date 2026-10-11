@@ -69,6 +69,15 @@
           (check unknown)
           (check-equal (getf unknown :parent-id) (getf started :id)))))))
 
+(deftest durable-session-timeline-is-read-only-and-bounded ()
+  (with-temp-config-dir ()
+    (let ((session (make-session (make-instance 'ollama-provider))))
+      (session-submit-user-text session "timeline event")
+      (let ((timeline (session-timeline (session-id session) :limit 1)))
+        (check-equal (length timeline) 1)
+        (check-equal (getf (first timeline) :kind) :task-record-started)
+        (check (search "task-record-started" (format-session-timeline timeline)))))))
+
 (deftest durable-session-repairs-only-an-invalid-final-event-tail ()
   (with-temp-config-dir ()
     (let* ((session (make-session (make-instance 'ollama-provider)))
