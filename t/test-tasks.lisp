@@ -194,5 +194,5 @@
     (check-equal (jget json "state") "running")
     (check-equal (jget json "tool_calls") 3)
     (check-equal (jget json "activity") "shell: ls"))
-  (check (search "renderSubagents(data.subagents||[])" *web-page-html*) "page renders the pane")
-  (check (search "id=\"subagents\"" *web-page-html*)))
+  (check (search "id: 'agents'" (builtin-web-asset-content "agents.js")) "the page has an Agents panel")
+  (check (search "state.subagents" (builtin-web-asset-content "agents.js"))))

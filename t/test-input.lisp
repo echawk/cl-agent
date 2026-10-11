@@ -131,5 +131,5 @@
     (check-equal (jget (json-decode (web-frontend-status-json frontend)) "queued") '("later"))
     (ui-poll-input frontend)
     (check-equal (jget (json-decode (web-frontend-status-json frontend)) "queued") nil)
-    (check (search "id=\"stop\"" *web-page-html*))
-    (check (search "renderQueued(data.queued||[])" *web-page-html*))))
+    (check (search "id=\"abort\"" (builtin-web-asset-content "index.html")))
+    (check (search "state.queued" (builtin-web-asset-content "composer.js")))))

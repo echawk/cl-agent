@@ -4,7 +4,15 @@
 
 (defparameter *extension-integration-operators*
   '("DEFINE-TOOL" "ADD-HOOK" "DEFMETHOD" "REGISTER-PROVIDER-CLASS"
-    "REGISTER-FRONTEND-CLASS" "DEFINE-SLASH-COMMAND"))
+    "REGISTER-FRONTEND-CLASS" "DEFINE-SLASH-COMMAND"
+    ;; Web UI and completion surfaces (ui/web/*.lisp, completion.lisp).
+    "DEFINE-WEB-ROUTE" "DEFINE-WEB-PATCH" "REGISTER-WEB-ASSET"
+    "DEFINE-COMPLETION-SOURCE" "DEFINE-COMMAND-COMPLETER"))
+
+(defparameter *later-mutation-registries*
+  '("*WEB-ROUTES*" "*WEB-ASSETS*" "*COMPLETION-SOURCES*")
+  "Registries defined after this file whose values a failed mutation restores.
+Hash tables are shallow-copied and lists copied, like the core registries.")
 
 (defun read-extension-top-level-forms (source)
   "Read SOURCE with reader evaluation disabled, rejecting trailing garbage."
@@ -47,7 +55,12 @@
         :frontends (snapshot-hash-table (later-registry-value "*FRONTEND-REGISTRY*"))
         :commands (copy-tree (later-registry-value "*SLASH-COMMANDS*"))
         :exercises (snapshot-hash-table *mutation-exercises*)
-        :components (snapshot-hash-table *components*)))
+        :components (snapshot-hash-table *components*)
+        :later (loop for name in *later-mutation-registries*
+                     for value = (later-registry-value name)
+                     collect (cons name (if (hash-table-p value)
+                                            (snapshot-hash-table value)
+                                            (copy-list value))))))
 
 (defun restore-mutation-state (snapshot)
   (setf *tools* (getf snapshot :tools)
@@ -57,6 +70,9 @@
         *components* (getf snapshot :components))
   (set-later-registry-value "*FRONTEND-REGISTRY*" (getf snapshot :frontends))
   (set-later-registry-value "*SLASH-COMMANDS*" (getf snapshot :commands))
+  (loop for (name . value) in (getf snapshot :later)
+        when (find-symbol name :cl-agent)
+          do (set-later-registry-value name value))
   t)
 
 (defun rollback-mutation-live-state (transaction)

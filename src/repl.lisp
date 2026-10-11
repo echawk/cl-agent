@@ -2084,15 +2084,17 @@ frontend, not just the CLI."
      ,(string-downcase (string name))))
 
 (define-slash-command help (session arg)
+  "List every slash command."
   (declare (ignore arg))
   (ui-system (session-frontend session)
              (format nil "Commands: ~{/~a~^, ~}" (sort (mapcar #'car *slash-commands*) #'string<)))
   t)
 
-(define-slash-command exit (session arg) (declare (ignore session arg)) nil)
-(define-slash-command quit (session arg) (declare (ignore session arg)) nil)
+(define-slash-command exit (session arg) "End the session." (declare (ignore session arg)) nil)
+(define-slash-command quit (session arg) "End the session." (declare (ignore session arg)) nil)
 
 (define-slash-command tools (session arg)
+  "List the tools offered to the model in this session."
   (declare (ignore arg))
   (ui-system (session-frontend session)
              (format nil "~{~a~^~%~}"
@@ -2118,6 +2120,7 @@ name is parsed as one JSON object and passed to the tool as-is."
   t)
 
 (define-slash-command hooks (session arg)
+  "List installed hook functions by hook point."
   (declare (ignore arg))
   (ui-system (session-frontend session)
              (format nil "~{~a~^~%~}"
@@ -2126,6 +2129,7 @@ name is parsed as one JSON object and passed to the tool as-is."
   t)
 
 (define-slash-command extensions (session arg)
+  "List extension files and whether each is enabled."
   (declare (ignore arg))
   (ui-system (session-frontend session)
              (format nil "~{~a~^~%~}"
@@ -2136,6 +2140,7 @@ name is parsed as one JSON object and passed to the tool as-is."
   t)
 
 (define-slash-command reload (session arg)
+  "Reload every enabled extension file into the running image."
   (declare (ignore arg))
   (multiple-value-bind (loaded failed) (load-enabled-extensions)
     (ui-system (session-frontend session)
@@ -2147,6 +2152,7 @@ name is parsed as one JSON object and passed to the tool as-is."
   t)
 
 (define-slash-command provider (session arg)
+  "Show the current provider and model."
   (declare (ignore arg))
   (ui-system (session-frontend session)
              (format nil "~a, model ~a" (provider-display-name (session-provider session))
@@ -2266,6 +2272,7 @@ with this command matches every declared effect of its named tool."
   t)
 
 (define-slash-command stats (session arg)
+  "Show requests, tool calls, tokens and elapsed time for this session."
   (declare (ignore arg))
   (ui-system (session-frontend session) (format-stats (session-stats-snapshot session)))
   t)

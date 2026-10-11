@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>cl-agent</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23fdb827' stroke='%231c1a33' stroke-width='4'/%3E%3Ctext x='16' y='24' font-family='monospace' font-weight='700' font-size='22' text-anchor='middle' fill='%231c1a33'%3E%CE%BB%3C/text%3E%3C/svg%3E">
+<script>
+  /* The server fills in the double-brace placeholders (boot data, asset
+     base, patches); see ui/web/frontend.lisp's WEB-INDEX-HTML.  The saved
+     theme is applied here, before first paint, to avoid a flash. */
+  window.CL_AGENT_BOOT = {{BOOT}};
+  try { var t = localStorage.getItem('cl-agent.theme'); if (t) document.documentElement.dataset.theme = t;
+        var f = localStorage.getItem('cl-agent.font-size'); if (f) document.documentElement.style.setProperty('--font-size', f); } catch (e) {}
+  window.MathJax = { tex: { inlineMath: { '[+]': [['$', '$']] }, displayMath: [['$$', '$$'], ['\\[', '\\]']] },
+                     options: { skipHtmlTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code'] } };
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap">
+<link rel="stylesheet" data-core="theme.css" href="{{ASSETS}}/theme.css">
+<link rel="stylesheet" data-core="app.css" href="{{ASSETS}}/app.css">
+{{PATCH_STYLES}}
+<script id="MathJax-script" defer src="https://cdn.jsdelivr.net/npm/mathjax@4.0.0/tex-chtml.js"></script>
+</head>
+<body>
+<div class="frame" id="frame">
+  <header class="titlebar" data-doc="cl-agent: a self-extending Common Lisp agent">
+    <span class="glyph" aria-hidden="true">λ</span>
+    <span class="title">cl-agent</span>
+    <span class="title-info" id="title-info"></span>
+    <span class="spacer"></span>
+    <button class="btn btn-small custom-flag" id="custom-flag" type="button" hidden
+            data-doc="This UI has been customized. Click: show what changed.">✎ customized</button>
+    <button class="btn btn-small" id="pane-toggle" type="button" data-doc="Show or hide the side panes (Ctrl-\)">▥ Panes</button>
+    <button class="btn btn-small" id="theme-toggle" type="button" data-doc="Switch between light and dark (Alt-T)">◐ Theme</button>
+  </header>
+
+  <div class="safe-banner" id="safe-banner" hidden>
+    <span>SAFE MODE: built-in UI only; overrides and patches are ignored.</span>
+    <button class="btn btn-small" id="reset-all" type="button">Reset every override</button>
+    <a href="/">Leave safe mode</a>
+  </div>
+
+  <main class="desk" id="desk">
+    <section class="pane listener-pane" aria-label="Listener">
+      <div class="pane-title"><span>Listener</span><span class="pane-title-right" id="listener-info"></span></div>
+      <div class="listener" id="listener" aria-live="polite"></div>
+      <button class="jump" id="jump" type="button" hidden data-doc="Scroll to the newest output">▼ More below</button>
+    </section>
+    <div class="splitter" id="splitter" data-doc="Drag: resize the side panes"></div>
+    <aside class="pane side-pane" id="side" aria-label="Side panes">
+      <nav class="tabs" id="tabs" role="tablist"></nav>
+      <div class="panel-body" id="panel-body"></div>
+    </aside>
+  </main>
+
+  <div class="queue" id="queue" aria-label="Queued messages"></div>
+
+  <form class="composer" id="composer" autocomplete="off">
+    <label class="prompt" id="prompt" for="input">(C1)</label>
+    <textarea id="input" rows="1" spellcheck="false"
+              placeholder="Ask anything · /command · @path · (lisp-symbol   Tab completes"
+              data-doc="Enter: send · Shift-Enter: newline · Tab: complete · ↑↓: history · Esc: abort"></textarea>
+    <div class="composer-buttons">
+      <button class="btn btn-danger" id="abort" type="button" hidden data-doc="Interrupt the running turn (Esc)">Abort</button>
+      <button class="btn btn-primary" id="send" type="submit" data-doc="Send to the agent (Enter)">Eval ⏎</button>
+    </div>
+    <div class="completions" id="completions" hidden></div>
+  </form>
+
+  <footer class="wholine" id="wholine" aria-label="Status"></footer>
+  <div class="mousedoc" id="mousedoc" aria-hidden="true"></div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<script type="module" src="{{ASSETS}}/main.js"></script>
+{{PATCH_SCRIPTS}}
+</body>
+</html>

@@ -1,0 +1,297 @@
+// composer.js -- the input line: sending, the (C n) / Command: prompt,
+// queued messages, abort, history, and tab completion.
+//
+// Completion asks client completers first (CLAgent.registerCompleter),
+// then the server (GET /api/complete, see completion.lisp).  Tab inserts
+// a unique match or the longest common prefix and opens the possibilities
+// menu; Tab / Shift-Tab / ↑ / ↓ move through it, Enter or Tab on a
+// selection accepts, Esc closes.  Typing "/" opens the command menu live.
+
+import {
+  state, on, el, api, send, interrupt, clientCommands, completers, storage, store,
+} from './core.js';
+
+const $ = id => document.getElementById(id);
+let input, menu;
+
+// ---------- prompt, queue and buttons ----------
+
+function busy() { return state.thinking || state.planning; }
+
+function updatePrompt() {
+  const prompt = $('prompt');
+  const command = input.value.startsWith('/');
+  prompt.textContent = command ? 'Command:' : `(C${(state.turn || 0) + 1})`;
+  prompt.classList.toggle('command', command);
+}
+
+function updateButtons() {
+  $('abort').hidden = !busy();
+  $('send').textContent = busy() ? 'Queue ⏎' : 'Eval ⏎';
+  $('send').dataset.doc = busy()
+    ? 'The agent is busy: your message runs at its next safe point (Enter)'
+    : 'Send to the agent (Enter)';
+}
+
+function renderQueue() {
+  $('queue').replaceChildren(...(state.queued || []).map(text =>
+    el('div', { class: 'queue-item', title: text, 'data-doc': 'Waiting for the running turn to reach a safe point' }, text)));
+}
+
+function autosize() {
+  input.style.height = 'auto';
+  input.style.height = `${Math.min(input.scrollHeight, window.innerHeight * 0.4)}px`;
+}
+
+// ---------- history ----------
+
+const history = storage('history', []);
+let historyIndex = -1;
+let draft = '';
+
+function remember(text) {
+  if (history[history.length - 1] !== text) history.push(text);
+  if (history.length > 300) history.splice(0, history.length - 300);
+  store('history', history);
+  historyIndex = -1;
+}
+
+function recall(direction) {
+  if (!history.length) return false;
+  if (historyIndex === -1) {
+    if (direction > 0) return false;
+    draft = input.value;
+    historyIndex = history.length;
+  }
+  const next = historyIndex + direction;
+  if (next < 0) return true;
+  if (next >= history.length) {
+    historyIndex = -1;
+    setInput(draft);
+    return true;
+  }
+  historyIndex = next;
+  setInput(history[next]);
+  return true;
+}
+
+function setInput(text, caret = text.length) {
+  input.value = text;
+  input.setSelectionRange(caret, caret);
+  autosize();
+  updatePrompt();
+  try { sessionStorage.setItem('cl-agent.draft', input.value); } catch (err) { /* ignore */ }
+}
+
+/** Put TEXT in the input (replacing it), focused; used by panels and plugins. */
+export function insert(text) {
+  hideMenu();
+  setInput(text);
+  input.focus();
+}
+
+// ---------- sending ----------
+
+async function submit() {
+  const text = input.value.trim();
+  if (!text) return;
+  remember(text);
+  hideMenu();
+  const match = text.match(/^\/(\S+)\s*([\s\S]*)$/);
+  const local = match && clientCommands.get(match[1]);
+  setInput('');
+  if (local) {
+    try { await local.run(match[2]); } catch (err) { window.CLAgent?.toast(String(err.message || err), 'red'); }
+    return;
+  }
+  try {
+    const { status } = await send(text);
+    if (status === 'queued') window.CLAgent?.toast('Queued: the agent will read it at its next safe point.', 'yellow');
+  } catch (err) {
+    setInput(text);
+    window.CLAgent?.toast(`Not sent: ${err.message}`, 'red');
+  }
+}
+
+// ---------- completion ----------
+
+let menuState = null;   // {result, index}
+let requestNumber = 0;
+
+function clientCommandCandidates(token) {
+  return [...clientCommands].filter(([name]) => `/${name}`.startsWith(token))
+    .map(([name, command]) => ({ value: `/${name}`, display: `/${name}`, doc: command.doc, kind: 'command' }));
+}
+
+async function fetchCompletions(text, cursor) {
+  for (const completer of completers) {
+    const result = await completer(text, cursor);
+    if (result?.candidates?.length) return result;
+  }
+  const result = await api('/api/complete', { params: { text, cursor } });
+  // Commands registered in the browser complete alongside the server's.
+  if (text.startsWith('/') && !text.slice(0, cursor).includes(' ')) {
+    const known = new Set(result.candidates.map(c => c.value));
+    const extra = clientCommandCandidates(text.slice(0, cursor)).filter(c => !known.has(c.value));
+    result.candidates = [...result.candidates, ...extra].sort((a, b) => a.value.localeCompare(b.value));
+    result.start = 0;
+    result.end = cursor;
+    result.token = text.slice(0, cursor);
+  }
+  result.common = commonPrefix(result.candidates.map(c => c.value));
+  return result;
+}
+
+function commonPrefix(values) {
+  if (!values.length) return '';
+  let prefix = values[0];
+  for (const value of values) {
+    let i = 0;
+    while (i < prefix.length && i < value.length && prefix[i].toLowerCase() === value[i].toLowerCase()) i += 1;
+    prefix = prefix.slice(0, i);
+  }
+  return prefix;
+}
+
+function replaceRange(start, end, text) {
+  const value = input.value;
+  setInput(value.slice(0, start) + text + value.slice(end), start + text.length);
+}
+
+function accept(candidate, result) {
+  const suffix = candidate.kind === 'dir' || candidate.kind === 'json' ? '' : ' ';
+  const after = input.value.slice(result.end);
+  replaceRange(result.start, result.end, candidate.value + (after.startsWith(' ') ? '' : suffix));
+  hideMenu();
+  // A finished command name usually has arguments worth completing next.
+  if (candidate.kind === 'command' && suffix) complete({ quiet: true });
+}
+
+export async function complete({ quiet = false, live = false } = {}) {
+  const text = input.value;
+  const cursor = input.selectionStart;
+  const number = ++requestNumber;
+  let result;
+  try { result = await fetchCompletions(text, cursor); } catch (err) { return; }
+  if (number !== requestNumber || input.value !== text) return;   // stale
+  const { candidates } = result;
+  if (!candidates.length) {
+    hideMenu();
+    if (!quiet && !live) window.CLAgent?.mousedoc('No completions.');
+    return;
+  }
+  if (live) { showMenu(result, -1); return; }
+  if (candidates.length === 1) { accept(candidates[0], result); return; }
+  if (result.common.length > result.token.length) {
+    replaceRange(result.start, result.end, result.common);
+    result.end = result.start + result.common.length;
+    result.token = result.common;
+  }
+  if (!quiet || candidates.length <= 40) showMenu(result, 0);
+}
+
+function showMenu(result, index) {
+  menuState = { result, index };
+  const { candidates, total } = result;
+  const title = result.source?.startsWith('command:') ? `/${result.source.slice(8)} arguments`
+    : ({ 'slash-commands': 'Commands', paths: 'Files', 'lisp-symbols': 'Lisp symbols' }[result.source] || 'Possibilities');
+  menu.replaceChildren(
+    el('div', { class: 'completions-title' },
+      el('span', {}, title),
+      el('span', {}, `${candidates.length}${total > candidates.length ? ` of ${total}` : ''} · Tab ↑↓ Enter Esc`)),
+    el('div', { class: 'completions-list', role: 'listbox' },
+      candidates.map((c, i) => el('div', {
+        class: `completion kind-${c.kind || 'other'} ${i === index ? 'selected' : ''}`,
+        role: 'option',
+        'data-doc': c.doc || c.value,
+        onmousedown: e => { e.preventDefault(); accept(c, result); },
+      }, el('span', { class: 'c-value' }, c.display || c.value),
+         el('span', { class: 'c-kind' }, c.kind || ''),
+         el('span', { class: 'c-doc' }, c.doc || '')))));
+  // One value column for every row, sized to the longest candidate.
+  const widest = Math.max(...candidates.map(c => (c.display || c.value).length));
+  menu.style.setProperty('--completion-value-width', `${Math.min(Math.max(widest, 8), 36) + 1}ch`);
+  menu.hidden = false;
+  menu.querySelector('.completion.selected')?.scrollIntoView({ block: 'nearest' });
+}
+
+function moveSelection(delta) {
+  const { result, index } = menuState;
+  const n = result.candidates.length;
+  showMenu(result, index < 0 ? (delta > 0 ? 0 : n - 1) : (index + delta + n) % n);
+}
+
+function hideMenu() {
+  menuState = null;
+  menu.hidden = true;
+  menu.replaceChildren();
+}
+
+// ---------- keys ----------
+
+function caretOnFirstLine() { return !input.value.slice(0, input.selectionStart).includes('\n'); }
+function caretOnLastLine() { return !input.value.slice(input.selectionEnd).includes('\n'); }
+
+function onKeyDown(e) {
+  if (menuState) {
+    if (e.key === 'Tab') { e.preventDefault(); if (menuState.index < 0 && !e.shiftKey) moveSelection(1); else moveSelection(e.shiftKey ? -1 : 1); return; }
+    if (e.key === 'ArrowDown') { e.preventDefault(); moveSelection(1); return; }
+    if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection(-1); return; }
+    if (e.key === 'Escape') { e.preventDefault(); hideMenu(); return; }
+    if ((e.key === 'Enter' || e.key === 'ArrowRight') && menuState.index >= 0 && !e.shiftKey) {
+      e.preventDefault();
+      accept(menuState.result.candidates[menuState.index], menuState.result);
+      return;
+    }
+  }
+  if (e.key === 'Tab' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+    e.preventDefault();
+    complete();
+    return;
+  }
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    submit();
+    return;
+  }
+  if (e.key === 'Escape') {
+    e.preventDefault();
+    if (busy()) interrupt();
+    return;
+  }
+  if (e.key === 'ArrowUp' && caretOnFirstLine() && !e.shiftKey) {
+    if (recall(-1)) e.preventDefault();
+  } else if (e.key === 'ArrowDown' && caretOnLastLine() && !e.shiftKey && historyIndex !== -1) {
+    if (recall(1)) e.preventDefault();
+  }
+}
+
+function onInput() {
+  autosize();
+  updatePrompt();
+  historyIndex = -1;
+  try { sessionStorage.setItem('cl-agent.draft', input.value); } catch (err) { /* ignore */ }
+  const before = input.value.slice(0, input.selectionStart);
+  if (/^\/\S*$/.test(before)) complete({ live: true });
+  else if (menuState) hideMenu();
+}
+
+export function install() {
+  input = $('input');
+  menu = $('completions');
+  input.addEventListener('keydown', onKeyDown);
+  input.addEventListener('input', onInput);
+  input.addEventListener('blur', () => setTimeout(() => { if (document.activeElement !== input) hideMenu(); }, 150));
+  $('composer').addEventListener('submit', e => { e.preventDefault(); submit(); });
+  $('abort').addEventListener('click', () => interrupt());
+  try {
+    const saved = sessionStorage.getItem('cl-agent.draft');
+    if (saved) setInput(saved);
+  } catch (err) { /* ignore */ }
+  for (const type of ['status', 'state', 'message']) {
+    on(type, () => { updatePrompt(); updateButtons(); renderQueue(); });
+  }
+  updatePrompt();
+  updateButtons();
+  input.focus();
+}

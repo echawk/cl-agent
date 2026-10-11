@@ -102,7 +102,29 @@
       ((:file "frontend")
        (:file "cli")
        (:file "tui")
-       (:file "web")))
+       ;; The web UI: an HTTP layer, the client as layered editable
+       ;; assets (static/ is read into the image at load time), and the
+       ;; frontend protocol.  See ui/web/server.lisp's header comment.
+       (:module "web"
+        :serial t
+        :components
+        ((:file "markdown")
+         (:file "server")
+         (:file "assets")
+         (:file "frontend")
+         (:file "routes")
+         (:module "static"
+          :components
+          ((:static-file "index.html")
+           (:static-file "theme.css")
+           (:static-file "app.css")
+           (:static-file "core.js")
+           (:static-file "render.js")
+           (:static-file "composer.js")
+           (:static-file "agents.js")
+           (:static-file "panels.js")
+           (:static-file "main.js")
+           (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"
      :serial t
@@ -123,9 +145,16 @@
        (:file "components-tool")
        (:file "dap-tool")
        (:file "debug-tool")
-       (:file "generations-tool")))
+       (:file "generations-tool")
+       (:file "web-ui-tool")))
      (:file "tasks")
      (:file "repl")
+     (:file "completion")
+     ;; Web UI slash commands need DEFINE-SLASH-COMMAND (repl.lisp) and
+     ;; DEFINE-COMMAND-COMPLETER (completion.lisp), so they load late.
+     (:module "web-commands"
+      :pathname "ui/web"
+      :components ((:file "commands")))
      (:file "acp")
      (:file "main")))))
 
@@ -167,7 +196,9 @@
    (:file "test-acp")
    (:file "test-mcp")
    (:file "test-integrations")
-   (:file "test-ui"))
+   (:file "test-ui")
+   (:file "test-web")
+   (:file "test-completion"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

@@ -102,7 +102,16 @@ state (queued, running, succeeded, failed, cancelled, unknown).")
     (:before-extension-load . "Notify hook, called with one argument:
 the pathname about to be LOADed by LOAD-EXTENSION-FILE.")
     (:after-extension-load . "Notify hook, called with one argument:
-the pathname just successfully LOADed by LOAD-EXTENSION-FILE."))
+the pathname just successfully LOADed by LOAD-EXTENSION-FILE.")
+    (:web-ui-page . "Chain hook. Argument/return is a plist (:html STRING
+:safe BOOLEAN): the web UI's page, placeholders already filled, about to be
+served. Rewrite :html to inject markup; see ui/web/static/EXTENDING.md.")
+    (:web-ui-state . "Chain hook. Argument/return is the hash table GET
+/api/state is about to serve the web UI. Add keys for a plugin to read from
+CLAgent.state.")
+    (:web-ui-asset-changed . "Notify hook, called with one argument: the
+path (e.g. \"theme.css\") of a web UI asset that was written, reset, or
+changed on disk while a web page was being served."))
   "Documentation table of every hook point the core agent fires.
 This is read by the `list-hooks` introspection and by /hooks in the
 REPL; it is not itself part of the dispatch mechanism (see

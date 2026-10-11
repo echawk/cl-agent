@@ -1,0 +1,124 @@
+/* theme.css -- every color, font and size the web UI uses, as CSS custom
+ * properties.  Restyling the whole page means changing values here; app.css
+ * only ever refers to these tokens.  Light ("platinum") is the default; dark
+ * ("night shift") applies with <html data-theme="dark">.
+ *
+ * The look: a flat Lisp-machine desk (Symbolics Genera / Interlisp-D) --
+ * dithered desktop, square panes with ruled borders and inverse title bars,
+ * a who-line and a mouse-documentation line along the bottom -- in an
+ * 80s-workstation palette: putty plastic and warm paper, deep indigo ink,
+ * and the classic six-band rainbow (green, yellow, orange, red, violet,
+ * blue) plus hot magenta and teal.  Dark is the same desk as a neon CRT.
+ * The rainbow also runs as racing stripes (--stripes) in the title bar.
+ * To restyle without touching this file, write a patches/NAME.css
+ * overriding any token, e.g.
+ *     :root { --pink: #00a676; }     [data-theme="dark"] { --pink: #3ee6a5; }
+ */
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Surfaces */
+  --paper: #fcf9f0;          /* pane background */
+  --paper-2: #f2ede0;        /* code, alternate rows, inset areas */
+  --paper-3: #e7e0cf;        /* hover */
+  --desk: #d6cfbd;           /* desktop behind the panes: workstation putty */
+  --desk-dot: #c2b9a2;       /* desktop dither */
+
+  /* Ink */
+  --ink: #1c1a33;            /* text, rules, title bars: deep indigo-black */
+  --ink-2: #4e4a68;          /* secondary text */
+  --ink-3: #8a86a2;          /* faint text, placeholders */
+  --rule: var(--ink);        /* pane borders */
+  --rule-soft: #d7cfbb;      /* separators inside panes */
+
+  /* Palette: the six classic bands, plus magenta and teal */
+  --green: #3da743;
+  --yellow: #fdb827;
+  --orange: #f37021;
+  --red: #e0383e;
+  --violet: #8e3d97;
+  --blue: #0b6bd3;
+  --pink: #e4157d;
+  --cyan: #00a0a6;
+
+  /* Text drawn on each palette color */
+  --on-pink: #ffffff;
+  --on-blue: #ffffff;
+  --on-yellow: #1c1a33;
+  --on-green: #ffffff;
+  --on-orange: #1c1a33;
+  --on-violet: #ffffff;
+  --on-cyan: #ffffff;
+  --on-red: #ffffff;
+
+  /* Roles */
+  --user: var(--pink);        /* (C n) labels */
+  --assistant: var(--blue);   /* (D n) labels */
+  --system: var(--ink-2);
+  --tool: var(--violet);
+  --error: var(--red);
+  --select: #ffe08a;          /* highlighted menu item, text selection */
+  --code-inline: #fdecc0;
+
+  /* Chrome */
+  --title-bg: var(--ink);
+  --title-fg: var(--paper);
+  --shadow-color: var(--ink);
+  --shadow: 4px 4px 0 var(--shadow-color);
+  /* Racing stripes: the six bands stacked, 2px each with a 1px gap (17px). */
+  --stripes: linear-gradient(180deg,
+    var(--green) 0 2px, transparent 2px 3px, var(--yellow) 3px 5px, transparent 5px 6px,
+    var(--orange) 6px 8px, transparent 8px 9px, var(--red) 9px 11px, transparent 11px 12px,
+    var(--violet) 12px 14px, transparent 14px 15px, var(--blue) 15px 17px);
+
+  /* Type and shape */
+  --font: "IBM Plex Mono", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  --font-size: 14px;
+  --line: 1.55;
+  --border: 2px;
+  --gap: 8px;
+  --side-width: 420px;
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --paper: #14122a;
+  --paper-2: #1c1938;
+  --paper-3: #272247;
+  --desk: #0a0918;
+  --desk-dot: #1b1836;
+
+  --ink: #eeeaff;
+  --ink-2: #b2abd8;
+  --ink-3: #7a74a2;
+  --rule: #d8d2f6;
+  --rule-soft: #2f2a55;
+
+  --green: #3cf08f;
+  --yellow: #ffd23a;
+  --orange: #ff8c3a;
+  --red: #ff4d5f;
+  --violet: #b56cff;
+  --blue: #4f8dff;
+  --pink: #ff3d9e;
+  --cyan: #2ee8e8;
+
+  --on-pink: #0a0918;
+  --on-blue: #0a0918;
+  --on-yellow: #0a0918;
+  --on-green: #0a0918;
+  --on-orange: #0a0918;
+  --on-violet: #0a0918;
+  --on-cyan: #0a0918;
+  --on-red: #0a0918;
+
+  --select: #5b1d57;
+  --code-inline: #2b2452;
+
+  --title-bg: #2b1f63;         /* deep violet bars: the neon reads on them */
+  --title-fg: var(--ink);
+  --shadow-color: var(--pink);
+}

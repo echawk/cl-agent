@@ -529,7 +529,7 @@ not just the LLM backend:
 |---|---|
 | `cli` (default) | Today's plain terminal session -- unchanged. |
 | `tui` | A full-screen terminal UI (scrollable transcript + persistent input box), via [tuition](https://github.com/atgreen/cl-tuition). |
-| `web` | A browser chat page, via hunchentoot, at `http://127.0.0.1:4567/` by default -- a proof of concept (polling, not push; one session; loopback-only), not a production web app. |
+| `web` | A browser workspace, via hunchentoot, at `http://127.0.0.1:4567/` by default: a Lisp-machine-style listener with tab completion, live subagent graphs, and a UI the agent can restyle and extend on request (see [Web UI](#web-ui)). Loopback-only. |
 
 ```sh
 ./bin/cl-agent --ui tui
@@ -541,9 +541,6 @@ token by token, as it streams in** (not just the final text all at
 once), plus a "thinking" indicator while waiting and a running stats
 line (provider/model, elapsed time, request count, tool-call count,
 token usage where the provider reports it) updated after every turn.
-The web UI renders assistant Markdown (including code blocks and tables),
-keeps the reading position fixed unless you are already at the bottom, and
-shows a “Jump to latest” control when new activity arrives below you.
 This is real incremental HTTP streaming for any OpenAI-compatible
 provider (REALLMS/OpenAI/xAI/Ollama/apfel) -- see `CHAT-STREAM` and
 `PARSE-SSE-STREAM` in `src/providers/provider.lisp`/`openai-
@@ -571,6 +568,73 @@ examples of implementing it, including the threading involved in
 keeping a blocking/streaming LLM call from freezing a redraw loop or
 an HTTP server.
 
+## Web UI
+
+`--ui web` opens a flat, Lisp-machine-inspired workspace (think Symbolics
+Genera and Interlisp-D, in an 80s workstation palette: putty and paper, the
+classic six-band rainbow as racing stripes, and a neon-CRT dark mode). It is light by
+default; switch to dark with the ◐ button, `Alt-T`, or `/theme dark`.
+
+- **Listener**: inputs are numbered `(C n)` and replies `(D n)`, Macsyma-style.
+  Replies render as Markdown, with copyable code blocks and MathJax. Each
+  turn's tool calls collapse into one `;; 3 tool calls — shell ×2 · read-file`
+  line that expands to every call and its output.
+- **Tab completion**, served by `src/completion.lisp`: `/commands` (each with
+  its docstring), their arguments (`/call shell ` → a JSON skeleton of the
+  tool's parameters, `/mode`, `/session restore`, `/settings set`, …), `@paths`,
+  and `(lisp-symbols` with their documentation. `↑`/`↓` recall history; `Esc`
+  aborts a running turn; messages typed while the agent works are queued.
+- **Agents panel**: a live constellation of subagents around the main agent,
+  plus a tree-and-timeline (Gantt) view with queued and running segments.
+  Click any node for its details, or to cancel it.
+- **Activity, Tools, UI panels**: every tool call with its output, the
+  tool catalog (click a tool to `/call` it), and theme, text-size and
+  customization controls.
+- **Who-line and mouse-documentation line**, as on a Lisp machine: clock,
+  user, provider/model, totals, agent state, and help for whatever the
+  pointer is over.
+
+Updates are pushed over Server-Sent Events (`/api/events`) against a sequenced
+event log, so a reconnecting page catches up without missing or repeating
+anything. Mutating requests require an `X-CL-Agent` header and a loopback
+`Host`, so other web pages cannot drive the agent through your browser.
+
+### Changing the UI (including by the agent)
+
+The client is a set of plain files in `src/ui/web/static/`: `theme.css`
+holds every color and size, and `app.css`, `core.js`, `render.js`,
+`composer.js`, `panels.js`, `agents.js` and `main.js` hold the rest. Each
+request resolves through three layers: an **override** in
+`~/.config/cl-agent/web/`, then an **extension** (registered from Lisp),
+then the **built-in** file. Any `patches/*.css` / `patches/*.js` loads
+automatically after the core client, with a plugin API on `window.CLAgent`
+(`registerPanel`, `registerRenderer`, `registerCommand`,
+`registerCompleter`, `on(...)`, …).
+
+Ask the agent for a change ("make the user labels green", "add a panel
+showing my git branches") and it uses these tools:
+
+| Tool | Does |
+|---|---|
+| `web-ui-assets` | Read the guide (`static/EXTENDING.md`), list assets, read one. |
+| `web-ui-write-asset` | Write or snippet-edit an override or patch. JS is checked with `node --check`, CSS for balanced braces. |
+| `web-ui-reset-asset` | Undo: back to built-in, or one version back. History is kept. |
+| `web-ui-command` | Drive open pages now: toast, theme, open a panel, insert text, reload. |
+
+Open pages restyle (CSS) or reload (anything else) as soon as a file changes,
+including edits to the repository's own `static/` files. When an edit breaks
+the page, `http://127.0.0.1:PORT/safe` serves the built-in files only and
+offers **Reset every override**. From the input line, `/ui` lists
+customizations, and `/ui reset PATH|all` and `/ui revert PATH` undo them.
+
+For behavior that needs Lisp, extension files (`write-extension`) can use
+`define-web-route` (new JSON endpoints), `define-web-patch` (CSS/JS shipped
+inside the extension), `web-ui-command` / `web-ui-broadcast` (push to open
+pages), `define-command-completer` / `define-completion-source` (completion),
+and the `:web-ui-page`, `:web-ui-state` and `:web-ui-asset-changed` hooks.
+All of these count as integrations for `write-extension`, and roll back with
+a failed mutation. `src/ui/web/static/EXTENDING.md` has worked examples.
+
 ## Configuration
 
 `~/.config/cl-agent/config.lisp` (copy `config/config.lisp.example` to
@@ -595,8 +659,8 @@ make clean         # remove the ocicl package cache and bin/
 provider request/response shaping for both wire formats, config
 loading, the extension loader, the REPL's slash commands, the
 `lookup-cl-spec` tool against the real committed spec data, MCP client
-*and* server against a real subprocess, and the web UI frontend
-against a real local HTTP server) -- all offline in the sense of no
+*and* server against a real subprocess, the web UI frontend
+against a real local HTTP server, and tab completion) -- all offline in the sense of no
 external network access, though not all mocked: several of those spawn
 a real subprocess or open a real (loopback) socket, deliberately,
 rather than stub out the thing actually being tested. `make test-ollama`
