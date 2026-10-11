@@ -390,6 +390,36 @@ renaming cannot invalidate links, branches, or replay references."
                           :payload (list :name trimmed))
     trimmed))
 
+(defun normalize-session-checkpoint-name (name)
+  "Validate a concise human-facing name for a durable checkpoint."
+  (let ((trimmed (and (stringp name) (string-trim " " name))))
+    (unless (and trimmed (plusp (length trimmed)) (<= (length trimmed) 80)
+                 (every (lambda (character)
+                          (or (alphanumericp character) (member character '(#\Space #\- #\_ #\.))))
+                        trimmed))
+      (error "Checkpoint name must be 1-80 letters, digits, spaces, dots, hyphens, or underscores"))
+    trimmed))
+
+(defun checkpoint-session (session name)
+  "Record NAME as a stable restore point at SESSION's current event boundary."
+  (let ((name (normalize-session-checkpoint-name name))
+        (through-sequence (session-event-sequence session)))
+    (record-session-event session :session-checkpoint :component "session" :status "finished"
+                          :payload (list :name name :through-sequence through-sequence))
+    name))
+
+(defun list-session-checkpoints (session-id)
+  "Return named checkpoint payloads for SESSION-ID, newest first."
+  (loop for event in (reverse (read-session-events session-id))
+        when (eq (getf event :kind) :session-checkpoint)
+          collect (append (copy-list (getf event :payload))
+                          (list :event-sequence (getf event :sequence)))))
+
+(defun find-session-checkpoint (session-id name)
+  "Return the newest named checkpoint, or NIL when it does not exist."
+  (find name (list-session-checkpoints session-id) :key (lambda (checkpoint) (getf checkpoint :name))
+        :test #'string-equal))
+
 (defun export-session (session-id pathname)
   "Write a portable, read-only S-expression export of SESSION-ID to PATHNAME.
 
@@ -2094,6 +2124,30 @@ session settings; LIST displays every saved snapshot."
                (ui-system (session-frontend session) "Usage: /session rename NAME")
                (ui-system (session-frontend session)
                           (format nil "Renamed durable session to ~a." (rename-session session name)))))
+          ((string= action "checkpoint")
+           (if (zerop (length name))
+               (ui-system (session-frontend session) "Usage: /session checkpoint NAME")
+               (ui-system (session-frontend session)
+                          (format nil "Created checkpoint ~a at event ~d."
+                                  (checkpoint-session session name) (1- (session-event-sequence session))))))
+          ((string= action "checkpoints")
+           (let ((checkpoints (list-session-checkpoints (session-id session))))
+             (ui-system (session-frontend session)
+                        (if checkpoints
+                            (format nil "Checkpoints:~%~{  ~a · event ~d~%~}"
+                                    (mapcar (lambda (checkpoint)
+                                              (list (getf checkpoint :name)
+                                                    (getf checkpoint :through-sequence)))
+                                            checkpoints))
+                            "No named checkpoints. Use /session checkpoint NAME."))))
+          ((string= action "restore-checkpoint")
+           (let ((checkpoint (find-session-checkpoint (session-id session) name)))
+             (if checkpoint
+                 (progn
+                   (rewind-session session (getf checkpoint :through-sequence))
+                   (ui-system (session-frontend session)
+                              (format nil "Restored checkpoint ~a." (getf checkpoint :name))))
+                 (ui-system (session-frontend session) "Usage: /session restore-checkpoint NAME (or unknown checkpoint)."))))
           ((string= action "export")
            (if (zerop (length name))
                (ui-system (session-frontend session) "Usage: /session export PATH")
@@ -2115,7 +2169,7 @@ session settings; LIST displays every saved snapshot."
                                       sequence files-p restored))))))
           (t
            (ui-system (session-frontend session)
-                      "Usage: /session save [NAME], /session restore NAME, /session list, or /session durable-list|resume ID|replay ID|branch [SEQUENCE]|rename NAME|export PATH|rewind SEQUENCE [files].")))
+                      "Usage: /session save [NAME], /session restore NAME, /session list, or /session durable-list|resume ID|replay ID|branch [SEQUENCE]|rename NAME|checkpoint NAME|checkpoints|restore-checkpoint NAME|export PATH|rewind SEQUENCE [files].")))
       (error (condition)
         (ui-error (session-frontend session) condition))))
   t)
