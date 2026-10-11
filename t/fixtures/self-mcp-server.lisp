@@ -12,7 +12,7 @@
 (let* ((here (make-pathname :directory (pathname-directory *load-pathname*)))
        (project-root (merge-pathnames "../../" here)))
   (load (merge-pathnames "boot.lisp" project-root))
-  (dolist (system '("shasht" "bordeaux-threads" "cl-mcp"))
+  (dolist (system '("shasht" "bordeaux-threads" "cl-mcp" "ironclad" "babel"))
     ;; ASDF does not exist until BOOT.LISP has loaded, and LOAD reads this
     ;; enclosing form before evaluating it. Resolve LOAD-SYSTEM at runtime
     ;; instead of using an ASDF: package prefix that the reader cannot yet see.

@@ -75,3 +75,39 @@
       (session-submit-user-text session "second event")
       (write-string-atomically (session-event-pathname id 1) "(:corrupt")
       (check-condition error (read-session-events id)))))
+
+(deftest durable-tool-results-use-blobs-and-session-export-replays-them ()
+  (with-temp-config-dir ()
+    (let* ((session (make-session (make-instance 'ollama-provider)))
+           (text (make-string 13001 :initial-element #\x))
+           (blob (write-session-blob session text))
+           (export (merge-pathnames "session-export.sexp" *config-directory*)))
+      (record-session-event session :tool-result-recorded :component "fixture"
+                            :payload (list :message (list :role "tool" :tool-call-id "blob-fixture"
+                                                          :content (subseq text 0 12000))
+                                           :content-blob blob))
+      (multiple-value-bind (events messages) (replay-session (session-id session))
+        (declare (ignore events))
+        (check-equal (getf (car (last messages)) :content) text))
+      (export-session (session-id session) export)
+      (check (probe-file export)))))
+
+(deftest durable-file-rewind-requires-the-recorded-after-revision ()
+  (with-temp-config-dir ()
+    (let* ((session (make-session (make-instance 'ollama-provider)))
+           (path (merge-pathnames "rewind-fixture.txt" *config-directory*))
+           (before "before") (after "after"))
+      (write-string-atomically path after)
+      (record-session-event
+       session :file-edit-receipt :component "fixture" :status "finished"
+       :payload (list :path (namestring path) :before-exists-p t
+                      :before-digest (session-content-digest before)
+                      :after-digest (session-content-digest after)
+                      :before-blob (write-session-blob session before)
+                      :after-blob (write-session-blob session after)))
+      (multiple-value-bind (rewound restored) (rewind-session session 1 :files-p t)
+        (declare (ignore rewound))
+        (check-equal restored 1)
+        (check-equal (uiop:read-file-string path) before))
+      (write-string-atomically path "someone else")
+      (check-condition error (rewind-session-files session (read-session-events (session-id session)) 1)))))

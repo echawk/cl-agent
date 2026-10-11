@@ -32,6 +32,42 @@ events in one second, beyond its deliberately bounded collision probe range."
 (defun session-event-directory (session-id)
   (merge-pathnames (format nil "~a/events/" session-id) (session-events-root)))
 
+(defun session-blob-directory (session-id)
+  "Directory of immutable content-addressed values owned by SESSION-ID."
+  (merge-pathnames (format nil "~a/blobs/" session-id) (session-events-root)))
+
+(defun session-blob-pathname (session-id digest)
+  (merge-pathnames (format nil "~a.sexp" digest) (session-blob-directory session-id)))
+
+(defun session-content-digest (content)
+  "Return the stable SHA-256 digest for UTF-8 CONTENT."
+  (ironclad:byte-array-to-hex-string
+   (ironclad:digest-sequence :sha256 (babel:string-to-octets content :encoding :utf-8))))
+
+(defun write-session-blob (session content &key (media-type "text/plain"))
+  "Atomically retain CONTENT once and return a serializable blob reference."
+  (unless (stringp content) (error "Session blobs currently require text, not ~s" content))
+  (let* ((digest (session-content-digest content))
+         (path (session-blob-pathname (session-id session) digest)))
+    (unless (probe-file path)
+      (sexp-store:snapshot-write path
+                                 (list :schema-version 1 :digest digest :media-type media-type
+                                       :bytes (length (babel:string-to-octets content :encoding :utf-8))
+                                       :content content)
+                                 :require-absent t))
+    (list :algorithm "sha256" :digest digest :media-type media-type
+          :bytes (length (babel:string-to-octets content :encoding :utf-8)))))
+
+(defun read-session-blob (session-id reference)
+  "Return the complete text named by a blob REFERENCE, rejecting corrupt data."
+  (let ((path (session-blob-pathname session-id (getf reference :digest))))
+    (multiple-value-bind (record complete-p) (sexp-store:snapshot-read path)
+      (unless (and complete-p (listp record)
+                   (string= (getf record :digest) (getf reference :digest))
+                   (stringp (getf record :content)))
+        (error "Session blob ~a is missing or invalid" (getf reference :digest)))
+      (getf record :content))))
+
 (defun session-manifest-pathname (session-id)
   (merge-pathnames (format nil "~a/session.sexp" session-id) (session-events-root)))
 
@@ -160,13 +196,25 @@ silently inventing history."
 
 (defun project-session-messages (events &optional through-sequence)
   "Rebuild provider messages from durable events without running tools again."
-  (loop for event in events
+  (loop with messages = nil
+        for event in events
         while (or (null through-sequence) (<= (getf event :sequence) through-sequence))
         for kind = (getf event :kind) for payload = (getf event :payload)
-        when (member kind '(:session-created :user-message-accepted
-                            :assistant-response-finished :tool-result-recorded
-                            :tool-call-unknown-outcome :system-message-recorded))
-          when (getf payload :message) collect (getf payload :message)))
+        do (cond
+             ((eq kind :conversation-rewound)
+              (setf messages (project-session-messages events
+                                                        (getf payload :through-sequence))))
+             ((and (member kind '(:session-created :user-message-accepted
+                                  :assistant-response-finished :tool-result-recorded
+                                  :tool-call-unknown-outcome :system-message-recorded))
+                   (getf payload :message))
+              (let ((message (copy-tree (getf payload :message)))
+                    (blob (getf payload :content-blob)))
+                (when blob
+                  (setf (getf message :content)
+                        (read-session-blob (getf event :session-id) blob)))
+                (setf messages (append messages (list message))))))
+        finally (return messages)))
 
 (defun list-durable-sessions ()
   "Return durable session manifests, newest first, without constructing sessions."

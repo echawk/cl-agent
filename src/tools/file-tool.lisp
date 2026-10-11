@@ -15,6 +15,19 @@ WRITE-FILE is the one operation that creates a new path."
       (error "~a path names a directory, not a file: ~a" tool-name path))
     resolved))
 
+(defun record-file-edit-receipt (path before after)
+  "Append an undoable receipt when a direct file tool runs inside a session."
+  (when *current-session*
+    (let ((before-blob (and before (write-session-blob *current-session* before)))
+          (after-blob (write-session-blob *current-session* after)))
+      (record-session-event
+       *current-session* :file-edit-receipt :component "file-tools" :status "finished"
+       :payload (list :path (namestring (uiop:ensure-pathname path :ensure-absolute t))
+                      :before-exists-p (not (null before))
+                      :before-digest (and before (session-content-digest before))
+                      :after-digest (session-content-digest after)
+                      :before-blob before-blob :after-blob after-blob)))))
+
 (defun file-line-starts (contents)
   "Return zero-based offsets for each logical line in CONTENTS.
 
@@ -86,7 +99,9 @@ and end positions express insertion without a separate operation."
     (unless (and (stringp path) (plusp (length (string-trim " " path))))
       (error "write-file requires a non-empty string path"))
     (unless (stringp contents) (error "write-file contents must be a string"))
-    (write-string-atomically path contents)
+    (let ((before (and (probe-file path) (uiop:read-file-string path))))
+      (write-string-atomically path contents)
+      (record-file-edit-receipt path before contents))
     (format nil "Wrote ~d character~:p to ~a." (length contents) path)))
 
 (define-tool read-file-range (args)
@@ -137,6 +152,9 @@ and end positions express insertion without a separate operation."
            (write-string contents out :end start)
            (write-string replacement out)
            (write-string contents out :start end)))
+        (record-file-edit-receipt
+         resolved contents
+         (concatenate 'string (subseq contents 0 start) replacement (subseq contents end)))
         (format nil "Edited ~a at ~d:~d through ~d:~d; replaced ~d character~:p with ~d character~:p."
                 path (jget args "start_line") (jget args "start_column")
                 (jget args "end_line") (jget args "end_column")

@@ -371,6 +371,61 @@ startup rather than silently falling back to the host model."
   (let ((events (read-session-events session-id)))
     (values events (project-session-messages events through-sequence))))
 
+(defun export-session (session-id pathname)
+  "Write a portable, read-only S-expression export of SESSION-ID to PATHNAME.
+
+Exports contain event envelopes and their reconstructed provider projection;
+blob files remain in the durable store and are not copied implicitly."
+  (multiple-value-bind (events messages) (replay-session session-id)
+    (write-string-atomically
+     pathname
+     (with-standard-io-syntax
+       (let ((*print-readably* t) (*print-pretty* t))
+         (with-output-to-string (out)
+           (pprint (list :schema-version 1 :session-id session-id
+                         :exported-at (get-universal-time)
+                         :events events :messages messages)
+                   out)))))
+    pathname))
+
+(defun rewind-session-files (session events through-sequence)
+  "Restore direct-file receipts after THROUGH-SEQUENCE, guarded by after digests.
+
+Returns the number restored.  A mismatched current digest is an error rather
+than a destructive overwrite of work performed after the recorded edit."
+  (let ((restored 0))
+    (dolist (event (reverse events))
+      (when (and (> (getf event :sequence) through-sequence)
+                 (eq (getf event :kind) :file-edit-receipt))
+        (let* ((payload (getf event :payload))
+               (path (getf payload :path))
+               (current (and (probe-file path) (uiop:read-file-string path))))
+          (unless (and current (string= (session-content-digest current)
+                                        (getf payload :after-digest)))
+            (error "Cannot rewind ~a: it no longer matches the recorded edited revision" path))
+          (if (getf payload :before-exists-p)
+              (write-string-atomically path
+                                       (read-session-blob (session-id session)
+                                                          (getf payload :before-blob)))
+              (delete-file path))
+          (incf restored))))
+    restored))
+
+(defun rewind-session (session through-sequence &key files-p)
+  "Rewind SESSION's active conversation, and optionally its guarded file edits.
+
+The append-only source history is retained.  The rewind is an event, so a
+later resume reconstructs this selected projection before applying new turns."
+  (let ((events (read-session-events (session-id session))))
+    (unless (and (integerp through-sequence) (plusp through-sequence)
+                 (<= through-sequence (length events)))
+      (error "Rewind sequence must name an existing event (1 through ~d)" (length events)))
+    (let ((restored (if files-p (rewind-session-files session events through-sequence) 0)))
+      (setf (session-messages session) (project-session-messages events through-sequence))
+      (record-session-event session :conversation-rewound :component "session" :status "finished"
+                            :payload (list :through-sequence through-sequence :files-restored restored))
+      (values session restored))))
+
 (defun reconcile-incomplete-tool-events (session events)
   "Append explicit unknown outcomes for tool intents lacking a durable result.
 
@@ -671,6 +726,11 @@ DETAIL records why a task stopped short of a verified completion."
   (set-task-record-status session status detail)
   (record-session-event session :turn-finished :component "agent-turn" :status status
                         :payload (list :detail detail))
+  ;; This is a durable, named boundary in the event stream.  The message cache
+  ;; remains a projection; replay through this sequence reconstructs it.
+  (record-session-event session :turn-checkpoint :component "agent-turn" :status status
+                        :payload (list :message-count (length (session-messages session))
+                                       :through-sequence (session-event-sequence session)))
   (setf (session-current-turn-id session) nil)
   message)
 
@@ -1417,9 +1477,17 @@ entirely."
       (ui-stats-updated frontend (session-stats-snapshot session))
       (let ((message (list :role "tool" :tool-call-id (getf tool-call :id)
                            :content (getf after :result))))
+        (let* ((content (getf message :content))
+               (blob (and (stringp content) (write-session-blob session content)))
+               (preview (and (stringp content) (subseq content 0 (min 12000 (length content)))))
+               (durable-message (copy-tree message)))
+          ;; Keep event records compact while replay restores the exact provider
+          ;; message from its immutable blob.
+          (when preview (setf (getf durable-message :content) preview))
         (record-session-event session :tool-result-recorded
                               :component (getf ctx :tool-name)
-                              :status "finished" :payload (list :message message))
+                              :status "finished" :payload (list :message durable-message
+                                                                :content-blob blob)))
         message)))))
 
 (defun run-agent-turn (session)
@@ -1936,7 +2004,7 @@ with a tool-free continuity summary. It is never invoked automatically."
 
 (define-slash-command session (session arg)
   "Usage: /session save [NAME], /session restore NAME, /session list,
-or /session durable-list|resume ID|replay ID|branch [SEQUENCE].
+or /session durable-list|resume ID|replay ID|branch [SEQUENCE]|export PATH|rewind SEQUENCE [files].
 
 SAVE writes a named local JSON snapshot (or a generated timestamped name when
 NAME is omitted). RESTORE replaces the current conversation and compatible
@@ -1993,9 +2061,28 @@ session settings; LIST displays every saved snapshot."
              (ui-system (session-frontend session)
                         (format nil "Created durable branch ~a from the current session."
                                 (session-id session)))))
+          ((string= action "export")
+           (if (zerop (length name))
+               (ui-system (session-frontend session) "Usage: /session export PATH")
+               (let ((path (export-session (session-id session) name)))
+                 (ui-system (session-frontend session)
+                            (format nil "Exported durable session ~a to ~a."
+                                    (session-id session) path)))))
+          ((string= action "rewind")
+           (let* ((words (uiop:split-string name :separator " "))
+                  (sequence (and (first words) (parse-integer (first words) :junk-allowed t)))
+                  (files-p (member "files" (rest words) :test #'string-equal)))
+             (if (null sequence)
+                 (ui-system (session-frontend session) "Usage: /session rewind SEQUENCE [files]")
+                 (multiple-value-bind (rewound restored)
+                     (rewind-session session sequence :files-p files-p)
+                   (declare (ignore rewound))
+                   (ui-system (session-frontend session)
+                              (format nil "Rewound conversation to event ~d~@[ and restored ~d guarded file edit~:p~]."
+                                      sequence files-p restored))))))
           (t
            (ui-system (session-frontend session)
-                      "Usage: /session save [NAME], /session restore NAME, /session list, or /session durable-list|resume ID|replay ID|branch [SEQUENCE].")))
+                      "Usage: /session save [NAME], /session restore NAME, /session list, or /session durable-list|resume ID|replay ID|branch [SEQUENCE]|export PATH|rewind SEQUENCE [files].")))
       (error (condition)
         (ui-error (session-frontend session) condition))))
   t)

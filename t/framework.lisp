@@ -57,10 +57,16 @@ exits the process with status 1 on any failure so CI (or a human
 running make) can tell at a glance."
   (setf *pass-count* 0 *fail-count* 0)
   (dolist (test *tests*)
-    (let ((*current-test* (car test)))
+    (let* ((*current-test* (car test))
+           ;; Never let an ordinary-session test take the user's state lock.
+           (*config-directory*
+             (merge-pathnames (format nil "cl-agent-test-~a/" (gensym))
+                              (uiop:temporary-directory))))
       (format t "~&* ~a~%" (car test))
-      (handler-case (funcall (cdr test))
-        (error (c) (incf *fail-count*) (format t "~&  ERROR: ~a~%" c)))))
+      (unwind-protect
+           (handler-case (funcall (cdr test))
+             (error (c) (incf *fail-count*) (format t "~&  ERROR: ~a~%" c)))
+        (ignore-errors (uiop:delete-directory-tree *config-directory* :validate t)))))
   (format t "~&~%~d passed, ~d failed~%" *pass-count* *fail-count*)
   (let ((ok (zerop *fail-count*)))
     (unless ok (uiop:quit 1))

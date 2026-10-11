@@ -19,7 +19,7 @@
   :author "Ethan"
   :license "MIT"
   :version "0.1.0"
-  :depends-on ("drakma" "shasht" "uiop" "mallet" "defstar"
+  :depends-on ("drakma" "shasht" "uiop" "mallet" "defstar" "ironclad" "babel"
                "cl-mcp" "cl-mcp/client" "bordeaux-threads"  ; src/mcp/*.lisp
                "cl-exec-sandbox" "daphne"                      ; sandboxed processes; DAP client
                "surgeon"                                        ; reversible SBCL definition changes
