@@ -155,3 +155,22 @@
         (check-equal (mapcar (lambda (message) (getf message :content))
                              (session-messages session))
                      (list (getf (first (session-messages session)) :content) "keep this"))))))
+
+(deftest provider-request-events-link-the-durable-response ()
+  (with-temp-config-dir ()
+    (let* ((session (make-session (make-instance 'ollama-provider) :tools nil))
+           (stream (symbol-function 'chat-stream)))
+      (unwind-protect
+           (progn
+             (setf (symbol-function 'chat-stream)
+                   (lambda (provider messages tools on-delta)
+                     (declare (ignore provider messages tools on-delta))
+                     (list :role "assistant" :content "durable response" :tool-calls nil :usage nil)))
+             (session-submit-user-text session "request")
+             (run-agent-turn session)
+             (let* ((events (read-session-events (session-id session)))
+                    (request (find :provider-request-started events :key (lambda (event) (getf event :kind))))
+                    (response (find :assistant-response-finished events :key (lambda (event) (getf event :kind)))))
+               (check request)
+               (check-equal (getf response :parent-id) (getf request :id))))
+        (setf (symbol-function 'chat-stream) stream)))))

@@ -1510,10 +1510,12 @@ entirely."
             :content "Skipped: the user interrupted this turn before the tool ran.")))
   (let* ((frontend (session-frontend session))
          (validation-error (tool-call-json-error tool-call))
-         (requested (list :tool-name (getf tool-call :name) :arguments (getf tool-call :arguments))))
-    (record-session-event session :tool-call-started :component (getf tool-call :name)
-                          :payload (list :tool-call-id (getf tool-call :id)
-                                         :tool-name (getf tool-call :name)))
+         (requested (list :tool-name (getf tool-call :name) :arguments (getf tool-call :arguments)))
+         ;; This durable intent is committed before validation hooks or the
+         ;; tool handler can cause an observable side effect.
+         (tool-intent (record-session-event session :tool-call-started :component (getf tool-call :name)
+                                            :payload (list :tool-call-id (getf tool-call :id)
+                                                           :tool-name (getf tool-call :name)))))
     (multiple-value-bind (ctx veto)
         (if validation-error
             (values requested nil)
@@ -1544,6 +1546,7 @@ entirely."
           (when preview (setf (getf durable-message :content) preview))
         (record-session-event session :tool-result-recorded
                               :component (getf ctx :tool-name)
+                              :parent-id (getf tool-intent :id)
                               :status "finished" :payload (list :message durable-message
                                                                 :content-blob blob)))
         message)))))
@@ -1592,6 +1595,14 @@ during this turn can call SESSION-COMPLETE."
                                                 ;; A denied budget becomes a no-tool final-answer pass.
                                                 :tools (unless tool-budget-finalization-p
                                                          (session-tools session)))))
+                    ;; The provider may make an external request even if the
+                    ;; process dies before its response reaches this image.
+                    ;; Persist its intent first, then link either outcome.
+                    (request-event
+                      (record-session-event session :provider-request-started :component "provider"
+                                            :payload (list :iteration iteration
+                                                           :message-count (length (getf ctx :messages))
+                                                           :tool-count (length (getf ctx :tools)))))
                     (assistant-message
                       (let ((response
                               (catch :turn-interrupted
@@ -1602,6 +1613,9 @@ during this turn can call SESSION-COMPLETE."
                                                      (throw :turn-interrupted :interrupted))
                                                    (ui-assistant-delta frontend chunk)))
                                   (provider-error (c)
+                                    (record-session-event session :provider-request-failed :component "provider"
+                                                          :parent-id (getf request-event :id) :status "failed"
+                                                          :payload (list :detail (princ-to-string c)))
                                     (run-hook :on-error c)
                                     (ui-error frontend c)
                                     (return-from run-agent-turn
@@ -1617,6 +1631,7 @@ during this turn can call SESSION-COMPLETE."
                        (normalize-assistant-common-lisp (getf assistant-message :content))))
                (setf (session-messages session) (append (session-messages session) (list assistant-message)))
                (record-session-event session :assistant-response-finished :component "provider"
+                                     :parent-id (getf request-event :id)
                                      :payload (list :message assistant-message))
                (session-note-request session assistant-message)
                (let* ((reviews (review-assistant-common-lisp (getf assistant-message :content)))
