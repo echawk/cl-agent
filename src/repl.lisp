@@ -748,7 +748,13 @@ the main agent. The JSON contract makes intermediate planning inspectable."
                        "verification" (or (and plan (getf plan :verification)) :empty-array)
                        "tool_evidence" :empty-array "pending_approvals" :empty-array)))
     (setf (session-task-record session) record (session-active-plan session) nil)
-    (persist-task-record record)))
+    (persist-task-record record)
+    (record-session-event
+     session :task-record-started :component "task" :status "executing"
+     :payload (list :task-id (jget record "id") :original-request original
+                    :prepared-request prepared :execution-request execution
+                    :plan (jget record "plan") :verification (jget record "verification")))
+    record))
 
 (defun record-task-tool-evidence (session tool-call result)
   (let ((record (session-task-record session)))
@@ -759,7 +765,13 @@ the main agent. The JSON contract makes intermediate planning inspectable."
         (setf (gethash "tool_evidence" record)
               (append (let ((old (jget record "tool_evidence"))) (if (listp old) old nil))
                       (list evidence)))
-        (persist-task-record record)))))
+        (persist-task-record record)
+        (record-session-event
+         session :task-tool-evidence :component (getf tool-call :name) :status "finished"
+         :payload (list :task-id (jget record "id") :tool-name (getf tool-call :name)
+                        :tool-call-id (getf tool-call :id)
+                        :result-preview (subseq result 0 (min 12000 (length result)))
+                        :content-blob (write-session-blob session result)))))))
 
 (defun set-task-record-status (session status &optional detail)
   "Persist the terminal lifecycle STATUS for SESSION's current task.
@@ -770,7 +782,46 @@ DETAIL records why a task stopped short of a verified completion."
             (gethash "finished_at" record) (get-universal-time))
       (when detail
         (setf (gethash "status_detail" record) detail))
-      (persist-task-record record))))
+      (persist-task-record record)
+      (record-session-event session :task-record-finished :component "task" :status status
+                            :payload (list :task-id (jget record "id") :detail detail)))))
+
+(defun project-task-records (events)
+  "Rebuild compact task receipts from an ordered durable session event stream.
+
+This is the authoritative event projection; the legacy JSON records remain a
+compatibility export while callers migrate to this data-only representation."
+  (let ((records (make-hash-table :test #'equal)) (order nil))
+    (dolist (event events)
+      (let ((payload (getf event :payload)))
+        (case (getf event :kind)
+          (:task-record-started
+           (let ((id (getf payload :task-id)))
+             (setf (gethash id records)
+                   (list :id id :state "executing"
+                         :original-request (getf payload :original-request)
+                         :prepared-request (getf payload :prepared-request)
+                         :execution-request (getf payload :execution-request)
+                         :plan (getf payload :plan) :verification (getf payload :verification)
+                         :tool-evidence nil))
+             (push id order)))
+          (:task-tool-evidence
+           (let ((record (gethash (getf payload :task-id) records)))
+             (when record
+               (push (list :tool-name (getf payload :tool-name)
+                           :tool-call-id (getf payload :tool-call-id)
+                           :result-preview (getf payload :result-preview)
+                           :content-blob (getf payload :content-blob))
+                     (getf record :tool-evidence)))))
+          (:task-record-finished
+           (let ((record (gethash (getf payload :task-id) records)))
+             (when record
+               (setf (getf record :state) (getf event :status)
+                     (getf record :detail) (getf payload :detail))))))))
+    (dolist (id order)
+      (setf (getf (gethash id records) :tool-evidence)
+            (nreverse (getf (gethash id records) :tool-evidence))))
+    (mapcar (lambda (id) (gethash id records)) (nreverse order))))
 
 (defun finish-agent-turn (session message status &optional detail)
   "Record a terminal task state, then return MESSAGE for RUN-AGENT-TURN."

@@ -149,7 +149,9 @@
       (check-equal (checkpoint-session session "before follow-up") "before follow-up")
       (let ((checkpoint (find-session-checkpoint (session-id session) "before follow-up")))
         (check checkpoint)
-        (check-equal (getf checkpoint :through-sequence) 2)
+        ;; Task-start events are durable too, so the checkpoint follows the
+        ;; accepted user message and its task-receipt start.
+        (check-equal (getf checkpoint :through-sequence) 3)
         (session-submit-user-text session "discard this")
         (rewind-session session (getf checkpoint :through-sequence))
         (check-equal (mapcar (lambda (message) (getf message :content))
@@ -189,3 +191,15 @@
                (check (find :hook-started events :key (lambda (event) (getf event :kind))))
                (check (find :hook-finished events :key (lambda (event) (getf event :kind))))))
         (remove-hook :user-message 'durable-hook-fixture)))))
+
+(deftest task-receipts-project-from-session-events ()
+  (with-temp-config-dir ()
+    (let ((session (make-session (make-instance 'ollama-provider))))
+      (session-submit-user-text session "durable task")
+      (let ((record (session-task-record session)))
+        (record-task-tool-evidence session (list :id "task-call" :name "fixture-tool") "proof")
+        (set-task-record-status session "succeeded" "verified")
+        (let ((projected (first (project-task-records (read-session-events (session-id session))))))
+          (check-equal (getf projected :id) (jget record "id"))
+          (check-equal (getf projected :state) "succeeded")
+          (check-equal (getf (first (getf projected :tool-evidence)) :result-preview) "proof"))))))
