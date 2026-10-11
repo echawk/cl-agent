@@ -163,7 +163,13 @@ When you finish a task, summarize the result concisely."
 or (setf *default-system-prompt* ...) from an extension.")
 
 (defclass agent-session ()
-  ((provider :initarg :provider :accessor session-provider)
+  ((id :initarg :id :initform (allocate-session-id) :accessor session-id
+       :documentation "Stable durable session identifier.")
+   (created-at :initarg :created-at :initform (get-universal-time) :accessor session-created-at)
+   (current-turn-id :initform nil :accessor session-current-turn-id)
+   (event-sequence :initarg :event-sequence :initform 0 :accessor session-event-sequence)
+   (event-lock :initform (bordeaux-threads:make-lock "session event log") :reader session-event-lock)
+   (provider :initarg :provider :accessor session-provider)
    (frontend :initarg :frontend :accessor session-frontend
              :documentation "The AGENT-FRONTEND driving this session's
 I/O (see ui/frontend.lisp). Defaults to a CLI-FRONTEND so existing
@@ -214,6 +220,11 @@ which tools are on offer. SESSION-TOOLS is a snapshot taken at
 construction time (not always every currently-registered tool) so a
 hook or extension can curate a specific session's capabilities
 independently of the global registry."))
+
+(defvar *live-sessions* (make-hash-table :test 'equal)
+  "Session id -> live session.  Durable replay never depends on this cache.")
+
+(defun find-live-session (id) (gethash id *live-sessions*))
 
 (defparameter *orchestration-modes* '(:direct :plan :plan-review)
   "Supported first-stage orchestration modes.")
@@ -348,7 +359,86 @@ startup rather than silently falling back to the host model."
                                                         (not (minusp configured-depth)))
                                                    configured-depth 1))))
       (install-session-settings-listener session)
+      ;; The system prompt is an ordinary provider message and must be the
+      ;; first durable fact so a replay does not depend on today's defaults.
+      (record-session-event session :session-created :component "session"
+                            :payload (list :message (first (session-messages session))))
+      (setf (gethash (session-id session) *live-sessions*) session)
       session)))
+
+(defun replay-session (session-id &key through-sequence)
+  "Return SESSION-ID's durable events and its read-only message projection."
+  (let ((events (read-session-events session-id)))
+    (values events (project-session-messages events through-sequence))))
+
+(defun reconcile-incomplete-tool-events (session events)
+  "Append explicit unknown outcomes for tool intents lacking a durable result.
+
+The original process may have completed the external action after its final
+write, so recovery must never infer failure or retry it automatically."
+  (let ((started (make-hash-table :test 'equal))
+        (finished (make-hash-table :test 'equal)))
+    (dolist (event events)
+      (case (getf event :kind)
+        (:tool-call-started
+         (setf (gethash (getf (getf event :payload) :tool-call-id) started) event))
+        (:tool-result-recorded
+         (setf (gethash (getf (getf (getf event :payload) :message) :tool-call-id) finished) t))))
+    (maphash
+     (lambda (tool-call-id event)
+       (unless (gethash tool-call-id finished)
+         (let ((message (list :role "tool" :tool-call-id tool-call-id
+                              :content "Tool outcome unknown: the session stopped before a durable result was recorded. Do not retry a non-idempotent operation without review.")))
+           (setf (session-messages session) (append (session-messages session) (list message)))
+           (record-session-event session :tool-call-unknown-outcome
+                                 :component (getf (getf event :payload) :tool-name)
+                                 :status "unknown" :payload (list :message message)))))
+     started)))
+
+(defun resume-session (session session-id)
+  "Replace SESSION's cached conversation with SESSION-ID's durable projection.
+
+No provider request, tool call, or hook is rerun.  Recovery therefore remains
+an inspection/reuse operation, not an accidental replay of side effects."
+  (multiple-value-bind (events messages) (replay-session session-id)
+    (unless events (error "Session ~a has no durable events" session-id))
+    (setf (session-id session) session-id
+          (session-event-sequence session) (getf (car (last events)) :sequence)
+          (session-current-turn-id session) nil
+          (session-messages session) messages)
+    (setf (gethash session-id *live-sessions*) session)
+    (reconcile-incomplete-tool-events session events)
+    (values session events)))
+
+(defun branch-session (session &key through-sequence)
+  "Fork SESSION's durable conversation at THROUGH-SEQUENCE (or its current end).
+
+The branch receives a new identity and records its lineage, while the source
+remains untouched and readable.  Replayed messages are re-emitted as durable
+facts so the branch is independently resumable."
+  (let* ((source-id (session-id session))
+         (events (read-session-events source-id))
+         (messages (project-session-messages events through-sequence))
+         (new-id (allocate-session-id)))
+    (setf (session-id session) new-id
+          (session-event-sequence session) 0
+          (session-current-turn-id session) nil
+          (session-messages session) messages)
+    (remhash source-id *live-sessions*)
+    (setf (gethash new-id *live-sessions*) session)
+    (persist-session-manifest session :parent-session-id source-id)
+    (dolist (message messages)
+      (record-session-event session
+                            (case (getf message :role)
+                              (("user") :user-message-accepted)
+                              (("assistant") :assistant-response-finished)
+                              (("tool") :tool-result-recorded)
+                              (t :system-message-recorded))
+                            :component "session" :payload (list :message message)))
+    (record-session-event session :session-branched :component "session"
+                          :payload (list :parent-session-id source-id
+                                         :through-sequence through-sequence))
+    session))
 
 (defun find-subagent-model-profile (session name)
   "Find a session-local subagent model profile by NAME."
@@ -524,13 +614,15 @@ the main agent. The JSON contract makes intermediate planning inspectable."
 (defun task-record-directory ()
   (merge-pathnames "tasks/" *config-directory*))
 
+(defvar *task-record-id-counter* 0)
+
 (defun allocate-task-record-id ()
   "Allocate a short timestamped task ID whose on-disk name is unoccupied."
-  (idsmall:identifier-generate
-   :namespace :cl-agent-task
-   :occupied-p (lambda (identifier)
-                 (probe-file (merge-pathnames (format nil "~a.json" identifier)
-                                              (task-record-directory))))))
+  (loop
+    for identifier = (high-volume-durable-id :task
+                                              (lambda () (incf *task-record-id-counter*)))
+    unless (probe-file (merge-pathnames (format nil "~a.json" identifier)
+                                        (task-record-directory))) return identifier))
 
 (defun persist-task-record (record)
   (write-string-atomically
@@ -577,6 +669,9 @@ DETAIL records why a task stopped short of a verified completion."
 (defun finish-agent-turn (session message status &optional detail)
   "Record a terminal task state, then return MESSAGE for RUN-AGENT-TURN."
   (set-task-record-status session status detail)
+  (record-session-event session :turn-finished :component "agent-turn" :status status
+                        :payload (list :detail detail))
+  (setf (session-current-turn-id session) nil)
   message)
 
 ;;; Explicit saved-session snapshots.  These are intentionally small, named
@@ -781,6 +876,8 @@ model is about to be asked before its own system prompt or any prior
 turn is involved -- then appends the (possibly changed) result.
 RUN-REPL calls this instead of appending a message directly; so should
 anything else that wants to feed the model a user turn."
+  (setf (session-current-turn-id session)
+        (allocate-session-turn-id))
   (let* ((ctx (run-hook-chain :user-message (list :text text)))
          (prepared-text (getf ctx :text))
          (execution-text (if (planning-mode-p session)
@@ -792,6 +889,8 @@ anything else that wants to feed the model a user turn."
                              prepared-text)))
     (setf (session-messages session)
           (append (session-messages session) (list (list :role "user" :content execution-text))))
+    (record-session-event session :user-message-accepted :component "session"
+                          :payload (list :message (car (last (session-messages session)))))
     (start-task-record session text prepared-text execution-text)))
 
 (defun session-stats-snapshot (session)
@@ -1267,6 +1366,9 @@ turns.  Returns the delivered texts."
           (append (session-messages session)
                   (list (list :role "system"
                               :content "The user interrupted your previous turn before it finished. Stop what you were doing and wait for their next instruction."))))
+    (record-session-event session :system-message-recorded :component "agent-turn"
+                          :status "interrupted"
+                          :payload (list :message (car (last (session-messages session)))))
     (ui-system frontend "[interrupted]")
     (finish-agent-turn session nil "interrupted" "Interrupted by the user.")))
 
@@ -1291,6 +1393,9 @@ entirely."
   (let* ((frontend (session-frontend session))
          (validation-error (tool-call-json-error tool-call))
          (requested (list :tool-name (getf tool-call :name) :arguments (getf tool-call :arguments))))
+    (record-session-event session :tool-call-started :component (getf tool-call :name)
+                          :payload (list :tool-call-id (getf tool-call :id)
+                                         :tool-name (getf tool-call :name)))
     (multiple-value-bind (ctx veto)
         (if validation-error
             (values requested nil)
@@ -1310,7 +1415,12 @@ entirely."
       (record-task-tool-evidence session tool-call (getf after :result))
       (incf (getf (session-raw-stats session) :tool-calls))
       (ui-stats-updated frontend (session-stats-snapshot session))
-      (list :role "tool" :tool-call-id (getf tool-call :id) :content (getf after :result))))))
+      (let ((message (list :role "tool" :tool-call-id (getf tool-call :id)
+                           :content (getf after :result))))
+        (record-session-event session :tool-result-recorded
+                              :component (getf ctx :tool-name)
+                              :status "finished" :payload (list :message message))
+        message)))))
 
 (defun run-agent-turn (session)
   "Drive SESSION forward: send the current message history to the
@@ -1338,6 +1448,9 @@ during this turn can call SESSION-COMPLETE."
         (tool-iteration-limit (session-max-tool-iterations session))
         (tool-budget-extensions-used 0)
         (tool-budget-finalization-p nil))
+    (unless (session-current-turn-id session)
+      (setf (session-current-turn-id session)
+            (allocate-session-turn-id)))
     ;; A tool-using turn can make several model requests.  Keep one stable
     ;; activity indicator across the whole turn rather than flashing it off
     ;; after each response and back on for the follow-up request.
@@ -1377,6 +1490,8 @@ during this turn can call SESSION-COMPLETE."
                  (setf (getf assistant-message :content)
                        (normalize-assistant-common-lisp (getf assistant-message :content))))
                (setf (session-messages session) (append (session-messages session) (list assistant-message)))
+               (record-session-event session :assistant-response-finished :component "provider"
+                                     :payload (list :message assistant-message))
                (session-note-request session assistant-message)
                (let* ((reviews (review-assistant-common-lisp (getf assistant-message :content)))
                       (request-revision-p
@@ -1820,7 +1935,8 @@ with a tool-free continuity summary. It is never invoked automatically."
       "No saved sessions. Use /session save NAME to create one."))
 
 (define-slash-command session (session arg)
-  "Usage: /session save [NAME], /session restore NAME, or /session list.
+  "Usage: /session save [NAME], /session restore NAME, /session list,
+or /session durable-list|resume ID|replay ID|branch [SEQUENCE].
 
 SAVE writes a named local JSON snapshot (or a generated timestamped name when
 NAME is omitted). RESTORE replaces the current conversation and compatible
@@ -1848,9 +1964,38 @@ session settings; LIST displays every saved snapshot."
            (when (plusp (length name))
              (error "Usage: /session list"))
            (ui-system (session-frontend session) (format-saved-session-list (list-saved-sessions))))
+          ((string= action "durable-list")
+           (ui-system (session-frontend session)
+                      (format nil "Durable sessions:~%~{  ~a~%~}"
+                              (mapcar (lambda (manifest)
+                                        (format nil "~a · ~d event~:p~@[ · parent ~a~]"
+                                                (getf manifest :id) (getf manifest :last-sequence)
+                                                (getf manifest :parent-session-id)))
+                                      (list-durable-sessions)))))
+          ((string= action "resume")
+           (if (zerop (length name))
+               (ui-system (session-frontend session) "Usage: /session resume ID")
+               (multiple-value-bind (resumed events) (resume-session session name)
+                 (declare (ignore resumed))
+                 (ui-stats-updated (session-frontend session) (session-stats-snapshot session))
+                 (ui-system (session-frontend session)
+                            (format nil "Resumed durable session ~a (~d event~:p)." name (length events))))))
+          ((string= action "replay")
+           (if (zerop (length name))
+               (ui-system (session-frontend session) "Usage: /session replay ID")
+               (multiple-value-bind (events messages) (replay-session name)
+                 (ui-system (session-frontend session)
+                            (format nil "Replay ~a: ~d event~:p, ~d provider message~:p. No tools were executed."
+                                    name (length events) (length messages))))))
+          ((string= action "branch")
+           (let ((sequence (and (plusp (length name)) (parse-integer name :junk-allowed t))))
+             (branch-session session :through-sequence sequence)
+             (ui-system (session-frontend session)
+                        (format nil "Created durable branch ~a from the current session."
+                                (session-id session)))))
           (t
            (ui-system (session-frontend session)
-                      "Usage: /session save [NAME], /session restore NAME, or /session list.")))
+                      "Usage: /session save [NAME], /session restore NAME, /session list, or /session durable-list|resume ID|replay ID|branch [SEQUENCE].")))
       (error (condition)
         (ui-error (session-frontend session) condition))))
   t)

@@ -128,6 +128,7 @@ built; use them to load role-specific code there."
 
 (defclass subagent-task ()
   ((id :initarg :id :reader subagent-task-id)
+   (parent-session-id :initarg :parent-session-id :initform nil :reader subagent-task-parent-session-id)
    (state :initform :queued :accessor subagent-task-state)
    (contract :initarg :contract :accessor subagent-task-contract)
    (job :initform nil :accessor subagent-task-job)
@@ -188,6 +189,48 @@ built; use them to load role-specific code there."
                      :status (subagent-task-state task)
                      :metadata (subagent-task-snapshot task)))
 
+(defun subagent-task-store-directory ()
+  (merge-pathnames "state/tasks/" *config-directory*))
+
+(defun subagent-task-store-path (id)
+  (merge-pathnames (format nil "~a.sexp" id) (subagent-task-store-directory)))
+
+(defun durable-subagent-task-record (task)
+  "Return a safe, data-only task receipt.  Provider credentials never persist."
+  (let ((contract (copy-tree (subagent-task-contract task))))
+    (when (getf contract :provider)
+      (setf (getf (getf contract :provider) :api-key) nil))
+    (list :schema-version 1 :id (subagent-task-id task)
+          :parent-session-id (subagent-task-parent-session-id task)
+          :state (subagent-task-state task) :contract contract
+          :snapshot (subagent-task-snapshot task))))
+
+(defun persist-subagent-task (task)
+  "Atomically persist TASK's latest state through the shared Sexp Store."
+  (sexp-store:snapshot-write (subagent-task-store-path (subagent-task-id task))
+                             (durable-subagent-task-record task))
+  task)
+
+(defun recover-subagent-task-records ()
+  "Mark work interrupted by a previous process as :UNKNOWN and return records.
+
+Workers are never restarted implicitly: an external provider/tool call may
+have completed after the parent died, so only a user or later reconciliation
+may decide what to do next."
+  (let ((root (subagent-task-store-directory)) (records nil))
+    (when (probe-file root)
+      (dolist (path (directory (merge-pathnames "*.sexp" root)))
+        (multiple-value-bind (record complete-p) (sexp-store:snapshot-read path)
+          (when (and complete-p (listp record))
+            (when (member (getf record :state) '(:queued :running))
+              (setf (getf record :state) :unknown)
+              (let ((snapshot (getf record :snapshot)))
+                (when snapshot (setf (getf snapshot :state) :unknown
+                                     (getf snapshot :note) "Recovered after process restart; outcome unknown.")))
+              (sexp-store:snapshot-write path record))
+            (push record records))))
+    (nreverse records))))
+
 (defun %apply-subagent-transition (task next note)
   "Set NEXT on TASK (lock held), then notify.  Returns T."
   (setf (subagent-task-state task) next)
@@ -201,6 +244,15 @@ built; use them to load role-specific code there."
 
 (defun notify-subagent-transition (task)
   (let ((snapshot (subagent-task-snapshot task)))
+    (ignore-errors (persist-subagent-task task))
+    (when (fboundp 'find-live-session)
+      (let ((parent (find-live-session (subagent-task-parent-session-id task))))
+        (when parent
+          (ignore-errors
+            (record-session-event parent :subagent-task-transition
+                                  :component (subagent-task-id task)
+                                  :status (subagent-task-state task)
+                                  :payload snapshot)))))
     (ignore-errors (publish-subagent-task task))
     (emit-event :subagent-task-transition
                 :component (component-id :subagent-task (subagent-task-id task))
@@ -528,6 +580,7 @@ of keywords, strings and integers."
                      (setf (getf contract :progress-file)
                            (namestring (subagent-progress-pathname id))))
                    (make-instance 'subagent-task :id id :contract contract
+                                                 :parent-session-id (session-id parent)
                                                  :frontend (session-frontend parent)))))
     (bordeaux-threads:with-lock-held (*subagent-tasks-lock*)
       (setf (gethash id *subagent-tasks*) record))

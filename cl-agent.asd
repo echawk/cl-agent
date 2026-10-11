@@ -160,6 +160,7 @@
    (:file "test-apropos")
    (:file "test-components")
    (:file "test-repl")
+   (:file "test-events")
    (:file "test-tasks")
    (:file "test-input")
    (:file "test-debugger")

@@ -132,6 +132,11 @@ message and a non-zero exit, not a Lisp backtrace."
                   (format *error-output* "~&[lsp] unavailable commands: ~{~a~^, ~}~%" unavailable)))
             (error (c) (format *error-output* "~&[lsp] ~a~%" c)))
           (connect-configured-mcp-servers config)
+          ;; Never relaunch a worker merely because its parent process died.
+          ;; Persisted queued/running records become explicit :UNKNOWN receipts.
+          (let ((recovered (recover-subagent-task-records)))
+            (when (some (lambda (record) (eq (getf record :state) :unknown)) recovered)
+              (format *error-output* "~&[tasks] recovered interrupted worker records as unknown.~%")))
           (cond
             ((and (clingon:getopt cmd :mcp-serve) (clingon:getopt cmd :acp-serve))
              (error "--mcp-serve and --acp-serve cannot be used together."))

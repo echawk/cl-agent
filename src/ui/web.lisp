@@ -498,6 +498,14 @@ reasonably live without any new transport.")
 (defmethod ui-agent-activity ((frontend web-frontend) label text)
   (web-frontend-push-activity frontend "agent-narration" label text))
 
+(defmethod ui-session-event ((frontend web-frontend) event)
+  "Expose committed mechanics in the existing web activity projection."
+  (web-frontend-push-activity
+   frontend "session-event"
+   (format nil "EVENT · ~(~a~)" (getf event :kind))
+   (format nil "#~d · ~a" (getf event :sequence)
+           (or (getf event :status) "committed"))))
+
 (defmethod ui-tool-started ((frontend web-frontend) tool-name arguments)
   (let ((summary (tool-call-summary tool-name arguments)))
     ;; Keep the legacy transcript event for API consumers, while the page

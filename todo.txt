@@ -15,3 +15,13 @@ add testsuite for using actual mcp servers; find some common/useful mcp servers,
 write some test suites using them (ideally with the small ollama model, but could try 
 using the apfel model too).
 
+
+- https://github.com/lambda-symbolics/cl-exec-sandbox
+- replace our adhoc shell job with this ? https://github.com/lambda-symbolics/cl-jobpond
+- https://github.com/lambda-symbolics/daphne ; debug adapter protocol client for CL
+
+- https://github.com/lambda-symbolics/clinker-transcript
+
+Honestly most of the libraries from lambda-symbolics are great. we should incorporate many of them when it makes sense.
+
+Need to make our agent code much much much more resilient; it should almost never crash; anywhere that there can be an incorrect argument due to the llm's doing, we should try and catch it.

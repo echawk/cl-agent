@@ -12,6 +12,7 @@ acclimation-temperature, ghcr.io/ocicl/acclimation@sha256:f6f7b6782ea4fa53b86f23
 agentcomms, git+https://github.com/lambda-symbolics/agentcomms@c56cdca0b067eda19ba86f868fbad009f5af4e15, agentcomms-c56cdca/agentcomms.asd
 alexandria, ghcr.io/ocicl/alexandria@sha256:407634b0781b2d8fc3e55a30432bcb5d0c042af2feb2d1d72de825940b0fb0df, alexandria-20260812-f283e25/alexandria.asd
 argo, git+https://github.com/lambda-symbolics/argo@bd7415c7d6df61889147979c7c1964a0246a8f19, argo-bd7415c/argo.asd
+asdf-package-system, ghcr.io/ocicl/asdf-package-system@sha256:dfacc260786f4e9e2aa13a797a7b326b58e08ea5db778421a9985b9c67362df1, asdf-package-system-20240503-61776f2/asdf-package-system.asd
 autoload, ghcr.io/ocicl/mgl-pax-bootstrap@sha256:1c15644701ad5b8e441b2724c265c995437052beb52322c447816c3cc17c564a, mgl-pax-20260313-f7f9414/autoload/autoload.asd
 babel, ghcr.io/ocicl/babel@sha256:9d9fcde71acc2b5c39572de4f11756a08c1d8801caa86c581b85dabaa35928b3, babel-20250905-4eaf3f2/babel.asd
 babel-streams, ghcr.io/ocicl/babel@sha256:9d9fcde71acc2b5c39572de4f11756a08c1d8801caa86c581b85dabaa35928b3, babel-20250905-4eaf3f2/babel-streams.asd

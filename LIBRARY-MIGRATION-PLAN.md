@@ -57,8 +57,8 @@ Remaining work:
   role `:setup-forms` can load them.  Decide how enabled extensions reach children.
 - [ ] Write-enabled children, which need the capability/policy layer and
   worktree isolation from the roadmap (P4, P7).
-- [ ] Persist task records so tasks survive a restart; tasks left `:running`
-  should become `:unknown` rather than being re-run.
+- [x] Persist task transition receipts through `sexp-store`; startup marks
+  queued/running records `:unknown` rather than re-running them.
 - [ ] Stream child output, not only tool and token progress.
 - [ ] Provider requests cannot be aborted mid-flight for providers that do not
   stream; an interrupt lands when the response returns.
@@ -105,16 +105,18 @@ publication, evaluation-disabled reads, and rejection of partial or
 concatenated snapshots.  Focused tests exercise both paths.
 
 - [x] Migrate mutation journals and debugger receipts to snapshots.
-- [ ] Add an append-only, process-locked session-event envelope log and replay
-  it into the session projection.
-- [ ] Migrate task records/receipts from JSON snapshots to store records and
-  logs, including restart recovery for tasks found in `:running` state.
+- [x] Add versioned append-only session event envelopes, atomic Store-backed
+  publication, deterministic message projection, and explicit unknown-outcome
+  reconciliation for interrupted tool intents.
+- [x] Migrate worker task transition receipts to Store records, including
+  restart recovery for tasks found in `:running` state.
 - [ ] Define versioned schemas for persisted records before settings and
   generation manifests consume them.
 - Retire duplicated temporary-file publication once equivalent Store-backed
   paths are proven; generic text/source writes remain on the local helper.
-- Remaining acceptance: torn event-log tails recover, concurrent writers are
-  process-locked, and an event log replays a session projection deterministically.
+- [x] Add inter-process writer locking and tail repair.  A malformed final
+  event snapshot is removed under the shared lock; a gap or corrupt middle
+  record fails closed and remains diagnosable.
 
 ### 4. `sbcl-generations` — checkpoints and recovery boot (in progress)
 

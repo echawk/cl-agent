@@ -81,6 +81,14 @@ model. Default: no-op.")
     (declare (ignore label text))
     (values)))
 
+(defgeneric ui-session-event (frontend event)
+  (:documentation "Publish a durable session EVENT to a frontend activity view.
+EVENT is a data-only, versioned envelope already committed to the session
+store.  The default is intentionally silent for compact terminal UIs.")
+  (:method ((frontend agent-frontend) event)
+    (declare (ignore event))
+    (values)))
+
 (defgeneric ui-tool-started (frontend tool-name arguments)
   (:documentation "A tool call is about to run. ARGUMENTS is the hash
 table of parsed call arguments (see tools.lisp).")
