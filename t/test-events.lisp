@@ -56,6 +56,19 @@
             (check-equal (getf message :role) "tool")
             (check (search "outcome unknown" (getf message :content)))))))))
 
+(deftest session-resume-records-an-unknown-provider-request-outcome ()
+  (with-temp-config-dir ()
+    (let ((session (make-session (make-instance 'ollama-provider))))
+      (let* ((started (record-session-event session :provider-request-started :component "provider"
+                                             :payload (list :iteration 1 :message-count 1 :tool-count 0)))
+             (id (session-id session))
+             (resumed (make-session (make-instance 'ollama-provider))))
+        (resume-session resumed id)
+        (let ((unknown (find :provider-request-unknown-outcome (read-session-events id)
+                             :key (lambda (event) (getf event :kind)))))
+          (check unknown)
+          (check-equal (getf unknown :parent-id) (getf started :id)))))))
+
 (deftest durable-session-repairs-only-an-invalid-final-event-tail ()
   (with-temp-config-dir ()
     (let* ((session (make-session (make-instance 'ollama-provider)))

@@ -499,6 +499,29 @@ write, so recovery must never infer failure or retry it automatically."
                                  :status "unknown" :payload (list :message message)))))
      started)))
 
+(defun reconcile-incomplete-provider-requests (session events)
+  "Append unknown-outcome receipts for provider requests lacking a response.
+
+The remote provider may have completed after this process lost its final
+response. Recovery must not silently retry or invent an assistant message."
+  (let ((started (make-hash-table :test 'equal))
+        (finished (make-hash-table :test 'equal)))
+    (dolist (event events)
+      (case (getf event :kind)
+        (:provider-request-started (setf (gethash (getf event :id) started) event))
+        (:assistant-response-finished (when (getf event :parent-id)
+                                        (setf (gethash (getf event :parent-id) finished) t)))
+        (:provider-request-failed (when (getf event :parent-id)
+                                    (setf (gethash (getf event :parent-id) finished) t)))))
+    (maphash
+     (lambda (request-id event)
+       (unless (gethash request-id finished)
+         (record-session-event session :provider-request-unknown-outcome :component "provider"
+                               :parent-id request-id :status "unknown"
+                               :payload (list :detail "The session stopped before a provider response was durably recorded. No request was retried."
+                                              :iteration (getf (getf event :payload) :iteration)))))
+     started)))
+
 (defun resume-session (session session-id)
   "Replace SESSION's cached conversation with SESSION-ID's durable projection.
 
@@ -513,6 +536,7 @@ an inspection/reuse operation, not an accidental replay of side effects."
           (session-display-name session)
           (getf (nth-value 0 (sexp-store:snapshot-read (session-manifest-pathname session-id))) :name))
     (setf (gethash session-id *live-sessions*) session)
+    (reconcile-incomplete-provider-requests session events)
     (reconcile-incomplete-tool-events session events)
     (values session events)))
 
