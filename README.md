@@ -300,7 +300,9 @@ or just ask in plain English -- "what does the standard say about
 `loop`'s `for ... being` clauses?" -- the model will call the tool
 itself when it's useful. (`/call` invokes any registered tool directly,
 bypassing the model -- good for trying a tool out, or debugging one you
-just added with `write-extension`, without spending a request on it.)
+just added with `write-extension`, without spending a request on it.
+`/lisp FORM` is the shortcut for `eval-lisp`: `/lisp (list-tools)`
+evaluates the form in the agent's own image and prints the result.)
 
 This works entirely offline, against `data/cl-spec.sdoc`, a ~4.6MB
 file **committed to this repo** containing the whole spec as plain

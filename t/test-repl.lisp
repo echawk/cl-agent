@@ -57,6 +57,20 @@
       (check (dispatch-slash-command session "/call no-such-tool-xyz {}")))
     (check (search "does not exist" (get-output-stream-string output)))))
 
+(deftest slash-lisp-evaluates-a-form ()
+  (let ((session (make-session (make-instance 'ollama-provider)))
+        (output (make-string-output-stream)))
+    (let ((*standard-output* output))
+      (check (dispatch-slash-command session "/lisp (+ 40 2)")))
+    (check (search "42" (get-output-stream-string output)))))
+
+(deftest slash-lisp-without-a-form-shows-usage ()
+  (let ((session (make-session (make-instance 'ollama-provider)))
+        (output (make-string-output-stream)))
+    (let ((*standard-output* output))
+      (dispatch-slash-command session "/lisp   "))
+    (check (search "Usage: /lisp" (get-output-stream-string output)))))
+
 (deftest slash-tools-lists-session-tools ()
   (let* ((session (make-session (make-instance 'ollama-provider) :tools (list (find-tool "shell"))))
          (output (make-string-output-stream)))

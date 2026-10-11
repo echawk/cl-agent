@@ -2119,6 +2119,18 @@ name is parsed as one JSON object and passed to the tool as-is."
           (error (c) (ui-error frontend c)))))
   t)
 
+(define-slash-command lisp (session arg)
+  "Evaluate a Lisp form in the agent's own image, bypassing the model.
+Usage: /lisp FORM, e.g. /lisp (list-tools). Runs the eval-lisp tool, so the
+form gets the same review and compile check and is read in :cl-agent."
+  (let ((frontend (session-frontend session))
+        (form (string-trim " " arg)))
+    (if (zerop (length form))
+        (ui-system frontend "Usage: /lisp FORM, e.g. /lisp (list-tools)")
+        (handler-case (ui-system frontend (call-tool "eval-lisp" (jobj "form" form)))
+          (error (c) (ui-error frontend c)))))
+  t)
+
 (define-slash-command hooks (session arg)
   "List installed hook functions by hook point."
   (declare (ignore arg))
