@@ -166,6 +166,8 @@ or (setf *default-system-prompt* ...) from an extension.")
   ((id :initarg :id :initform (allocate-session-id) :accessor session-id
        :documentation "Stable durable session identifier.")
    (created-at :initarg :created-at :initform (get-universal-time) :accessor session-created-at)
+   (display-name :initarg :display-name :initform nil :accessor session-display-name
+                 :documentation "Optional human-readable durable session name.")
    (current-turn-id :initform nil :accessor session-current-turn-id)
    (event-sequence :initarg :event-sequence :initform 0 :accessor session-event-sequence)
    (event-lock :initform (bordeaux-threads:make-lock "session event log") :reader session-event-lock)
@@ -371,6 +373,23 @@ startup rather than silently falling back to the host model."
   (let ((events (read-session-events session-id)))
     (values events (project-session-messages events through-sequence))))
 
+(defun rename-session (session name)
+  "Give SESSION a durable human-readable NAME and return it.
+
+Names are metadata only: session IDs and event paths remain immutable, so
+renaming cannot invalidate links, branches, or replay references."
+  (let ((trimmed (and (stringp name) (string-trim " " name))))
+    (unless (and trimmed (plusp (length trimmed)) (<= (length trimmed) 160)
+                 (every (lambda (character)
+                          (or (graphic-char-p character) (char= character #\Space)))
+                        trimmed))
+      (error "Session name must be 1-160 printable characters"))
+    (setf (session-display-name session) trimmed)
+    (persist-session-manifest session)
+    (record-session-event session :session-renamed :component "session" :status "finished"
+                          :payload (list :name trimmed))
+    trimmed))
+
 (defun export-session (session-id pathname)
   "Write a portable, read-only S-expression export of SESSION-ID to PATHNAME.
 
@@ -460,7 +479,9 @@ an inspection/reuse operation, not an accidental replay of side effects."
     (setf (session-id session) session-id
           (session-event-sequence session) (getf (car (last events)) :sequence)
           (session-current-turn-id session) nil
-          (session-messages session) messages)
+          (session-messages session) messages
+          (session-display-name session)
+          (getf (nth-value 0 (sexp-store:snapshot-read (session-manifest-pathname session-id))) :name))
     (setf (gethash session-id *live-sessions*) session)
     (reconcile-incomplete-tool-events session events)
     (values session events)))
@@ -2043,8 +2064,8 @@ session settings; LIST displays every saved snapshot."
            (ui-system (session-frontend session)
                       (format nil "Durable sessions:~%~{  ~a~%~}"
                               (mapcar (lambda (manifest)
-                                        (format nil "~a · ~d event~:p~@[ · parent ~a~]"
-                                                (getf manifest :id) (getf manifest :last-sequence)
+                                        (format nil "~@[~a · ~]~a · ~d event~:p~@[ · parent ~a~]"
+                                                (getf manifest :name) (getf manifest :id) (getf manifest :last-sequence)
                                                 (getf manifest :parent-session-id)))
                                       (list-durable-sessions)))))
           ((string= action "resume")
@@ -2068,6 +2089,11 @@ session settings; LIST displays every saved snapshot."
              (ui-system (session-frontend session)
                         (format nil "Created durable branch ~a from the current session."
                                 (session-id session)))))
+          ((string= action "rename")
+           (if (zerop (length name))
+               (ui-system (session-frontend session) "Usage: /session rename NAME")
+               (ui-system (session-frontend session)
+                          (format nil "Renamed durable session to ~a." (rename-session session name)))))
           ((string= action "export")
            (if (zerop (length name))
                (ui-system (session-frontend session) "Usage: /session export PATH")
@@ -2089,7 +2115,7 @@ session settings; LIST displays every saved snapshot."
                                       sequence files-p restored))))))
           (t
            (ui-system (session-frontend session)
-                      "Usage: /session save [NAME], /session restore NAME, /session list, or /session durable-list|resume ID|replay ID|branch [SEQUENCE]|export PATH|rewind SEQUENCE [files].")))
+                      "Usage: /session save [NAME], /session restore NAME, /session list, or /session durable-list|resume ID|replay ID|branch [SEQUENCE]|rename NAME|export PATH|rewind SEQUENCE [files].")))
       (error (condition)
         (ui-error (session-frontend session) condition))))
   t)

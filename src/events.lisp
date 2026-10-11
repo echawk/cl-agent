@@ -122,6 +122,7 @@ search a finite seed range while manifests protect against a stale collision."
     (sexp-store:snapshot-write
      path
      (list :schema-version 1 :id (session-id session) :created-at (session-created-at session)
+           :name (session-display-name session)
            :parent-session-id parent :last-sequence (session-event-sequence session)))))
 
 (defun %session-event-paths (session-id)
