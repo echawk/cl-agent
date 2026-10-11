@@ -203,3 +203,13 @@
           (check-equal (getf projected :id) (jget record "id"))
           (check-equal (getf projected :state) "succeeded")
           (check-equal (getf (first (getf projected :tool-evidence)) :result-preview) "proof"))))))
+
+(deftest queued-user-input-is-durable-before-the-next-request ()
+  (with-temp-config-dir ()
+    (let* ((frontend (make-instance 'cli-frontend))
+           (session (make-session (make-instance 'ollama-provider) :frontend frontend)))
+      (frontend-enqueue-input frontend "queued durable input")
+      (check-equal (session-absorb-queued-input session) (list "queued durable input"))
+      (multiple-value-bind (events messages) (replay-session (session-id session))
+        (check (find :user-message-accepted events :key (lambda (event) (getf event :kind))))
+        (check-equal (getf (car (last messages)) :content) "queued durable input")))))

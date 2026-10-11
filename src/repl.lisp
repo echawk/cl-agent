@@ -1524,6 +1524,12 @@ turns.  Returns the delivered texts."
             (setf (session-messages session)
                   (append (session-messages session)
                           (list (list :role "user" :content (getf ctx :text)))))
+            ;; Input queued while a turn is busy is still a user-authored
+            ;; protocol fact.  Persist it before the next provider request so
+            ;; replay/recovery never loses an interjection accepted in memory.
+            (record-session-event session :user-message-accepted :component "session"
+                                  :payload (list :message (car (last (session-messages session)))
+                                                 :queued-p t))
             (push text delivered))))
     (nreverse delivered)))
 
