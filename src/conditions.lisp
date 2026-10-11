@@ -75,6 +75,15 @@ message the model can see and recover from -- see repl.lisp)."))
                      (capability-denied-rule-id c) (capability-denied-effects c))))
   (:documentation "Reports a deterministic local policy denial before a tool hook or handler runs."))
 
+(define-condition capability-approval-required (cl-agent-error)
+  ((tool-name :initarg :tool-name :reader capability-approval-required-tool-name)
+   (rule-id :initarg :rule-id :reader capability-approval-required-rule-id))
+  (:report (lambda (c stream)
+             (format stream "Tool ~s requires approval under policy rule ~a."
+                     (capability-approval-required-tool-name c)
+                     (capability-approval-required-rule-id c))))
+  (:documentation "Reports an :ASK policy decision before an approval frontend is available."))
+
 (define-condition frontend-not-found (cl-agent-error)
   ((name :initarg :name :reader frontend-not-found-name))
   (:report (lambda (c stream)

@@ -185,6 +185,8 @@ mode exposes the full catalog.")
    (capability-mode :initarg :capability-mode :initform :full
                     :accessor session-capability-mode
                     :documentation "Deterministic authority mode for tool effects.")
+   (policy-rules :initarg :policy-rules :initform nil :accessor session-policy-rules
+                 :documentation "Session-local deterministic capability rules.")
    (orchestration-tool-limit :initarg :orchestration-tool-limit :initform 8
                              :accessor session-orchestration-tool-limit
                              :documentation "Maximum number of tool schemas exposed in
@@ -253,6 +255,45 @@ command strings. Unknown or absent values safely select :DIRECT."
 (defparameter *capability-modes* '(:full :accept-edits :inspect)
   "Deterministic tool-authority modes supported by this first policy pass.")
 
+(defstruct capability-policy-rule
+  "A data-only session policy rule. NIL selectors match every tool/effect."
+  id effect tool-name capabilities)
+
+(defun normalize-policy-effect (effect)
+  (let ((keyword (if (stringp effect) (intern (string-upcase effect) :keyword) effect)))
+    (unless (member keyword '(:allow :ask :deny))
+      (error "Policy effect must be allow, ask, or deny, not ~s" effect))
+    keyword))
+
+(defun add-capability-policy-rule (session effect &key tool-name capabilities id)
+  "Add a deterministic rule to SESSION and return its stable data-only form."
+  (unless (or (null tool-name) (and (stringp tool-name) (plusp (length tool-name))))
+    (error "Policy tool name must be a non-empty string when supplied"))
+  (unless (or (null capabilities) (and (listp capabilities) (every #'keywordp capabilities)))
+    (error "Policy capabilities must be a list of keywords"))
+  (let ((rule (make-capability-policy-rule
+               :id (or id (format nil "policy-~a" (allocate-session-event-id)))
+               :effect (normalize-policy-effect effect) :tool-name tool-name
+               :capabilities (copy-list capabilities))))
+    (push rule (session-policy-rules session))
+    (record-session-event session :capability-policy-rule-added :component "policy"
+                          :status "finished"
+                          :payload (capability-policy-rule->plist rule))
+    rule))
+
+(defun capability-policy-rule->plist (rule)
+  (list :id (capability-policy-rule-id rule)
+        :effect (capability-policy-rule-effect rule)
+        :tool-name (capability-policy-rule-tool-name rule)
+        :capabilities (copy-list (capability-policy-rule-capabilities rule))))
+
+(defun capability-policy-rule-matches-p (rule tool)
+  (and (or (null (capability-policy-rule-tool-name rule))
+           (string-equal (capability-policy-rule-tool-name rule) (tool-name tool)))
+       (or (null (capability-policy-rule-capabilities rule))
+           (every (lambda (capability) (member capability (tool-effects tool)))
+                  (capability-policy-rule-capabilities rule)))))
+
 (defun normalize-capability-mode (mode)
   "Return MODE as a supported capability-mode keyword, or signal an error."
   (let ((keyword (cond ((keywordp mode) mode)
@@ -280,6 +321,17 @@ metadata."
           (t (values :deny (if (eq mode :inspect) :mode/inspect-read-only
                                :mode/accept-edits-workspace))))))
 
+(defun decide-tool-capability (session tool)
+  "Return decision and rule ID for TOOL, with explicit deny precedence."
+  (let ((matches (remove-if-not (lambda (rule) (capability-policy-rule-matches-p rule tool))
+                                (session-policy-rules session))))
+    (flet ((matching (effect)
+             (find effect matches :key #'capability-policy-rule-effect)))
+      (cond ((matching :deny) (values :deny (capability-policy-rule-id (matching :deny))))
+            ((matching :ask) (values :ask (capability-policy-rule-id (matching :ask))))
+            ((matching :allow) (values :allow (capability-policy-rule-id (matching :allow))))
+            (t (capability-mode-decision (session-capability-mode session) (tool-effects tool)))))))
+
 (defun authorize-tool-call (session tool)
   "Record and return a local capability decision for TOOL in SESSION.
 
@@ -288,7 +340,7 @@ reasoning suggestion.  The returned plist has :ALLOWED-P, :DECISION, and
 :RULE-ID keys."
   (let ((effects (copy-list (tool-effects tool))))
     (multiple-value-bind (decision rule-id)
-        (capability-mode-decision (session-capability-mode session) effects)
+        (decide-tool-capability session tool)
       (record-session-event
        session :tool-capability-decided :component (tool-name tool)
        :status (string-downcase (symbol-name decision))
@@ -375,7 +427,7 @@ startup rather than silently falling back to the host model."
 
 (defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit
                               (subagent-depth 0) max-subagent-depth subagent-model-profiles settings
-                              context-compaction-threshold (capability-mode :full))
+                              context-compaction-threshold (capability-mode :full) (policy-rules nil))
   (let* ((settings (or settings (load-agent-settings)))
          (profiles (normalize-subagent-model-profiles subagent-model-profiles))
          (base-prompt (or system-prompt *default-system-prompt*))
@@ -388,6 +440,7 @@ startup rather than silently falling back to the host model."
                            :tools tools
                            :tool-catalog tools
                            :capability-mode (normalize-capability-mode capability-mode)
+                           :policy-rules policy-rules
                            :orchestration-mode (normalize-orchestration-mode
                                                 (or orchestration-mode
                                                     (setinka:config :orchestration-mode settings)))
@@ -1695,11 +1748,15 @@ entirely."
              (result (cond (validation-error (invalid-tool-call-result tool-call validation-error))
                            ((and authorization (not (getf authorization :allowed-p)))
                             (with-output-to-string (stream)
-                              (princ (make-condition 'capability-denied
-                                                     :tool-name (tool-name tool)
-                                                     :mode (session-capability-mode session)
-                                                     :effects (getf authorization :effects)
-                                                     :rule-id (getf authorization :rule-id))
+                              (princ (if (eq (getf authorization :decision) :ask)
+                                         (make-condition 'capability-approval-required
+                                                         :tool-name (tool-name tool)
+                                                         :rule-id (getf authorization :rule-id))
+                                         (make-condition 'capability-denied
+                                                         :tool-name (tool-name tool)
+                                                         :mode (session-capability-mode session)
+                                                         :effects (getf authorization :effects)
+                                                         :rule-id (getf authorization :rule-id)))
                                      stream)))
                            (veto (format nil "Tool call vetoed by a :before-tool-call hook: ~a" veto))
                            (t (call-tool (getf ctx :tool-name) (getf ctx :arguments)))))
@@ -2165,6 +2222,47 @@ unrestricted compatibility behavior."
                                     :status "finished" :payload (list :mode mode))
               (ui-system frontend (format nil "Capability mode switched to ~(~a~)." mode)))
           (error (condition) (ui-error frontend condition)))))
+  t)
+
+(define-slash-command policy (session arg)
+  "Usage: /policy [list|clear|allow TOOL|ask TOOL|deny TOOL].
+
+Rules are session-local.  Explicit denies outrank asks and allows; a rule made
+with this command matches every declared effect of its named tool."
+  (let* ((frontend (session-frontend session))
+         (words (uiop:split-string (string-trim " " arg) :separator " "))
+         (action (or (first words) "list"))
+         (tool-name (second words)))
+    (cond
+      ((string-equal action "list")
+       (let ((rules (session-policy-rules session)))
+         (ui-system frontend
+                    (if rules
+                        (format nil "Policy rules:~%~{~a~%~}"
+                                (mapcar (lambda (rule)
+                                          (format nil "  ~a · ~(~a~)~a~a"
+                                                  (capability-policy-rule-id rule)
+                                                  (capability-policy-rule-effect rule)
+                                                  (let ((name (capability-policy-rule-tool-name rule)))
+                                                    (if name (format nil " · tool ~a" name) ""))
+                                                  (let ((effects (capability-policy-rule-capabilities rule)))
+                                                    (if effects
+                                                        (format nil " · effects ~{~(~a~)~^, ~}" effects)
+                                                        ""))))
+                                        rules))
+                        "No explicit policy rules; the capability mode supplies the default."))))
+      ((string-equal action "clear")
+       (setf (session-policy-rules session) nil)
+       (record-session-event session :capability-policy-rules-cleared :component "policy" :status "finished")
+       (ui-system frontend "Cleared session policy rules."))
+      ((member (string-downcase action) '("allow" "ask" "deny") :test #'string=)
+       (if (or (null tool-name) (third words))
+           (ui-system frontend "Usage: /policy allow|ask|deny TOOL")
+           (let ((rule (add-capability-policy-rule session action :tool-name tool-name)))
+             (ui-system frontend (format nil "Added policy rule ~a: ~(~a~) ~a."
+                                         (capability-policy-rule-id rule)
+                                         (capability-policy-rule-effect rule) tool-name)))))
+      (t (ui-system frontend "Usage: /policy [list|clear|allow TOOL|ask TOOL|deny TOOL]."))))
   t)
 
 (define-slash-command stats (session arg)
