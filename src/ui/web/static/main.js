@@ -11,6 +11,7 @@ import * as render from './render.js';
 import * as composer from './composer.js';
 import * as panels from './panels.js';
 import * as views from './views.js';
+import * as session from './session.js';
 import './agents.js';
 import { lispApi } from './lisp.js';
 
@@ -19,7 +20,7 @@ const $ = id => document.getElementById(id);
 
 // ---------- toasts and the mouse-documentation line ----------
 
-const DEFAULT_DOC = 'Enter: send · Tab: complete · ↑↓: history · Esc: abort · Alt-L: Lisp tab · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
+const DEFAULT_DOC = 'Enter: send · Tab: complete · ↑↓: history · Esc: abort · Alt-L: Lisp tab · Alt-M: model · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
 let docOverride = null;
 let docTimer = null;
 
@@ -71,7 +72,7 @@ function updateWholine() {
     el('span', { 'data-doc': 'Local time' }, `${date.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: 'short' })} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`),
     el('span', { 'data-doc': 'User and host' }, `${s.user || 'user'}@${s.host || 'localhost'}`),
     el('span', { 'data-doc': 'Package the agent reads Lisp in' }, 'CL-AGENT:'),
-    stats.provider ? el('span', { 'data-doc': 'Provider and model' }, `${stats.provider} · ${stats.model}`) : '',
+    stats.provider ? el('span', { class: 'mouse', 'data-doc': 'Provider and model · Click: choose the model (Alt-M)', onclick: () => session.openModelMenu() }, `${stats.provider} · ${stats.model}`) : '',
     stats.provider ? el('span', { 'data-doc': 'Session totals' },
       `${stats.requests} req · ${stats.tool_calls} tools · ${core.fmtCount(stats.total_tokens)} tok · ${core.fmtDuration(stats.elapsed_seconds)}`) : '',
     agents.length ? el('span', {
@@ -121,6 +122,7 @@ function installSplitter() {
 function installKeys() {
   document.addEventListener('keydown', e => {
     if (e.altKey && (e.key === 't' || e.key === 'T' || e.code === 'KeyT')) { e.preventDefault(); core.setTheme('toggle'); return; }
+    if (e.altKey && !e.ctrlKey && e.code === 'KeyM') { e.preventDefault(); session.openModelMenu(); return; }
     if (e.altKey && !e.ctrlKey && e.code === 'KeyL') {
       e.preventDefault();
       views.showView(views.activeView() === 'lisp' ? 'listener' : 'lisp');
@@ -221,6 +223,7 @@ render.install();
 composer.install();
 panels.install();
 views.install();
+session.install();
 installMousedoc();
 installKeys();
 installSplitter();
@@ -239,6 +242,8 @@ $('reset-all').addEventListener('click', async () => {
 
 on('theme', updateThemeButton);
 on('asset', onAsset);
+// The conversation was replaced (/session resume, restore, rewind): start over.
+on('reset', () => core.loadState());
 on('connection', connected => {
   updateTitle();
   updateWholine();

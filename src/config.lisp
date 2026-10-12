@@ -143,3 +143,46 @@ fail with a bare \"malformed property list\" error."
     ((listp value) value)
     (t (error ":MCP-SERVERS must be a server plist or a list of server plists, got ~s"
               value))))
+
+(defun config-text-with-model (text model &key replace)
+  "TEXT (config.lisp's contents) with :MODEL set to MODEL, edited in place so
+its comments and layout survive: with REPLACE, the existing :MODEL string is
+replaced; otherwise :MODEL is added first in the plist."
+  (cond
+    ((zerop (length (string-trim '(#\Space #\Tab #\Newline) text))) (format nil "(:model ~s)~%" model))
+    (replace
+     (let* ((key (search ":model" text :test #'char-equal))
+            (open (and key (position #\" text :start key)))
+            (close (and open (position #\" text :start (1+ open)))))
+       (unless close (error "config.lisp has a :model that is not a string; edit it by hand."))
+       (concatenate 'string (subseq text 0 open) (prin1-to-string model) (subseq text (1+ close)))))
+    (t
+     ;; The plist's own open paren: the first one outside a comment.
+     (let ((open (loop with i = 0
+                       while (< i (length text))
+                       do (case (char text i)
+                            (#\; (setf i (or (position #\Newline text :start i) (length text))))
+                            (#\( (return i))
+                            (t (incf i))))))
+       (unless open (error "config.lisp does not hold a plist; edit it by hand."))
+       (concatenate 'string (subseq text 0 (1+ open)) (format nil ":MODEL ~s~% " model)
+                    (subseq text (1+ open)))))))
+
+(defun save-config-model (model &optional (path (config-file-path)))
+  "Make MODEL the default :MODEL in config.lisp (see CONFIG-TEXT-WITH-MODEL).
+The edited text is read back with LOAD-USER-CONFIG before it replaces the
+file, so a file it cannot edit cleanly is left alone.  Returns PATH."
+  (let* ((exists (probe-file path))
+         (text (if exists (uiop:read-file-string path) ""))
+         (new (config-text-with-model text model
+                                      :replace (and exists (getf (load-user-config path) :model) t)))
+         (check (uiop:tmpize-pathname (merge-pathnames "cl-agent-config-check.lisp" (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn
+           (write-string-atomically check new)
+           (unless (equal (getf (load-user-config check) :model) model)
+             (error "Could not set :model in ~a safely; edit it by hand." path)))
+      (ignore-errors (delete-file check)))
+    (ensure-directories-exist path)
+    (write-string-atomically path new)
+    path))

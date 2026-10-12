@@ -65,6 +65,10 @@ threads rebind it, since hunchentoot's workers don't inherit dynamic bindings.")
    (input-channel :initform (trivial-channels:make-channel) :accessor web-frontend-input-channel))
   (:documentation "Browser UI at http://127.0.0.1:PORT/.  See ui/web/*.lisp."))
 
+(defvar *web-model-choice-pending* nil
+  "True while the page should ask which model to use: started with --ui web
+and no configured model, so the terminal did not prompt (main.lisp).")
+
 (defvar *web-instance-id*
   (format nil "~36r-~36r" (get-universal-time) (random (expt 36 6) (make-random-state t)))
   "Identifies this process to pages, so one that outlived a restart resyncs.")
@@ -199,6 +203,8 @@ CLAgent.registerUICommand) with ARGS, a JOBJ."
           "name" (json-or-null (and session (ignore-errors (session-display-name session))))
           "mode" (json-or-null (and session (ignore-errors (string-downcase (session-orchestration-mode session)))))
           "capabilities" (json-or-null (and session (ignore-errors (string-downcase (session-capability-mode session)))))
+          "provider" (json-or-null (and session (ignore-errors (provider-display-name (session-provider session)))))
+          "model" (json-or-null (and session (ignore-errors (provider-model (session-provider session)))))
           "user" (or (uiop:getenv "USER") (uiop:getenv "USERNAME") "user")
           "host" (or (ignore-errors (machine-instance)) "localhost")
           "cwd" (namestring (uiop:getcwd))
@@ -225,6 +231,7 @@ event it reflects.  Passed through the :WEB-UI-STATE chain hook."
                     "subagents" (jarray (mapcar #'web-subagent-json (web-frontend-subagents frontend))))))))
     (setf (gethash "session" state) (web-session-json frontend)
           (gethash "ui" state) (jobj "safe" (and safe t)
+                                     "model_pending" (and *web-model-choice-pending* t)
                                      "patches" (jarray (web-ui-patch-paths :safe safe))
                                      "overrides" (jarray (web-asset-override-paths))
                                      "directory" (namestring (web-ui-directory))
@@ -356,6 +363,39 @@ or the frontend stops.  Holds one hunchentoot worker thread per open page."
 (defmethod ui-show-tool-call-assistant-text-p ((frontend web-frontend))
   (declare (ignore frontend))
   nil)
+
+(defun web-message-text (content)
+  (cond ((stringp content) content)
+        ((null content) "")
+        (t (princ-to-string content))))
+
+(defmethod ui-conversation-replaced ((frontend web-frontend) session)
+  "Rebuild the transcript from SESSION's restored messages.  Pages reload
+their state on the \"reset\" event; the conversation then arrives through
+the same methods a live turn uses, so it renders the same way."
+  (with-web-state (frontend)
+    (setf (web-frontend-transcript frontend) nil
+          (web-frontend-activity frontend) nil
+          (web-frontend-open-tool-calls frontend) nil
+          (web-frontend-pending frontend) ""
+          (web-frontend-turn frontend) 0)
+    (web-frontend-publish frontend "reset" (jobj)))
+  (let ((tool-names (make-hash-table :test 'equal)))
+    (dolist (message (session-messages session))
+      (let ((role (getf message :role))
+            (text (web-message-text (getf message :content))))
+        (cond ((equal role "user") (web-frontend-push frontend "user" text))
+              ((equal role "assistant")
+               (when (plusp (length (string-trim '(#\Space #\Tab #\Newline) text)))
+                 (ui-assistant-text frontend text))
+               (dolist (call (getf message :tool-calls))
+                 (setf (gethash (getf call :id) tool-names) (getf call :name))
+                 (ui-tool-started frontend (or (getf call :name) "tool")
+                                  (let ((arguments (getf call :arguments)))
+                                    (if (hash-table-p arguments) arguments (jobj))))))
+              ((equal role "tool")
+               (ui-tool-finished frontend (or (gethash (getf message :tool-call-id) tool-names) "tool")
+                                 nil text)))))))
 
 (defmethod ui-discard-assistant-pending ((frontend web-frontend))
   (with-web-state (frontend)

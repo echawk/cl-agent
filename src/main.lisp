@@ -113,10 +113,16 @@ message and a non-zero exit, not a Lisp backtrace."
                                          :base-url (config-value config :base-url)
                                          :api-key-env (config-value config :api-key-env)
                                          :ensure-ready t)))
-          ;; An ACP/MCP stdio server must never prompt on its protocol stream.
+          ;; An ACP/MCP stdio server must never prompt on its protocol stream,
+          ;; and the web UI asks in the page instead of the terminal.
           (unless (or configured-model (clingon:getopt cmd :acp-serve)
                       (clingon:getopt cmd :mcp-serve))
-            (setf (provider-model provider) (prompt-for-provider-model provider)))
+            (if (eq (resolve-ui-keyword (clingon:getopt cmd :ui) config) :web)
+                (progn
+                  (setf *web-model-choice-pending* t)
+                  (format t "~&No model is configured: choose one in the web UI (using ~a meanwhile).~%"
+                          (provider-model provider)))
+                (setf (provider-model provider) (prompt-for-provider-model provider))))
           (multiple-value-bind (loaded failed) (load-enabled-extensions)
             (declare (ignore loaded))
             (when failed

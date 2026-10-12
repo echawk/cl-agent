@@ -225,7 +225,12 @@ export function el(tag, attrs = {}, ...children) {
     if (value === undefined || value === null || value === false) continue;
     if (key === 'class') node.className = value;
     else if (key === 'dataset') Object.assign(node.dataset, value);
-    else if (key === 'style' && typeof value === 'object') Object.assign(node.style, value);
+    else if (key === 'style' && typeof value === 'object') {
+      // Custom properties (--tab-color) only take effect through setProperty.
+      for (const [name, v] of Object.entries(value)) {
+        if (name.startsWith('--')) node.style.setProperty(name, v); else node.style[name] = v;
+      }
+    }
     else if (key.startsWith('on') && typeof value === 'function') node.addEventListener(key.slice(2), value);
     else if (key === 'html') node.innerHTML = value;
     else node.setAttribute(key, value === true ? '' : value);

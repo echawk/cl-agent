@@ -597,6 +597,15 @@ default; switch to dark with the ◐ button, `Alt-T`, or `/theme dark`.
   pointer is over.
 - **Lisp tab** (`Alt-L`): a SLY-style REPL on the agent's own image, beside
   a scratch buffer the agent shares (see below).
+- **Pick up where you left off**: when the page finds an empty conversation (a
+  fresh start, or cl-agent restarted under an open page), it offers to resume
+  your most recent sessions. Resuming runs `/session resume` and replays the
+  conversation into the Listener; **Start fresh** dismisses the offer.
+- **Model picker**: the title bar's model button (or `Alt-M`, or clicking the
+  model in the who-line) lists the provider's models and switches between
+  them. Started with `--ui web` and no `:model` configured, cl-agent asks in
+  the page rather than in the terminal. **Make it my default** writes
+  `:model` into `config.lisp`, keeping your comments.
 
 ### The Lisp tab
 

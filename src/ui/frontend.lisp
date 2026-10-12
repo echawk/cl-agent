@@ -81,6 +81,15 @@ model. Default: no-op.")
     (declare (ignore label text))
     (values)))
 
+(defgeneric ui-conversation-replaced (frontend session)
+  (:documentation "SESSION's conversation was replaced wholesale (/session
+resume, restore, rewind, restore-checkpoint): a frontend that keeps its own
+transcript should rebuild it from (SESSION-MESSAGES SESSION).  The default
+does nothing; a terminal's scrollback cannot be rewritten anyway.")
+  (:method ((frontend agent-frontend) session)
+    (declare (ignore session))
+    (values)))
+
 (defgeneric ui-session-event (frontend event)
   (:documentation "Publish a durable session EVENT to a frontend activity view.
 EVENT is a data-only, versioned envelope already committed to the session

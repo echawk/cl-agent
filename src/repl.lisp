@@ -2412,6 +2412,7 @@ session settings; LIST displays every saved snapshot."
                (ui-system (session-frontend session) "Usage: /session restore NAME")
                (multiple-value-bind (record missing-tools)
                    (restore-session-snapshot session name)
+                 (ui-conversation-replaced (session-frontend session) session)
                  (ui-stats-updated (session-frontend session) (session-stats-snapshot session))
                  (ui-system (session-frontend session)
                             (format nil "Restored session ~a (~d message~:p)~@[. Unavailable tools were skipped: ~{~a~^, ~}~]."
@@ -2434,6 +2435,7 @@ session settings; LIST displays every saved snapshot."
                (ui-system (session-frontend session) "Usage: /session resume ID")
                (multiple-value-bind (resumed events) (resume-session session name)
                  (declare (ignore resumed))
+                 (ui-conversation-replaced (session-frontend session) session)
                  (ui-stats-updated (session-frontend session) (session-stats-snapshot session))
                  (ui-system (session-frontend session)
                             (format nil "Resumed durable session ~a (~d event~:p)." name (length events))))))
@@ -2480,6 +2482,7 @@ session settings; LIST displays every saved snapshot."
              (if checkpoint
                  (progn
                    (rewind-session session (getf checkpoint :through-sequence))
+                   (ui-conversation-replaced (session-frontend session) session)
                    (ui-system (session-frontend session)
                               (format nil "Restored checkpoint ~a." (getf checkpoint :name))))
                  (ui-system (session-frontend session) "Usage: /session restore-checkpoint NAME (or unknown checkpoint)."))))
@@ -2499,6 +2502,7 @@ session settings; LIST displays every saved snapshot."
                  (multiple-value-bind (rewound restored)
                      (rewind-session session sequence :files-p files-p)
                    (declare (ignore rewound))
+                   (ui-conversation-replaced (session-frontend session) session)
                    (ui-system (session-frontend session)
                               (format nil "Rewound conversation to event ~d~@[ and restored ~d guarded file edit~:p~]."
                                       sequence files-p restored))))))

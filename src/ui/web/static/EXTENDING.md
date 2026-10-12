@@ -20,6 +20,7 @@ changes restyle in place, anything else reloads the page.
 | `menu.js` | The completion menu, shared by the input line and the Lisp editors. |
 | `lisp-editor.js` | The Lisp code editor: highlighting, rainbow parens, indentation, key sequences. |
 | `lisp.js` | The Lisp tab (REPL, scratch buffer, debugger, echo area) and the Inspect panel. |
+| `session.js` | The resume-a-session card and the model picker (title bar, Alt-M). |
 | `main.js` | Boot, `window.CLAgent`, who-line, mouse-doc line, keys, toasts, live reload. |
 | `patches/*.css`, `patches/*.js` | **Your additions.** Loaded after the core files, in name order. |
 
@@ -77,6 +78,7 @@ A.on(type, fn)          // returns an unsubscribe function; fn(detail, state)
                         // types: state change message delta pending activity status
                         // subagents asset ui ui:<command> connection theme panels views
                         // lisp-entry lisp-output lisp-scratch lisp-clear (the Lisp tab)
+                        // reset (the conversation was replaced) model (switched)
 A.api(path, {method, body, params})   // fetch JSON; POSTs carry the CSRF header
 A.send(text)            // send a line as if typed; A.interrupt() aborts the turn
 A.insert(text)          // put text in the input box

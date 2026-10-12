@@ -519,6 +519,50 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .prose { color: var(--ink-2); font-size: 0.92em; }
 .prose p { margin: 0 0 8px; }
 
+/* ---------- resume card, model picker (session.js) ---------- */
+
+.offer { flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 0; }
+.offer-card { border: var(--border) solid var(--rule); background: var(--paper); box-shadow: var(--shadow); }
+.offer-title {
+  padding: 1px 10px;
+  background: var(--card-color, var(--ink)); color: var(--card-on, var(--paper));
+  font-size: 0.75em; font-weight: 700; letter-spacing: .1em; text-transform: uppercase;
+}
+.offer-lead { margin: 8px 12px; color: var(--ink-2); }
+.offer-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 10px; padding: 6px 12px 10px; }
+.resume-row { display: flex; align-items: center; gap: 12px; padding: 6px 12px; }
+.resume-row + .resume-row { border-top: 1px dashed var(--rule-soft); }
+.resume-row.primary { background: var(--paper-2); }
+.resume-text { flex: 1; min-width: 0; }
+.resume-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resume-row.primary .resume-name { color: var(--user); }
+.resume-meta { color: var(--ink-2); font-size: 0.86em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.resume-more summary { padding: 4px 12px; color: var(--ink-2); font-size: 0.88em; cursor: pointer; }
+
+.model-button { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; }
+.model-button.pending { background: var(--yellow); color: var(--on-yellow); border-color: var(--yellow); }
+.model-menu {
+  position: fixed; z-index: 30;
+  width: min(440px, calc(100vw - 16px));
+  background: var(--paper);
+  border: var(--border) solid var(--rule);
+  box-shadow: var(--shadow);
+}
+.model-menu-body { display: flex; flex-direction: column; gap: 6px; padding: 8px; }
+.model-menu-head { color: var(--ink-2); font-size: 0.88em; }
+.model-filter { width: 100%; }
+.offer-card .model-filter { width: calc(100% - 24px); margin: 0 12px 6px; }
+.model-list { display: flex; flex-direction: column; max-height: min(360px, 50vh); overflow-y: auto; }
+.offer-card .model-list { margin: 0 12px; border: 1.5px solid var(--rule-soft); }
+.model-option {
+  display: flex; align-items: center; gap: 8px;
+  padding: 2px 8px; border: 0; background: transparent; text-align: left;
+}
+.model-option:hover, .model-option:focus-visible { background: var(--select); }
+.model-option.current { font-weight: 700; color: var(--assistant); }
+.model-mark { width: 1.2ch; color: var(--green); }
+.model-remember { color: var(--ink-2); font-size: 0.86em; display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+
 /* ---------- Lisp tab ---------- */
 
 .lisp-view { container-type: inline-size; }
