@@ -6,7 +6,7 @@ This plan covers two things:
 - How cl-agent would load [Lem](https://github.com/lem-project/lem) into its own image as a library. Lem would drive cl-agent's text inputs (the composer, the Lisp REPL input and the scratch buffer) with Lem's editing commands, keymaps and modes, configured by the user's own Lem init file.
 - How Lem would then syntax-highlight Markdown and code in the transcript by language, so a C block highlights as C (section 7).
 
-Lem citations are `path:line` in the Lem repository, as of commit `887b7b4f` (2026-06-28). That is the checkout at `~/tmp/lem`. Lem's internals move, so re-check each citation when pinning a newer commit.
+Lem citations are `path:line` in the upstream repository, github.com/lem-project/lem, at commit `887b7b4f` (2026-06-28). Lem's internals move, so re-check each citation when pinning a newer commit.
 
 ---
 
@@ -14,10 +14,10 @@ Lem citations are `path:line` in the Lem repository, as of commit `887b7b4f` (20
 
 - **Editing behaviour comes from Lem.** Keys typed into a cl-agent input box run Lem commands on a Lem buffer. If the user's init file enables vi-mode, the composer is modal. If it rebinds `C-w`, that binding applies here too.
 - **The look stays cl-agent's.** The web page keeps rendering its own editors (`lisp-editor.js`, `composer.js`) with its own highlighting, completion menu and echo area. Lem supplies the text, cursor, mark and messages; it does not draw the page.
-- **The user's configuration is honoured.** That means `init.lisp` (or `~/.lemrc`) from Lem's home directory, with the same lookup and the same package that Lem uses.
+- **The user's configuration is honoured.** That means the init file Lem itself would load, found by the same lookup and read in the same package.
 - **It is optional.** A setting chooses between `:builtin`, today's editors, and `:lem`. If Lem fails to load or start, cl-agent falls back to the built-in editors and says why.
 
-On this machine Lem's home is `~/.config/lem/`. It holds `config.lisp`, which records only `(:ISEARCH-PREVIOUS-STRING "")`, plus prompt histories, and **no `init.lisp` yet**. Today the "user configuration" is therefore Lem's defaults (Emacs keys) plus history. Anything added to `init.lisp` later is picked up.
+A user without an init file gets Lem's defaults (Emacs keys) plus their saved history. Anything added to the init file later is picked up.
 
 ---
 
@@ -74,8 +74,8 @@ The rest of this document describes option **B**.
 - So a cl-agent minor mode's binding for Return beats both vi and Emacs bindings.
 
 **The init file**
-- `lem-home` (`src/config.lisp:3-8`) is `$LEM_HOME`, otherwise `~/.lem/` if it exists, otherwise `$XDG_CONFIG_HOME/lem/`.
-- `load-init-file` (`src/lem.lisp:43-55`, internal) loads `init.lisp` from there, or `~/.lemrc`, plus `./.lemrc` when the current directory isn't home. It reads them in package `LEM-USER`.
+- `lem-home` (`src/config.lisp:3-8`) is `$LEM_HOME`, otherwise a `.lem` directory in the user's home if one exists, otherwise `lem/` under the XDG config directory.
+- `load-init-file` (`src/lem.lisp:43-55`, internal) loads `init.lisp` from there, or else a `.lemrc` in the user's home, plus a `.lemrc` in the current directory when that isn't the home directory. It reads them in package `LEM-USER`.
 - `config.lisp` and `history/` in lem-home are **written by Lem** (`src/config.lisp:13-40`; isearch `src/ext/isearch.lisp:101-108`; themes `src/color-theme.lisp:113-114`).
 
 **lisp-mode and micros**
@@ -220,7 +220,7 @@ The page applies the edits to its textarea, sets the selection from point and ma
 
 ### 4.8 The user's configuration
 
-- **Where it comes from:** use Lem's `lem-home` as it is: `$LEM_HOME`, `~/.lem/` or `~/.config/lem/`. On this machine that is `~/.config/lem/`.
+- **Where it comes from:** use Lem's `lem-home` as it is (§3).
   - Add a cl-agent setting, `:lem-home`, that overrides it by setting `LEM_HOME` before the editor thread starts. `lem-home` reads that variable on every call (`src/config.lisp:3-8`).
 - **Loading:** `init.lisp`/`.lemrc` are loaded exactly as Lem loads them (§4.3), in `LEM-USER`, inside Lem's error handler. If the init file fails, Lem shows an `*EDITOR ERROR*` buffer.
   - Our frontend notices this, since the error buffer is switched to, and reports the error in cl-agent's echo area and system log rather than hiding it.
@@ -274,7 +274,7 @@ The page applies the edits to its textarea, sets the selection from point and ma
 
 ## 6. Phases
 
-Each phase ends with tests, using the existing test isolation: `CL_AGENT_CONFIG_DIR` points at a temp directory. **`LEM_HOME` must also point into it**, so tests never read or write the real `~/.config/lem`. Add this to `call-with-test-state` alongside the config directory, refusing to run if it resolves inside the user's real lem-home.
+Each phase ends with tests, using the existing test isolation: `CL_AGENT_CONFIG_DIR` points at a temp directory. **`LEM_HOME` must also point into it**, so tests never read or write the user's real lem-home. Add this to `call-with-test-state` alongside the config directory, refusing to run if it resolves inside the user's real lem-home.
 
 1. **Spike: load and start.**
    - Pin Lem, set up the `:tree` and build `cl-agent/lem`.
