@@ -669,6 +669,13 @@ that works on files works on it.
   block is coloured as C.
 - **Editing** uses the Lisp tab's editor: Emacs keys, `M-/`, and
   `Tab`/`Shift-Tab` to indent. `C-x C-s` saves at once.
+- **Completion**: `Tab` (or `C-M-i`) after a word completes the way Lem's
+  lsp-mode does. Candidates come from the buffer's language server, sorted
+  by its own order, each replacing from where the server says. Its trigger
+  characters (`.`, `->`, `::` …) open the menu by themselves; as in the
+  Lisp tab, the menu narrows as you type and a sole match goes straight in.
+  Without a language server, the buffer's own words complete, nearest
+  first. The server starts when the buffer opens, as in Lem.
 - **The language server** configured for the extension checks the buffer.
   **Check** (`C-c C-c`) lists its diagnostics (click one to go there), and
   `C-c C-d d` shows its hover text. With no `lsp.sexp`, cl-agent uses

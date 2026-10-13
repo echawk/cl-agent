@@ -2,8 +2,10 @@
 (t/test-scratch.lisp): standard library only, stdio transport.
 
 It keeps each opened document's text, publishes one warning diagnostic for
-every "FIXME" in it, and answers hover with "fake hover: WORD" for the word
-at the position.  Every other request gets a null result.
+every "FIXME" in it, answers hover with "fake hover: WORD" for the word at
+the position, and completes with COMPLETIONS below (".member" replacing from
+the dot before the position, when there is one).  Every other request gets a
+null result.
 """
 
 import json
@@ -11,6 +13,14 @@ import re
 import sys
 
 documents = {}
+
+# sortText puts greet_all before greeting; callme is a snippet.
+COMPLETIONS = [
+    {"label": "greeting", "kind": 6, "detail": "a variable", "sortText": "b"},
+    {"label": "greet_all", "kind": 3, "detail": "void greet_all(void)", "sortText": "a"},
+    {"label": "grumble", "kind": 3, "sortText": "c"},
+    {"label": "callme", "kind": 3, "insertText": "callme(${1:arg})$0", "insertTextFormat": 2, "sortText": "d"},
+]
 
 
 def read_message():
@@ -62,7 +72,19 @@ while True:
         break
     method, ident, params = message.get("method"), message.get("id"), message.get("params") or {}
     if method == "initialize":
-        send({"id": ident, "result": {"capabilities": {"textDocumentSync": 1, "hoverProvider": True}}})
+        send({"id": ident, "result": {"capabilities": {
+            "textDocumentSync": 1, "hoverProvider": True,
+            "completionProvider": {"triggerCharacters": [".", "->"]}}}})
+    elif method == "textDocument/completion":
+        position = params["position"]
+        lines = documents.get(params["textDocument"]["uri"], "").split("\n")
+        line = lines[position["line"]] if position["line"] < len(lines) else ""
+        items = list(COMPLETIONS)
+        if 0 < position["character"] <= len(line) and line[position["character"] - 1] == ".":
+            start = {"line": position["line"], "character": position["character"] - 1}
+            items.append({"label": "member", "kind": 5, "sortText": "0",
+                          "textEdit": {"newText": ".member", "range": {"start": start, "end": position}}})
+        send({"id": ident, "result": {"isIncomplete": False, "items": items}})
     elif method == "shutdown":
         send({"id": ident, "result": None})
     elif method == "exit":

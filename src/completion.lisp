@@ -147,7 +147,9 @@ TEXT at CURSOR: replace TEXT[START, END) with a candidate's :VALUE."
                                          (jobj "value" (getf c :value) "display" (getf c :display)
                                                "doc" (json-or-null (getf c :doc))
                                                "kind" (json-or-null (getf c :kind))
-                                               "match" (jarray (mapcar #'jarray (getf c :match)))))
+                                               "match" (jarray (mapcar #'jarray (getf c :match)))
+                                               ;; Where this one replaces from, when not the result's start.
+                                               "start" (json-or-null (getf c :start))))
                                        candidates)))))
 
 ;;; --- 10: slash command names ---

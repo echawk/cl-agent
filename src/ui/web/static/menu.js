@@ -23,6 +23,8 @@ const TITLES = {
   'lisp-flex': 'Lisp symbols · flex',
   'lisp-keywords': 'Keyword arguments',
   'lisp-files': 'Files',
+  lsp: 'Language server',
+  'buffer-words': 'Words in this buffer',
 };
 
 const plainCtrl = e => e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;

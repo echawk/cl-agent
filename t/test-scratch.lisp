@@ -167,3 +167,57 @@ or skip it (passing) when python3 is not installed."
                (check-equal (mapcar #'cl-lsp:lsp-server-configuration-name available) '("builtin-fake"))
                (check-equal unavailable '("missing") "servers that are not installed are left out"))
           (close-lsp-servers))))))
+
+;;; --- completion ---
+
+(defun scratch-completion-values (result) (mapcar (lambda (c) (getf c :value)) (getf result :candidates)))
+
+(defun complete-scratch (name text cursor)
+  "Save TEXT to buffer NAME, then complete at CURSOR, as the Code tab does."
+  (scratch-buffer-save name text)
+  (scratch-buffer-complete name text cursor))
+
+(deftest scratch-completion-comes-from-the-language-server-as-in-lem ()
+  (with-fake-lsp-server ()
+    (scratch-buffer-create "complete" "fakelang")
+    (let ((result (complete-scratch "complete" "x = gre" 7)))
+      (check-equal (getf result :source) "lsp" (getf result :message))
+      (check-equal (scratch-completion-values result) '("greet_all" "greeting") "filtered by the word, sorted by sortText")
+      (check-equal (getf result :start) 4)
+      (check-equal (getf (first (getf result :candidates)) :kind) "function")
+      (check-equal (getf (first (getf result :candidates)) :doc) "void greet_all(void)")
+      (check (member "." (getf result :triggers) :test #'string=) "the server's trigger characters"))
+    (check-equal (scratch-buffer-lsp-start "complete") '("." "->") "known as soon as the buffer opens")
+    (check-equal (scratch-completion-values (complete-scratch "complete" "cal" 3)) '("callme(arg)")
+                 "snippets become plain text")
+    (check-equal (scratch-completion-values (complete-scratch "complete" "grml" 4)) '("grumble")
+                 "no prefix match: SLY's flex")
+    (let* ((result (complete-scratch "complete" "obj." 4))
+           (member (find ".member" (getf result :candidates) :key (lambda (c) (getf c :value)) :test #'equal)))
+      (check member "a textEdit's item")
+      (check-equal (getf member :start) 3 "replaces from its edit's start, the dot"))))
+
+(deftest scratch-completion-falls-back-to-the-buffers-words ()
+  (scratch-buffer-create "words" "Text")
+  (let ((result (scratch-buffer-complete "words" (format nil "alpha alphabet alps~%al") 22)))
+    (check-equal (getf result :source) "buffer-words")
+    (check-equal (scratch-completion-values result) '("alps" "alphabet" "alpha") "nearest first")
+    (check-equal (getf result :start) 20))
+  (let* ((text (format nil "~c bonjour~%bon" (code-char #x1F600)))
+         (result (scratch-buffer-complete "words" text 14)))
+    (check-equal (scratch-completion-values result) '("bonjour"))
+    (check-equal (getf result :start) 11 "offsets are UTF-16, as the browser counts")))
+
+(deftest scratch-completion-route-saves-first ()
+  (with-fake-lsp-server ()
+    (with-test-web-frontend (frontend)
+      (scratch-buffer-create "routed" "fakelang" :text "")
+      (let* ((version (nth-value 1 (scratch-buffer-contents "routed")))
+             (reply (json-decode (web-post frontend "/api/scratch/complete"
+                                           :json (jobj "name" "routed" "text" "greet" "cursor" 5 "base" version)))))
+        (check-equal (scratch-buffer-contents "routed") "greet" "the server sees what is being typed")
+        (check-equal (mapcar (lambda (c) (gethash "value" c)) (gethash "candidates" reply)) '("greet_all" "greeting"))
+        (check (> (gethash "version" reply) version))
+        (check-equal (nth-value 1 (web-post frontend "/api/scratch/complete"
+                                            :json (jobj "name" "routed" "text" "other" "cursor" 1 "base" version)))
+                     409 "a stale editor is told, as when saving")))))

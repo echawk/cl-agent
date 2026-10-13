@@ -273,3 +273,216 @@ scratch buffer NAME, or NIL."
                            ((consp value) (mapc #'collect value)))))
             (collect contents))))
       (and texts (format nil "~{~a~^~%~%~}" (nreverse texts))))))
+
+;;; --- completion, the way Lem's lsp-mode completes ---
+;;;
+;;; Like Lem's TEXT-DOCUMENT/COMPLETION (lem-lsp-mode), but over the same
+;;; cl-lsp connection Check and hover use, so a file has one server: the
+;;; server's items, sorted by sortText, each replacing from its textEdit's
+;;; start (or the word before the cursor), filtered by that word (prefix,
+;;; then SLY's flex).  Without a server -- or when it offers nothing -- the
+;;; buffer's own words complete, nearest first, as M-/ would.  Positions
+;;; crossing the browser are UTF-16 offsets, as LSP's are.
+
+(defparameter *lsp-completion-kinds*
+  #("text" "method" "function" "constructor" "field" "variable" "class" "interface" "module"
+    "property" "unit" "value" "enum" "keyword" "snippet" "color" "file" "reference" "folder"
+    "enum-member" "constant" "struct" "event" "operator" "type-parameter")
+  "LSP's CompletionItemKind names, 1-based.")
+
+(defparameter *lsp-completion-timeout* 10
+  "Seconds to wait for a language server's completions.")
+
+(defun lsp-completion-kind (number)
+  (and (integerp number) (<= 1 number (length *lsp-completion-kinds*))
+       (aref *lsp-completion-kinds* (1- number))))
+
+(defun completion-menu-kind (kind)
+  "The completion menu's kind class (menu.js colours these) for LSP KIND."
+  (cond ((member kind '("method" "function" "constructor") :test #'equal) "function")
+        ((member kind '("field" "variable" "property" "value") :test #'equal) "variable")
+        ((member kind '("class" "interface" "struct" "enum" "type-parameter") :test #'equal) "class")
+        ((member kind '("keyword" "operator") :test #'equal) "keyword")
+        ((member kind '("module" "file" "folder") :test #'equal) "package")
+        (t (or kind "symbol"))))
+
+(defun utf16-units (char) (if (>= (char-code char) #x10000) 2 1))
+
+(defun char-index-at-utf16 (text offset)
+  "The character index in TEXT at UTF-16 OFFSET (clamped)."
+  (loop with units = 0
+        for i from 0 below (length text)
+        while (< units offset)
+        do (incf units (utf16-units (char text i)))
+        finally (return (min i (length text)))))
+
+(defun utf16-offset-at (text index)
+  (loop for i from 0 below (min index (length text)) sum (utf16-units (char text i))))
+
+(defun lsp-position-of (text index)
+  "The LSP (LINE . CHARACTER) of character INDEX in TEXT."
+  (let* ((line-start (1+ (or (position #\Newline text :end index :from-end t) -1))))
+    (cons (count #\Newline text :end index)
+          (utf16-offset-at (subseq text line-start index) (- index line-start)))))
+
+(defun lsp-position-index (text line character)
+  "The character index in TEXT of LSP position LINE, CHARACTER (clamped)."
+  (let ((start 0))
+    (dotimes (i line) (setf start (1+ (or (position #\Newline text :start start) (1- (length text))))))
+    (let ((end (or (position #\Newline text :start (min start (length text))) (length text))))
+      (+ start (char-index-at-utf16 (subseq text (min start end) end) character)))))
+
+(defun identifier-char-p (char)
+  (or (alphanumericp char) (member char '(#\_ #\$))))
+
+(defun word-start-before (text index)
+  (loop while (and (> index 0) (identifier-char-p (char text (1- index)))) do (decf index))
+  index)
+
+(defun strip-snippet (text)
+  "TEXT, an LSP snippet, as plain text: ${1:x} is x, $1 and $0 vanish."
+  (with-output-to-string (out)
+    (loop with i = 0 with n = (length text)
+          while (< i n)
+          do (let ((c (char text i)))
+               (cond ((and (char= c #\\) (< (1+ i) n)) (write-char (char text (1+ i)) out) (incf i 2))
+                     ((and (char= c #\$) (< (1+ i) n) (char= (char text (1+ i)) #\{))
+                      (let* ((close (or (position #\} text :start i) (1- n)))
+                             (colon (position #\: text :start i :end close)))
+                        (when colon (write-string (strip-snippet (subseq text (1+ colon) close)) out))
+                        (setf i (1+ close))))
+                     ((and (char= c #\$) (< (1+ i) n) (digit-char-p (char text (1+ i))))
+                      (incf i 2)
+                      (loop while (and (< i n) (digit-char-p (char text i))) do (incf i)))
+                     (t (write-char c out) (incf i)))))))
+
+(defun lsp-completion-items (path line character)
+  "The completion items PATH's language servers give at LINE, CHARACTER;
+their trigger characters; and the errors of servers that failed."
+  (let ((items nil) (triggers nil) (errors nil))
+    (dolist (row (cl-lsp:lsp-manager-map-file
+                  (ensure-lsp-initialized) (truename path) (lsp-workspace-boundary (truename path))
+                  (lambda (client document)
+                    (let ((provider (json-path (cl-lsp:lsp-client-capabilities client) "completionProvider")))
+                      (when provider
+                        (let ((characters (json-path provider "triggerCharacters")))
+                          (when (vectorp characters) (setf triggers (append triggers (coerce characters 'list)))))
+                        (cl-lsp:lsp-transport-request
+                         (cl-lsp:lsp-client-transport client) "textDocument/completion"
+                         (cl-lsp:json-object
+                          "textDocument" (cl-lsp:json-object "uri" (cl-lsp:lsp-path-uri (cl-lsp:lsp-document-path document)))
+                          "position" (cl-lsp:json-object "line" line "character" character)
+                          "context" (cl-lsp:json-object "triggerKind" 1))
+                         :timeout *lsp-completion-timeout*))))))
+      (when (getf row :error) (push (format nil "~a: ~a" (getf row :server) (getf row :error)) errors))
+      (let* ((result (getf row :result))
+             (list (if (hash-table-p result) (gethash "items" result) result)))
+        (when (vectorp list) (setf items (append items (coerce list 'list))))))
+    (values items (remove-duplicates triggers :test #'equal) (nreverse errors))))
+
+(defun scratch-buffer-lsp-start (name)
+  "Start scratch buffer NAME's language servers, as Lem's lsp-mode does when
+a file opens, and return their completion trigger characters."
+  (let ((path (require-scratch-buffer name))
+        (triggers nil))
+    (when (scratch-buffer-lsp-servers path)
+      (dolist (row (cl-lsp:lsp-manager-map-file
+                    (ensure-lsp-initialized) (truename path) (lsp-workspace-boundary (truename path))
+                    (lambda (client document)
+                      (declare (ignore document))
+                      (json-path (cl-lsp:lsp-client-capabilities client) "completionProvider" "triggerCharacters"))))
+        (let ((characters (getf row :result)))
+          (when (vectorp characters) (setf triggers (append triggers (coerce characters 'list)))))))
+    (remove-duplicates triggers :test #'equal)))
+
+(defun lsp-item-candidate (item text index word-start)
+  "One completion candidate plist from LSP ITEM, Lem's way: its textEdit's
+new text from the edit's start, else its insertText or label from the word."
+  (let* ((label (string-trim " " (or (gethash "label" item) "")))
+         (edit (gethash "textEdit" item))
+         (range (and (hash-table-p edit) (or (gethash "range" edit) (gethash "insert" edit))))
+         (start (if range
+                    (min index (lsp-position-index text (json-path range "start" "line")
+                                                   (json-path range "start" "character")))
+                    word-start))
+         (snippet (eql (gethash "insertTextFormat" item) 2))
+         (raw (or (and (hash-table-p edit) (gethash "newText" edit)) (gethash "insertText" item) label))
+         (value (if snippet (strip-snippet raw) raw))
+         (kind (lsp-completion-kind (gethash "kind" item))))
+    (list :value value :display label :start start
+          :filter (or (gethash "filterText" item) label)
+          :sort (or (gethash "sortText" item) label)
+          :kind (completion-menu-kind kind) :kind-name kind
+          :doc (let ((detail (gethash "detail" item)))
+                 (and (stringp detail) (first-line detail))))))
+
+(defun buffer-word-candidates (text index word-start)
+  "Words in TEXT that extend the one before INDEX, nearest first."
+  (let ((prefix (subseq text word-start index))
+        (seen (make-hash-table :test 'equal))
+        (words nil))
+    (when (plusp (length prefix))
+      (loop with i = 0 with n = (length text)
+            while (< i n)
+            do (if (identifier-char-p (char text i))
+                   (let ((end (or (position-if-not #'identifier-char-p text :start i) n)))
+                     (let ((word (subseq text i end)))
+                       (when (and (/= i word-start) (> (length word) (length prefix))
+                                  (string-equal prefix word :end2 (length prefix))
+                                  (not (gethash word seen)))
+                         (setf (gethash word seen) t)
+                         (push (cons (abs (- i index)) word) words)))
+                     (setf i end))
+                   (incf i))))
+    (mapcar (lambda (entry)
+              (list :value (cdr entry) :display (cdr entry) :start word-start :filter (cdr entry)
+                    :kind "word" :doc "a word in this buffer"))
+            (stable-sort (nreverse words) #'< :key #'car))))
+
+(defun filter-completion-candidates (candidates prefix)
+  "CANDIDATES matching PREFIX (by their :filter text): by prefix, else by SLY's
+flex matching, each with :match ranges of its display."
+  (if (zerop (length prefix))
+      candidates
+      (flet ((matching (style)
+               (loop for candidate in candidates
+                     for ranges = (lisp-name-match style prefix (getf candidate :filter))
+                     when ranges
+                       collect (append (list :match (and (string= (getf candidate :filter) (getf candidate :display))
+                                                         ranges))
+                                       candidate))))
+        (or (matching :prefix) (matching :flex)))))
+
+(defun scratch-buffer-complete (name text cursor)
+  "Completion at UTF-16 offset CURSOR of TEXT, scratch buffer NAME's current
+(saved) text: a plist like COMPLETE-INPUT's, offsets in UTF-16, plus
+:TRIGGERS (the server's trigger characters) and :MESSAGE (why the server
+could not help, when it could not)."
+  (let* ((path (require-scratch-buffer name))
+         (index (char-index-at-utf16 text cursor))
+         (word-start (word-start-before text index))
+         (prefix (subseq text word-start index))
+         (position (lsp-position-of text index))
+         (items nil) (triggers nil) (message nil) (source "lsp"))
+    (when (scratch-buffer-lsp-servers path)
+      (handler-case
+          (multiple-value-bind (found trigger-strings errors) (lsp-completion-items path (car position) (cdr position))
+            (setf items found triggers trigger-strings)
+            (when (and errors (null found))
+              (setf message (format nil "The language server could not complete: ~{~a~^; ~}" errors))))
+        (error (condition) (setf message (format nil "The language server could not complete: ~a" condition)))))
+    (let ((candidates (filter-completion-candidates
+                       (stable-sort (mapcar (lambda (item) (lsp-item-candidate item text index word-start))
+                                            (remove-if-not #'hash-table-p items))
+                                    #'string< :key (lambda (c) (getf c :sort)))
+                       prefix)))
+      (unless candidates
+        (setf candidates (buffer-word-candidates text index word-start) source "buffer-words"))
+      (list :start (utf16-offset-at text word-start) :end cursor :token prefix
+            :candidates (mapcar (lambda (c)
+                                  (append (list :start (and (/= (getf c :start) word-start)
+                                                            (utf16-offset-at text (getf c :start))))
+                                          c))
+                                (subseq candidates 0 (min (length candidates) *completion-limit*)))
+            :total (length candidates) :source source
+            :triggers triggers :message message))))

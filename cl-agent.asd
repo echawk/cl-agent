@@ -167,10 +167,10 @@
       :serial t
       :components ((:file "host")
                    (:file "highlight")))
-     (:file "scratch")
      (:file "tasks")
      (:file "repl")
      (:file "completion")
+     (:file "scratch")
      ;; Web UI slash commands need DEFINE-SLASH-COMMAND (repl.lisp) and
      ;; DEFINE-COMMAND-COMPLETER (completion.lisp), and the Lisp tab's REPL
      ;; uses completion.lisp, clspec.lisp and apropos.lisp, so they load late.

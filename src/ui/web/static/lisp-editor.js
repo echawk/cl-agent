@@ -41,7 +41,9 @@
 //   indentUnit    spaces per level: Tab in a line's indentation (or on a
 //                 selection) indents, Shift-Tab dedents, RET keeps the line's
 //                 indentation and adds a level after an opening { ( [ or :
-//   wordPattern   a RegExp matching word characters, for M-/
+//   wordPattern   a RegExp matching word characters, for M-/ and narrowing
+//   triggerCharacters  () => ["." , "->", ...]: typing one opens completion
+//                 (a candidate's own `start`, as from an LSP textEdit, is honoured)
 
 import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
 import { el } from './core.js';
@@ -552,8 +554,9 @@ export function createLispEditor(host, options = {}) {
     menuNode.style.top = `${below + height > window.innerHeight - 8 ? Math.max(8, rect.top - height - 6) : below}px`;
   }
 
+  // A candidate may replace from its own start (an LSP item's textEdit).
   function accept(candidate, result) {
-    replaceRange(result.start, result.end, candidate.value);
+    replaceRange(candidate.start ?? result.start, result.end, candidate.value);
     menu.hide();
   }
 
@@ -579,7 +582,8 @@ export function createLispEditor(host, options = {}) {
     if (candidates.length === 1) { accept(candidates[0], result); return; }
     // Only a common part that extends what was typed: a flex match's
     // candidates need not start with it.
-    const common = commonPrefix(candidates.map(c => c.value));
+    const common = candidates.some(c => c.start != null && c.start !== result.start)
+      ? '' : commonPrefix(candidates.map(c => c.value));
     if (common.length > typed.length && common.toLowerCase().startsWith(typed.toLowerCase())) {
       replaceRange(result.start, result.end, common);
       result.end = result.start + common.length;
@@ -590,7 +594,15 @@ export function createLispEditor(host, options = {}) {
 
   // Keys that change the token being completed, so an open menu follows them.
   const refines = e => !e.ctrlKey && !e.altKey && !e.metaKey
-    && (e.key === 'Backspace' || (e.key.length === 1 && !DELIMITER.test(e.key)));
+    && (e.key === 'Backspace' || (e.key.length === 1 && (generic ? wordChar(e.key) : !DELIMITER.test(e.key))));
+
+  // Generic: a trigger string the language server named (".", "->", "::")
+  // just typed opens the menu, as Lem's lsp-mode does.
+  function triggered(event) {
+    if (!generic || menu.state || !options.complete || event.inputType !== 'insertText') return false;
+    const pos = input.selectionStart;
+    return (options.triggerCharacters?.() || []).some(t => t && input.value.slice(pos - t.length, pos) === t);
+  }
 
   // ----- M-/ (dabbrev-expand) -----
 
@@ -703,12 +715,12 @@ export function createLispEditor(host, options = {}) {
   }
 
   input.addEventListener('keydown', onKeyDown);
-  input.addEventListener('input', () => {
+  input.addEventListener('input', event => {
     schedule({ keep: true, now: true });
     contextChanged();
     options.onChange?.(input.value);
     requestHighlight();
-    if (refining) { refining = false; if (menu.state) complete({ refine: true }); }
+    if (refining) { refining = false; if (menu.state) complete({ refine: true }); } else if (triggered(event)) complete({ refine: true });
   });
   input.addEventListener('keyup', () => { schedule(); contextChanged(); });
   input.addEventListener('mouseup', () => { schedule(); contextChanged(); });
