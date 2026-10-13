@@ -32,6 +32,16 @@
 //   onChange      (text) => ...            onContext (call | null) => ... (autodoc)
 //   onMessage     (text) => ...            (echo area: chord prefixes, "No completions")
 //   dabbrevText   () => text               more words for M-/ (the other editor's)
+//
+// The same editor serves other languages (code.js) with these instead of
+// Lisp's reader, highlighting and indentation:
+//   highlight     async text => [[start, end, class], ...]   (Lem's runs, via
+//                 /api/highlight); runs shift with each edit until fresh
+//                 ones arrive, so colours do not flicker while typing
+//   indentUnit    spaces per level: Tab in a line's indentation (or on a
+//                 selection) indents, Shift-Tab dedents, RET keeps the line's
+//                 indentation and adds a level after an opening { ( [ or :
+//   wordPattern   a RegExp matching word characters, for M-/
 
 import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
 import { el } from './core.js';
@@ -313,6 +323,48 @@ export function markup(text, caret = -1, flash = null) {
 /** TEXT highlighted, for display (no caret). */
 export const highlight = text => markup(text);
 
+/** TEXT as HTML coloured by RUNS ([start, end, class], sorted, not
+ *  overlapping), with the caret marker at CARET and FLASH marked. */
+export function markupRuns(text, runs, caret = -1, flash = null) {
+  let html = '';
+  let at = 0;
+  const piece = (start, end, cls) => {
+    if (start >= end) return;
+    const flashed = flash && start < flash.end && end > flash.start ? ' sx-flash' : '';
+    const wrap = word => (cls || flashed ? `<span class="${cls}${flashed}">${esc(word)}</span>` : esc(word));
+    if (caret >= start && caret < end) {
+      html += `${wrap(text.slice(start, caret))}<span class="le-caret"></span>${wrap(text.slice(caret, end))}`;
+    } else html += wrap(text.slice(start, end));
+  };
+  for (const [start, end, cls] of runs) {
+    if (start < at || end > text.length) continue;
+    piece(at, start, '');
+    piece(start, end, cls);
+    at = end;
+  }
+  piece(at, text.length, '');
+  if (caret === text.length) html += '<span class="le-caret"></span>';
+  return html;
+}
+
+/** RUNS for OLD moved onto NEW: runs before the edit stay, runs after it
+ *  shift by its length, runs it touched are dropped. */
+export function shiftRuns(old, text, runs) {
+  if (old === text) return runs;
+  const limit = Math.min(old.length, text.length);
+  let prefix = 0;
+  while (prefix < limit && old[prefix] === text[prefix]) prefix += 1;
+  let suffix = 0;
+  while (suffix < limit - prefix && old[old.length - 1 - suffix] === text[text.length - 1 - suffix]) suffix += 1;
+  const editEnd = old.length - suffix;
+  const delta = text.length - old.length;
+  return runs.flatMap(([start, end, cls]) => {
+    if (end <= prefix) return [[start, end, cls]];
+    if (start >= editEnd) return [[start + delta, end + delta, cls]];
+    return [];
+  });
+}
+
 // ---------- the editor ----------
 
 const esc = s => s.replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]));
@@ -326,6 +378,15 @@ function keyName(e) {
 }
 
 export function createLispEditor(host, options = {}) {
+  const generic = typeof options.highlight === 'function';
+  const unit = ' '.repeat(options.indentUnit || 2);
+  const wordChar = options.wordPattern ? (c => options.wordPattern.test(c)) : (c => !DELIMITER.test(c));
+  // A run of word characters (wordPattern is one character, e.g. /[\w$]/).
+  const wordRun = new RegExp(`${options.wordPattern?.source || '[\\w$]'}+`, 'g');
+  let runs = [];              // generic: Lem's runs for runsText, shifted as it changes
+  let runsText = '';
+  let highlightTimer = 0;
+  let highlightNumber = 0;
   const keymap = {
     'C-M-i': editor => editor.complete(),
     'M-TAB': editor => editor.complete(),
@@ -363,8 +424,27 @@ export function createLispEditor(host, options = {}) {
 
   function render() {
     const caret = input.selectionStart === input.selectionEnd ? input.selectionStart : -1;
-    view.innerHTML = `${markup(input.value, caret, flash)}\n`;
+    if (generic) {
+      if (input.value !== runsText) { runs = shiftRuns(runsText, input.value, runs); runsText = input.value; }
+      view.innerHTML = `${markupRuns(input.value, runs, caret, flash)}\n`;
+    } else view.innerHTML = `${markup(input.value, caret, flash)}\n`;
     if (follow) { follow = false; keepCaretVisible(); }
+  }
+
+  // Ask for fresh runs a moment after typing stops.
+  function requestHighlight(delay = 150) {
+    if (!generic) return;
+    clearTimeout(highlightTimer);
+    highlightTimer = setTimeout(async () => {
+      const text = input.value;
+      const number = ++highlightNumber;
+      let fresh;
+      try { fresh = await options.highlight(text); } catch (err) { return; }
+      if (number !== highlightNumber || input.value !== text || !Array.isArray(fresh)) return;
+      runs = fresh;
+      runsText = text;
+      schedule({ now: true });
+    }, delay);
   }
 
   // Text changes repaint at once; cursor moves are batched to the next
@@ -409,6 +489,7 @@ export function createLispEditor(host, options = {}) {
   function lineStartOf(pos) { return input.value.lastIndexOf('\n', pos - 1) + 1; }
 
   function indentLine(lineStart) {
+    if (generic) return /^[ \t]*/.exec(input.value.slice(lineStart))[0].length;
     const text = input.value;
     const current = /^[ \t]*/.exec(text.slice(lineStart))[0];
     const want = indentFor(text, lineStart);
@@ -416,7 +497,25 @@ export function createLispEditor(host, options = {}) {
     return want;
   }
 
+  // Generic: add (or with OUTDENT remove) one level on each line from START to END.
+  function shiftLines(start, end, outdent = false) {
+    let line = lineStartOf(start);
+    while (line <= end) {
+      const current = /^[ \t]*/.exec(input.value.slice(line))[0];
+      const before = input.value.length;
+      if (outdent) {
+        const remove = Math.min(current.length, unit.length);
+        if (remove) replaceRange(line, line + remove, '');
+      } else if (line < input.value.length && input.value[line] !== '\n') replaceRange(line, line, unit);
+      end += input.value.length - before;
+      const next = input.value.indexOf('\n', line);
+      if (next < 0 || next >= end) break;
+      line = next + 1;
+    }
+  }
+
   function indentRegion(start, end) {
+    if (generic) { shiftLines(start, end); return; }
     let line = lineStartOf(start);
     while (line <= end) {
       const before = input.value.length;
@@ -430,6 +529,13 @@ export function createLispEditor(host, options = {}) {
 
   function newlineAndIndent() {
     const pos = input.selectionStart;
+    if (generic) {
+      const line = input.value.slice(lineStartOf(pos), pos);
+      const indent = /^[ \t]*/.exec(line)[0];
+      const opens = /[{([:]\s*$/.test(line);
+      replaceRange(pos, input.selectionEnd, `\n${indent}${opens ? unit : ''}`);
+      return;
+    }
     const text = input.value.slice(0, pos) + '\n';
     replaceRange(pos, input.selectionEnd, `\n${' '.repeat(indentFor(text, text.length))}`);
   }
@@ -490,7 +596,10 @@ export function createLispEditor(host, options = {}) {
 
   function dabbrevWords(text, start, prefix) {
     const lower = prefix.toLowerCase();
-    const words = source => tokenize(source).filter(t => t.type === 'atom')
+    const tokens = source => (generic
+      ? [...source.matchAll(wordRun)].map(m => ({ type: 'atom', start: m.index, end: m.index + m[0].length }))
+      : tokenize(source));
+    const words = source => tokens(source).filter(t => t.type === 'atom')
       .map(t => ({ t, word: source.slice(t.start, t.end) }))
       .filter(({ word }) => word.length > prefix.length && word.toLowerCase().startsWith(lower));
     const here = words(text).filter(({ t }) => t.start !== start);
@@ -505,7 +614,7 @@ export function createLispEditor(host, options = {}) {
     const pos = input.selectionStart;
     if (!expansion || expansion.end !== pos || text.slice(expansion.start, pos) !== expansion.words[expansion.index]) {
       let start = pos;
-      while (start > 0 && !DELIMITER.test(text[start - 1])) start -= 1;
+      while (start > 0 && wordChar(text[start - 1])) start -= 1;
       const prefix = text.slice(start, pos);
       if (!prefix) { message('No dynamic expansion for an empty word'); return; }
       expansion = { start, prefix, words: dabbrevWords(text, start, prefix), index: -1 };
@@ -552,6 +661,17 @@ export function createLispEditor(host, options = {}) {
     if (pending) { e.preventDefault(); pending = null; message(`${sequence} is undefined`); return; }
     if (options.onKey?.(api, e)) { e.preventDefault(); return; }
     if (e.key === 'Escape') return;
+    if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey && generic) {
+      e.preventDefault();
+      const { selectionStart: start, selectionEnd: end, value } = input;
+      if (e.shiftKey) { shiftLines(start, end, true); return; }
+      if (start !== end) { shiftLines(start, end); return; }
+      if (/^[ \t]*$/.test(value.slice(lineStartOf(start), start)) || !options.complete) {
+        const column = start - lineStartOf(start);
+        replaceRange(start, end, ' '.repeat(unit.length - (column % unit.length)));
+      } else complete();
+      return;
+    }
     if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) {
       e.preventDefault();
       if (e.shiftKey) return;
@@ -573,6 +693,7 @@ export function createLispEditor(host, options = {}) {
   }
 
   function contextChanged() {
+    if (!options.onContext) return;
     clearTimeout(contextTimer);
     contextTimer = setTimeout(() => {
       const call = input.selectionStart === input.selectionEnd ? callAt(parse(input.value), input.selectionStart) : null;
@@ -586,6 +707,7 @@ export function createLispEditor(host, options = {}) {
     schedule({ keep: true, now: true });
     contextChanged();
     options.onChange?.(input.value);
+    requestHighlight();
     if (refining) { refining = false; if (menu.state) complete({ refine: true }); }
   });
   input.addEventListener('keyup', () => { schedule(); contextChanged(); });
@@ -604,6 +726,7 @@ export function createLispEditor(host, options = {}) {
       input.value = text;
       input.setSelectionRange(caret, caret);
       schedule({ now: true });
+      requestHighlight(0);
     },
     get cursor() { return input.selectionStart; },
     get selection() { return { start: input.selectionStart, end: input.selectionEnd, text: input.value.slice(input.selectionStart, input.selectionEnd) }; },
@@ -625,6 +748,23 @@ export function createLispEditor(host, options = {}) {
     },
     packageAtPoint() { return packageAt(parse(input.value), input.selectionStart); },
     lineOf(pos) { return input.value.slice(0, pos).split('\n').length; },
+    /** 0-based line and UTF-16 character of POS, as LSP counts them. */
+    positionOf(pos) {
+      const before = input.value.slice(0, pos);
+      const line = before.split('\n').length - 1;
+      return { line, character: pos - (before.lastIndexOf('\n') + 1) };
+    },
+    offsetOf(line, character) {
+      let at = 0;
+      for (let i = 0; i < line; i += 1) {
+        const next = input.value.indexOf('\n', at);
+        if (next < 0) return input.value.length;
+        at = next + 1;
+      }
+      const end = input.value.indexOf('\n', at);
+      return Math.min(at + character, end < 0 ? input.value.length : end);
+    },
+    get runs() { return runs; },
     flash(start, end) {
       flash = { start, end };
       schedule();
@@ -633,5 +773,6 @@ export function createLispEditor(host, options = {}) {
     refresh() { schedule(); },
   };
   render();
+  requestHighlight(0);
   return api;
 }

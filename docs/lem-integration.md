@@ -1,6 +1,8 @@
 # Lem as cl-agent's editing engine: integration plan
 
-Status: **plan only, not implemented.**
+Status: **partly implemented.**
+- Implemented: §4.1–4.3 (Lem pinned through ocicl and hosted without a display, in `src/lem/host.lisp`), §4.8's init-file loading, §4.9 (micros self-connection off), and §7's highlighting (`src/lem/highlight.lisp`) of reply code blocks and of the Code tab's scratch buffers (`src/scratch.lisp`, `static/code.js`).
+- Not yet: Lem driving the input boxes' keys (§4.4–4.7, phases 2–5).
 
 This plan covers two things:
 - How cl-agent would load [Lem](https://github.com/lem-project/lem) into its own image as a library. Lem would drive cl-agent's text inputs (the composer, the Lisp REPL input and the scratch buffer) with Lem's editing commands, keymaps and modes, configured by the user's own Lem init file.

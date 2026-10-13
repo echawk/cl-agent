@@ -14,6 +14,7 @@ import * as views from './views.js';
 import * as session from './session.js';
 import './agents.js';
 import './sessions.js';
+import './code.js';
 import { lispApi } from './lisp.js';
 
 const { state, on, el, boot } = core;
@@ -21,7 +22,7 @@ const $ = id => document.getElementById(id);
 
 // ---------- toasts and the mouse-documentation line ----------
 
-const DEFAULT_DOC = 'Enter: send · Tab: complete · ↑↓: history · Esc: abort · Alt-L: Lisp tab · Alt-S: sessions · Alt-M: model · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
+const DEFAULT_DOC = 'Enter: send · Tab: complete · ↑↓: history · Esc: abort · Alt-L: Lisp tab · Alt-C: code · Alt-S: sessions · Alt-M: model · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
 let docOverride = null;
 let docTimer = null;
 
@@ -127,6 +128,11 @@ function installKeys() {
     if (e.altKey && !e.ctrlKey && e.code === 'KeyS') {
       e.preventDefault();
       views.showView(views.activeView() === 'sessions' ? 'listener' : 'sessions');
+      return;
+    }
+    if (e.altKey && !e.ctrlKey && e.code === 'KeyC') {
+      e.preventDefault();
+      views.showView(views.activeView() === 'code' ? 'listener' : 'code');
       return;
     }
     if (e.altKey && !e.ctrlKey && e.code === 'KeyL') {

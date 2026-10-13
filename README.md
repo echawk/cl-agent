@@ -655,6 +655,38 @@ you would expect from SLY or SLIME:
   text it replaced is kept in `repl/.history/`. **Ask the agent** buttons on the
   buffer and in the debugger pre-fill the question.
 
+### The Code tab
+
+The Code tab (`Alt-C`) holds scratch buffers in other languages: C, Ruby,
+Python, Rust, Go, shell, and every other language Lem has a mode for.
+**New** asks for a name and a language. Each buffer is a real file,
+`~/.config/cl-agent/scratch/NAME.EXT`, saved as you type, so everything
+that works on files works on it.
+
+- **Highlighting** comes from Lem's own mode for the language. Lem's core is
+  hosted inside cl-agent without a display (`src/lem/`). Fenced code blocks
+  in the agent's replies are highlighted the same way, so a ```` ```c ````
+  block is coloured as C.
+- **Editing** uses the Lisp tab's editor: Emacs keys, `M-/`, and
+  `Tab`/`Shift-Tab` to indent. `C-x C-s` saves at once.
+- **The language server** configured for the extension checks the buffer.
+  **Check** (`C-c C-c`) lists its diagnostics (click one to go there), and
+  `C-c C-d d` shows its hover text. With no `lsp.sexp`, cl-agent uses
+  clangd, pyright, rust-analyzer, gopls, ruby-lsp or
+  typescript-language-server, whichever are installed.
+- **The agent** lists, reads and edits these buffers with the
+  `scratch-buffers` and `scratch-buffer-write` tools. It asks the same
+  language server through `lsp-diagnostics` on the buffer's path. Its
+  edits show up live, and a backup of the text it replaced is kept in
+  `scratch/.history/`.
+
+The hosted Lem loads your Lem init file, the one Lem itself would load
+(`$LEM_HOME`, `~/.lem/`, or `~/.config/lem/`), and then `cl-agent.lisp`
+from the same directory, for settings meant only for cl-agent.
+`CL_AGENT_LEM_NO_INIT=1` skips both. Code your init file meant only for
+Lem's own window can be guarded with `#-cl-agent-lem`.
+`docs/lem-integration.md` describes the design, and what remains to do.
+
 Updates are pushed over Server-Sent Events (`/api/events`) against a sequenced
 event log, so a reconnecting page catches up without missing or repeating
 anything. Mutating requests require an `X-CL-Agent` header and a loopback
@@ -665,7 +697,7 @@ anything. Mutating requests require an `X-CL-Agent` header and a loopback
 The client is a set of plain files in `src/ui/web/static/`: `theme.css`
 holds every color and size, and `app.css`, `core.js`, `render.js`,
 `composer.js`, `panels.js`, `agents.js`, `views.js`, `menu.js`,
-`lisp-editor.js`, `lisp.js` and `main.js` hold the rest. Each
+`lisp-editor.js`, `lisp.js`, `code.js` and `main.js` hold the rest. Each
 request resolves through three layers: an **override** in
 `~/.config/cl-agent/web/`, then an **extension** (registered from Lisp),
 then the **built-in** file. Any `patches/*.css` / `patches/*.js` loads

@@ -21,7 +21,8 @@
   "Pathname namestring -> (TEXT VERSION STAMP) of each buffer read, STAMP
 being the file's (WRITE-DATE . SIZE) when it was read.")
 
-(defun scratch-directory () (merge-pathnames "scratch/" *config-directory*))
+;; SCRATCH-DIRECTORY (extensions.lisp) is config/scratch/, where the agent's
+;; one-off files also go: those with a buffer name show up here too.
 (defun scratch-history-directory () (merge-pathnames "scratch/.history/" *config-directory*))
 
 (defun scratch-name-p (name)
