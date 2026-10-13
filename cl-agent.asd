@@ -60,6 +60,7 @@
      (:file "components")
      (:file "hooks")
      (:file "json-util")
+     (:file "source-archive")
      (:file "http")
      (:file "storage")
      (:file "config")
@@ -185,6 +186,7 @@
                    (:file "scratch-routes")))
      (:file "tools/lisp-scratch-tool")
      (:file "tools/scratch-tool")
+     (:file "tools/source-tool")
      (:file "acp")
      (:file "main")))))
 
@@ -234,7 +236,8 @@
    (:file "test-context-window")
    (:file "test-session-tools")
    (:file "test-lem")
-   (:file "test-scratch"))
+   (:file "test-scratch")
+   (:file "test-source-archive"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

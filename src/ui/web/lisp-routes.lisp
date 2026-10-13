@@ -106,7 +106,8 @@
         (jarray (mapcar (lambda (definition)
                           (jobj "type" (getf definition :type) "file" (getf definition :file)
                                 "line" (json-or-null (getf definition :line))
-                                "snippet" (json-or-null (getf definition :snippet))))
+                                "snippet" (json-or-null (getf definition :snippet))
+                                "origin" (json-or-null (getf definition :origin))))
                         (lisp-repl-definitions (or (web-param "symbol") "")
                                                (lisp-request-package (web-param "package")))))))
 

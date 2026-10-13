@@ -35,6 +35,15 @@ or, without building a standalone image:
 make run ARGS='"list the files in this directory"'
 ```
 
+The built image carries its own Lisp source. `make build` copies every loaded
+system's `.lisp` and `.asd` files into the image as it is saved: cl-agent's
+and every library's (Lem, slynk, hunchentoot …), about 23 MB. So the Lisp
+tab's `M-.` and the agent's `lisp-source` tool can show any definition's
+source even where the tree is absent or has changed since. When the copy on
+disk is the one that was compiled, `M-.` reads it from disk.
+`CL_AGENT_EMBED_SOURCES=own make build` keeps only cl-agent's own (about
+1 MB), and `=none` keeps none.
+
 Run with no initial task to drop straight into the REPL (`/help` lists
 commands, Ctrl-D exits):
 

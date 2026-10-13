@@ -271,6 +271,9 @@ const actions = {
       el('div', { class: 'definition-head' },
         el('span', { class: 'chip fill-violet' }, d.type),
         el('span', { class: 'definition-file', title: d.file }, `${d.file.replace(/^.*\/(src|ocicl)\//, '$1/')}${d.line ? `:${d.line}` : ''}`),
+        d.origin === 'archive'
+          ? el('span', { class: 'chip', 'data-doc': 'The source compiled into this image: the file on disk is gone or has changed since' }, 'from the image')
+          : '',
         d.snippet ? el('button', {
           class: 'btn btn-small', type: 'button', 'data-doc': 'Append this definition to the scratch buffer to edit it',
           onclick: () => { appendToScratch(d.snippet); showScratch(); },

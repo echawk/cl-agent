@@ -540,18 +540,20 @@ SB-INTROSPECT's form paths) when the definition is inside another form."
                  (key (list (and pathname (namestring pathname)) offset)))
             (when (and pathname (not (member key seen :test #'equal)) (< (length results) 12))
               (push key seen)
-              (let* ((file (probe-file (translate-logical-pathname pathname)))
-                     (octets (and file (ignore-errors (uiop:read-file-string file :external-format :latin-1))))
+              ;; The file as compiled: on disk, or the copy in the image
+              ;; (source-archive.lisp) when the disk's is gone or newer.
+              (multiple-value-bind (octets origin)
+                  (source-file-octets pathname :write-date (introspect "DEFINITION-SOURCE-FILE-WRITE-DATE" source))
+              (let* ((file (ignore-errors (probe-file (translate-logical-pathname pathname))))
+                     (text (and octets (babel:octets-to-string octets :encoding :utf-8 :errorp nil)))
                      ;; SBCL records the position in bytes; count characters.
-                     (text (and file (ignore-errors (read-text-file file))))
-                     (start (and text offset octets
+                     (start (and text offset
                                  (lisp-source-form-start
-                                  text (length (babel:octets-to-string
-                                                (map '(vector (unsigned-byte 8)) #'char-code
-                                                     (subseq octets 0 (min offset (length octets))))
-                                                :encoding :utf-8 :errorp nil))))))
+                                  text (length (babel:octets-to-string octets :end (min offset (length octets))
+                                                                              :encoding :utf-8 :errorp nil))))))
                 (push (list :type (string-downcase (symbol-name type))
                             :file (namestring (or file pathname))
+                            :origin (and octets (string-downcase (symbol-name origin)))
                             :line (and start (1+ (count #\Newline text
                                                         :end (or (lisp-definition-start text start (lisp-form-end text start)
                                                                                         (symbol-name symbol))
@@ -562,7 +564,7 @@ SB-INTROSPECT's form paths) when the definition is inside another form."
                                             (if inner
                                                 (lisp-source-form-text text inner)
                                                 (lisp-source-form-text text start (rest form-path))))))
-                      results)))))))
+                      results))))))))
     (nreverse results)))
 
 ;;; --- the inspector ---
