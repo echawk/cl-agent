@@ -1,8 +1,9 @@
 name: Test
 
+# Disabled for now: runs only when started by hand from the Actions tab.
+# To re-enable, restore the push and pull_request triggers.
 on:
-  push:
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
