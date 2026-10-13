@@ -3,7 +3,9 @@
 Status: **partly implemented.**
 - Implemented: §4.1–4.3 (Lem pinned through ocicl and hosted without a display, in `src/lem/host.lisp`), §4.8's init-file loading, §4.9 (micros self-connection off), and §7's highlighting (`src/lem/highlight.lisp`) of reply code blocks and of the Code tab's scratch buffers (`src/scratch.lisp`, `static/code.js`).
 - Also implemented: files are opened, edited and saved through Lem buffers (`src/lem/files.lisp`, the Code tab), with Lem's find-file mode detection and hooks, `save-buffer`, directory listing and file-name completion. Edits sync as text into the buffer; Lem's own lsp-mode is kept off in favour of cl-agent's language servers.
-- Not yet: Lem driving the input boxes' keys (§4.4–4.7, phases 2–5).
+- Also implemented: **the Code tab's editor is Lem itself** (`src/lem/display.lisp`, §9). The hosted Lem's frontend class is now lem-server's renderer, and Lem's own web client runs in an iframe. Your keys, `M-x`, the minibuffer, windows and dired are all real Lem.
+- Also implemented: **the agent runs Lem's commands** through a minibuffer bridge (`src/lem/commands.lisp`, the `lem-command` tool, §10).
+- Not yet: the composer and the Lisp tab's REPL and scratch are still cl-agent's own editors. The terminal UI is out of scope: the web UI is the frontend that matters.
 
 This plan covers two things:
 - How cl-agent would load [Lem](https://github.com/lem-project/lem) into its own image as a library. Lem would drive cl-agent's text inputs (the composer, the Lisp REPL input and the scratch buffer) with Lem's editing commands, keymaps and modes, configured by the user's own Lem init file.
@@ -378,6 +380,45 @@ The same `lem-highlight` call can serve:
 - When the engine isn't running, the output matches today's byte for byte.
 
 ---
+
+## 8a. Notes from building it
+
+- **§2's option A turned out to be the right core, hosted differently.** Lem's web frontend (lem-server) is reused in-process: cl-agent's `LEM-HOST-DISPLAY` subclasses its `jsonrpc` class, so Lem renders itself. The problems listed in §2 are handled as follows:
+  - **One Lem.** There is one editor thread, cl-agent's, so there is no second Lem.
+  - **No exit hook.** Nothing calls `uiop:quit`.
+  - **No blocking start-up.** The websocket server starts on demand.
+  - **Security** (`LEM-DISPLAY-CLACK-HANDLER`):
+    - a loopback `Host` only;
+    - websocket upgrades only from the Lem page's own origin;
+    - only the client's own files (lem-server's `/local/` serves any file on disk).
+  - **Focus.** The client no longer re-focuses itself on blur.
+- **The minibuffer bridge** answers a command's prompts from the agent's answers. While a command runs from the agent, Lem's three prompt entry points (`%prompt-for-line`, `%prompt-for-character`, `%prompt-for-file`) and `read-key` (once the command's own pending keys are used up) take the next answer. A prompt with no answer left stops the command with what it asked, never blocking the editor thread. This is what made the agent's earlier `M-x mcp-server-start` attempt fail with "recursive use of prompt window".
+- **Lem names files by their true name.** Symbolic links are resolved, so `/var/…` becomes `/private/var/…` on macOS. Look buffers up by both the path as given and its true name.
+
+## 8b. Toward a native frontend
+
+The Lem view reuses Lem's own client unchanged except for two small patches. It may eventually be worth writing **cl-agent's own Lem frontend**: a renderer in the page that draws Lem's views with cl-agent's components. The reasons:
+- **One display.** lem-server drives a single display, so every page that connects shares it and resizes it, and there is one set of windows. A native frontend could give each editor box (the composer, the REPL input, scratch, a code view) its own Lem frame or window.
+- **Embedding.** The iframe draws Lem on a canvas with its own fonts and theme. A native renderer could use cl-agent's palette and type, fit small inputs, and work with the page's accessibility and focus.
+- **One connection.** Draw messages could travel over cl-agent's existing event stream and routes, with its CSRF protection, instead of a second server and a websocket.
+
+The protocol to implement is lem-server's: `make-view`/`resize-view`/`move-view`/`put`/`clear-eol`/`clear-eob`/`modeline-put`/`move-cursor` batched as `bulk`, plus `input`, `login` and `redraw` (`frontends/server/main.lisp`). `LEM-HOST-DISPLAY` already produces these messages, so a native client is mostly page-side work.
+
+## 9. The Lem view (implemented)
+
+- **Starting.** `GET /api/lem/display` starts the server and returns the page URL.
+- **Visiting files.** `POST /api/lem/visit` shows a file in Lem's window. It's used by the Files pane, the agent's `open-in-editor`, and switching to the Lem view.
+- **Running commands.** `POST /api/lem/run` queues a command for the person at the view (the toolbar's Find file and Buffers). It is refused when no view is open, because the command's prompts would then wait forever.
+- **Fallback.** "Simple editor" switches to cl-agent's lightweight editor (§4.6's text sync), which still edits the same Lem buffers.
+
+## 10. Lem commands for the agent (implemented)
+
+`lem-command` runs a command by name, as `M-x` does, or a key sequence.
+- It takes a file, a point and an optional region, answers for the command's prompts, a universal argument, and an option to save.
+- It reports the changed lines, Lem's messages, the prompts it answered, any answers left unused, and the point.
+- `action=search` lists commands with their documentation.
+- While the command runs, the buffer is shown in the window the user is looking at, and put back before Lem redraws, so the view doesn't move.
+- Changes are published to open pages.
 
 ## 8. Risks and open questions
 

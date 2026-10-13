@@ -107,9 +107,15 @@ Lem's dired lists them; dot files only with HIDDEN."
   (and (lem:buffer-filename buffer) (not (eq buffer *lem-highlight-buffer*))))
 
 (defun editor-find-buffer (path)
-  "The open Lem buffer visiting PATH, or NIL.  Editor thread."
-  (let ((full (expand-user-path path)))
-    (find-if (lambda (buffer) (and (editor-file-buffer-p buffer) (equal (lem:buffer-filename buffer) full)))
+  "The open Lem buffer visiting PATH, or NIL.  Editor thread.  Lem names a
+buffer's file by its true name (symbolic links resolved: /var/... is
+/private/var/... on macOS), so PATH matches as written or resolved."
+  (let* ((full (expand-user-path path))
+         (true (ignore-errors (namestring (truename full)))))
+    (find-if (lambda (buffer)
+               (and (editor-file-buffer-p buffer)
+                    (let ((name (lem:buffer-filename buffer)))
+                      (or (equal name full) (and true (equal name true))))))
              (lem:buffer-list))))
 
 (defun editor-version (buffer)

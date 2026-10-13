@@ -40,7 +40,8 @@
                "lem-html-mode" "lem-css-mode" "lem-sql-mode" "lem-posix-shell-mode" "lem-makefile-mode"
                "lem-patch-mode" "lem-haskell-mode" "lem-ocaml-mode" "lem-elixir-mode" "lem-erlang-mode"
                "lem-clojure-mode" "lem-elisp-mode" "lem-lua-mode" "lem-perl-mode" "lem-swift-mode"
-               "lem-kotlin-mode" "lem-scala-mode" "lem-dart-mode" "lem-zig-mode" "lem-nix-mode")
+               "lem-kotlin-mode" "lem-scala-mode" "lem-dart-mode" "lem-zig-mode" "lem-nix-mode"
+               "lem-server")                                  ; Lem's web frontend: the Code tab's editor
   :build-operation "program-op"
   :build-pathname "bin/cl-agent"
   :entry-point "cl-agent:main"
@@ -169,7 +170,9 @@
       :serial t
       :components ((:file "host")
                    (:file "highlight")
-                   (:file "files")))
+                   (:file "files")
+                   (:file "display")
+                   (:file "commands")))
      (:file "tasks")
      (:file "repl")
      (:file "completion")
@@ -243,7 +246,8 @@
    (:file "test-scratch")
    (:file "test-source-archive")
    (:file "test-editor-files")
-   (:file "test-systems"))
+   (:file "test-systems")
+   (:file "test-lem-commands"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

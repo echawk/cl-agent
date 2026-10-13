@@ -683,11 +683,28 @@ you would expect from SLY or SLIME:
 
 ### The Code tab
 
-The Code tab (`Alt-C`) edits your own files through Lem, the way Lem and
-Emacs do, and holds scratch buffers in any language.
+The Code tab (`Alt-C`) edits your own files through Lem, and holds scratch
+buffers in any language.
 
-**Files.** `C-x C-f` (find-file) opens a minibuffer with Lem's file-name
-completion on `Tab`.
+**The editor is Lem itself.** The hosted Lem is shown by its own web
+frontend in the editor pane: its windows, mode line, minibuffer, `M-x`,
+dired (`C-x d`), `find-file`, your init file and keys, `vi-mode` if you
+enable it. Picking a file in the Files pane, or the agent's
+`open-in-editor`, shows it in Lem's window. **Simple editor** switches to a
+lightweight editor that edits the same Lem buffers, described below.
+
+The agent runs Lem's editing commands too, with the `lem-command` tool:
+- **Any command, as `M-x` would run it:** `query-replace`, `indent-region`,
+  `comment-region`, `delete-trailing-whitespace` and so on, or a key
+  sequence, on a file at a given line or region.
+- **Prompts are answered from the answers the agent gives.** A prompt left
+  unanswered stops the command and reports what it asked, rather than
+  waiting.
+- **You see the edits live** in the Lem view, and they stay unsaved unless
+  the agent saves.
+
+**Files in the simple editor.** `C-x C-f` (find-file) opens a minibuffer
+with Lem's file-name completion on `Tab`.
 - Enter on a file visits it. It opens with Lem's `find-file-buffer`, so Lem
   picks the mode (from the extension, a `#!` line or a `-*- mode -*-` line),
   and its find-file and mode hooks run, including your init file's.

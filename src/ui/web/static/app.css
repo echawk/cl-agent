@@ -991,3 +991,11 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .code-toolbar .btn { flex: none; }
 .code-row .code-row-file { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
 .code-row .code-row-name { flex: 1 0 auto; max-width: 60%; }
+
+/* The Lem view: Lem's own web frontend in the Code tab's editor pane. */
+.code-editor-pane > .code-lem, .code-editor-pane > .code-simple { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.code-editor-pane > [hidden] { display: none; }
+.code-lem-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1.5px solid var(--rule-soft); background: var(--paper-2); }
+.code-lem-file { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; color: var(--ink-2); font-size: 0.9em; }
+.code-lem-host { flex: 1; min-height: 0; display: flex; background: #000; }
+.code-lem-frame { flex: 1; width: 100%; height: 100%; border: 0; display: block; }

@@ -17,6 +17,12 @@
 //   Minibuffer  C-x C-f find-file and C-x d dired (Lem's file-name
 //             completion on Tab), C-x b switch buffer, M-x cd; C-x k closes,
 //             C-x C-s saves, C-g cancels -- as in Lem and Emacs
+//   Lem view  by default the editor *is* Lem, in an iframe: Lem's own web
+//             frontend (lem/display.lisp) showing the hosted Lem -- its
+//             windows, mode line, minibuffer, M-x, dired, your init file and
+//             keys.  Visiting a file (the Files pane, C-x C-f, the agent's
+//             open-in-editor) shows it in Lem's window.  "Simple editor"
+//             switches to the lightweight editor below instead
 //   Agent     Ask the agent puts a request in the composer; the agent sees
 //             open files' unsaved text (editor-files), opens files for you
 //             (open-in-editor), and its writes show up here: an unchanged
@@ -58,6 +64,9 @@ const view = {
   diagnostics: null,
   triggers: [],
   stale: true,
+  lemMode: storage('code-lem', true),   // the editor is Lem itself
+  lemFrame: null,
+  lemFile: null,
 };
 
 const $ = sel => view.node?.querySelector(sel);
@@ -120,7 +129,72 @@ async function fileAction(path, body) {
 
 // ---------- the buffer being edited ----------
 
+// ---------- the Lem view ----------
+
+async function ensureLemFrame() {
+  const box = $('.code-lem');
+  if (!box || view.lemFrame) return view.lemFrame;
+  const size = Math.round(parseFloat(getComputedStyle(document.documentElement).fontSize) || 14);
+  try {
+    const { url } = await api('/api/lem/display', { params: { size } });
+    view.lemFrame = el('iframe', { class: 'code-lem-frame', src: url, title: 'Lem', allow: 'clipboard-read; clipboard-write' });
+    box.querySelector('.code-lem-host').replaceChildren(view.lemFrame);
+  } catch (err) { message(`Lem view unavailable: ${err.message}`); }
+  return view.lemFrame;
+}
+
+function focusLem() { setTimeout(() => { view.lemFrame?.focus(); view.lemFrame?.contentWindow?.focus(); }, 0); }
+
+async function lemVisit(path, line) {
+  await ensureLemFrame();
+  try {
+    const json = await api('/api/lem/visit', { method: 'POST', body: { path, line: line || undefined } });
+    view.lemFile = json;
+    view.doc = { ...json, kind: 'file', key: json.path };
+    view.current = { kind: 'file', key: json.path };
+    store('code-current', view.current);
+    renderLemHead();
+    renderSide();
+    loadOpenFiles();
+    focusLem();
+  } catch (err) { message(err.message); }
+}
+
+async function lemRun(command) {
+  await ensureLemFrame();
+  try { await api('/api/lem/run', { method: 'POST', body: { command } }); focusLem(); } catch (err) { message(err.message); }
+}
+
+function setLemMode(on) {
+  view.lemMode = on;
+  store('code-lem', on);
+  renderEditor();
+  if (on) { ensureLemFrame(); focusLem(); } else if (view.current) openDoc(view.current.kind, view.current.key);
+}
+
+function renderLemHead() {
+  const head = $('.code-lem-head');
+  if (!head) return;
+  const f = view.lemFile;
+  head.replaceChildren(
+    el('span', { class: 'chip code-lang' }, 'Lem'),
+    el('span', { class: 'code-lem-file', title: f?.path || '' }, f ? short(f.path) : 'C-x C-f visits a file · M-x runs a command'),
+    el('span', { class: 'spacer' }),
+    el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Find a file in Lem (C-x C-f)', onclick: () => lemRun('find-file') }, 'C-x C-f'),
+    el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Run a Lem command (M-x)', onclick: () => lemRun('execute-command') }, 'M-x'),
+    el('button', {
+      class: 'btn btn-small btn-primary', type: 'button', 'data-doc': 'Ask the agent about this file',
+      onclick: () => insertInComposer(f ? `Help me with ${short(f.path)} (open in the Lem editor).` : 'Help me with the file open in the Lem editor.'),
+    }, 'Ask the agent'),
+    el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Use the lightweight editor instead of Lem', onclick: () => setLemMode(false) }, 'Simple editor'));
+}
+
 async function openDoc(kind, key, { line } = {}) {
+  if (view.lemMode) {
+    if (kind === 'file') return lemVisit(key, line);
+    const scratch = view.buffers.find(b => b.name === key);
+    if (scratch) return lemVisit(scratch.path, line);
+  }
   if (view.doc && view.dirty && view.doc.kind === 'scratch') await saveScratch(true);
   if (view.doc && isFile()) await syncFile();
   let doc;
@@ -751,8 +825,12 @@ function renderChrome() {
 }
 
 function renderEditor() {
-  const pane = $('.code-editor-pane');
+  const lem = $('.code-lem');
+  if (lem) lem.hidden = !view.lemMode;
+  const pane = $('.code-simple');
   if (!pane) return;
+  pane.hidden = view.lemMode;
+  if (view.lemMode) { renderLemHead(); return; }
   if (!view.doc) {
     view.editor = null;
     pane.replaceChildren(el('div', { class: 'session-preview-empty code-welcome' },
@@ -792,6 +870,7 @@ function renderEditor() {
             : `Help me with ${what}.`);
         }, 'btn-primary'),
         el('span', { class: 'spacer' }),
+        el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Edit in Lem itself', onclick: () => setLemMode(true) }, 'Lem'),
         file
           ? el('button', { class: 'btn btn-small code-close', type: 'button', 'data-doc': 'Close this buffer (C-x k)', onclick: closeDoc }, 'Close')
           : el('button', { class: 'btn btn-small btn-danger code-delete', type: 'button', 'data-doc': 'Delete this buffer (press twice)', onclick: removeScratch }, 'Delete'))),
@@ -869,8 +948,8 @@ function mount(node) {
       el('span', { class: 'subpane-name' }, 'Code'),
       el('span', { class: 'subpane-info code-count', 'data-doc': 'The working directory (M-x cd changes it)' }, ''),
       el('span', { class: 'spacer' }),
-      el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Visit a file (C-x C-f)', onclick: () => prompt('find-file') }, 'Find file'),
-      el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Switch to an open buffer (C-x b)', onclick: () => prompt('switch-buffer') }, 'Buffers'),
+      el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Visit a file (C-x C-f)', onclick: () => (view.lemMode ? lemRun('find-file') : prompt('find-file')) }, 'Find file'),
+      el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Switch to an open buffer (C-x b)', onclick: () => (view.lemMode ? lemRun('select-buffer') : prompt('switch-buffer')) }, 'Buffers'),
       el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Change the working directory (M-x cd)', onclick: () => prompt('cd') }, 'cd')),
     el('div', { class: 'sessions-split code-split' },
       el('div', { class: 'subpane code-list-pane' },
@@ -879,7 +958,11 @@ function mount(node) {
           tab('open', 'Open', 'Files open in the editor'),
           tab('scratch', 'Scratch', 'Scratch buffers in any language')),
         el('div', { class: 'code-side' })),
-      el('div', { class: 'subpane code-editor-pane' })),
+      el('div', { class: 'subpane code-editor-pane' },
+        el('div', { class: 'code-lem', hidden: true },
+          el('div', { class: 'code-lem-head' }),
+          el('div', { class: 'code-lem-host' })),
+        el('div', { class: 'code-simple' }))),
     el('div', { class: 'code-minibuffer', hidden: true },
       menuNode,
       el('label', { class: 'code-mb-label' }, ''), input),
@@ -891,7 +974,9 @@ function mount(node) {
     const ctrl = e.ctrlKey && !e.altKey && !e.metaKey;
     if (pendingX) {
       pendingX = false;
-      const action = { KeyF: ctrl && (() => prompt('find-file')), KeyD: () => prompt('dired'), KeyB: () => prompt('switch-buffer'), KeyS: ctrl && (() => saveFile()) }[e.code];
+      const action = view.lemMode
+        ? { KeyF: ctrl && (() => lemRun('find-file')), KeyD: () => lemRun('filer'), KeyB: () => lemRun('select-buffer') }[e.code]
+        : { KeyF: ctrl && (() => prompt('find-file')), KeyD: () => prompt('dired'), KeyB: () => prompt('switch-buffer'), KeyS: ctrl && (() => saveFile()) }[e.code];
       if (action) { e.preventDefault(); action(); }
       return;
     }
@@ -902,6 +987,7 @@ function mount(node) {
   showPane(view.pane);
   loadScratch();
   loadOpenFiles();
+  if (view.lemMode) ensureLemFrame();
   if (view.current) openDoc(view.current.kind, view.current.key);
 }
 
@@ -909,7 +995,10 @@ registerView({
   id: 'code', title: 'Code', color: 'orange', order: 15,
   doc: 'Your files, edited through Lem (C-x C-f), and scratch buffers in any language, shared with the agent (Alt-C)',
   mount,
-  show: () => { if (view.stale) loadScratch(); setTimeout(() => (view.editor?.input || $('.code-files'))?.focus(), 0); },
+  show: () => {
+    if (view.stale) loadScratch();
+    if (view.lemMode) focusLem(); else setTimeout(() => (view.editor?.input || $('.code-files'))?.focus(), 0);
+  },
 });
 
 // ---------- what other pages and the agent change ----------

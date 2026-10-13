@@ -21,6 +21,10 @@
 ;;;;   POST /api/files/complete-code       {path, text, cursor}: Tab, the unsaved text's
 ;;;;   POST /api/files/diagnostics         {path, text?}
 ;;;;   POST /api/files/hover               {path, text?, line, character}
+;;;;   GET  /api/lem/display               {url}: Lem's own view of itself (lem/display.lisp)
+;;;;   POST /api/lem/visit                 {path, line?}: show a file in Lem's window
+;;;;   POST /api/lem/run                   {command}: run a Lem command as M-x would,
+;;;;                                       its prompts answered in the Lem view
 
 (in-package :cl-agent)
 
@@ -139,3 +143,25 @@
     (with-file-errors
       (jobj "text" (json-or-null (path-hover (expand-user-path (body-path body)) (jget body "line") (jget body "character")
                                              :text (jget body "text")))))))
+
+(define-web-route lem-display (:path "/api/lem/display")
+  (with-file-errors
+    (jobj "url" (lem-display-url :size (or (ignore-errors (parse-integer (web-param "size"))) 14))
+          "connected" (and (lem-display-connected-p) t))))
+
+(define-web-route lem-visit (:method :post :path "/api/lem/visit")
+  (let ((body (web-json-body)))
+    (with-file-errors (with-lsp-servers (lem-visit (body-path body) :line (jget body "line"))))))
+
+(define-web-route lem-run (:method :post :path "/api/lem/run")
+  (let ((name (jget (web-json-body) "command")))
+    (with-file-errors
+      (unless (and (stringp name) (lem-call (lambda () (lem:find-command name))))
+        (error "Lem has no command named ~s." name))
+      ;; Its prompts wait for keys from the Lem view: with none open, they
+      ;; would hold Lem's editor thread for good.
+      (unless (lem-display-connected-p)
+        (error "Open the Lem view first: ~a asks its questions there." name))
+      ;; Queued, not awaited: its prompts are for the person at the Lem view.
+      (lem:send-event (lambda () (lem:call-command (lem:find-command name) nil)))
+      (jobj "queued" name))))
