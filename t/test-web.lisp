@@ -33,7 +33,8 @@
       (drakma:http-request (web-test-url frontend path) :method :post
                            :additional-headers (and trusted '(("X-CL-Agent" . "1")))
                            :content-type (if form "application/x-www-form-urlencoded" "application/json")
-                           :content (or form (and json (json-encode json)) ""))
+                           :content (babel:string-to-octets (or form (and json (json-encode json)) "")
+                                                            :encoding :utf-8))
     (values (if (stringp body) body (and body (babel:octets-to-string body :encoding :utf-8)))
             status)))
 

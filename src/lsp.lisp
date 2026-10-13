@@ -24,19 +24,44 @@
                                              (uiop:ensure-directory-pathname directory))))
               (uiop:split-string (or (uiop:getenv "PATH") "") :separator ":")))))
 
+(defparameter *default-lsp-configuration*
+  "(:version 1
+ :servers ((:name \"clangd\" :command \"clangd\" :extensions (\".c\" \".h\" \".cc\" \".cpp\" \".cxx\" \".hpp\")
+            :language-id \"c\")
+           (:name \"pyright\" :command \"pyright-langserver\" :arguments (\"--stdio\")
+            :extensions (\".py\") :language-id \"python\")
+           (:name \"rust-analyzer\" :command \"rust-analyzer\" :extensions (\".rs\") :language-id \"rust\")
+           (:name \"gopls\" :command \"gopls\" :extensions (\".go\") :language-id \"go\")
+           (:name \"ruby-lsp\" :command \"ruby-lsp\" :extensions (\".rb\") :language-id \"ruby\")
+           (:name \"typescript-language-server\" :command \"typescript-language-server\"
+            :arguments (\"--stdio\") :extensions (\".ts\" \".tsx\" \".js\" \".jsx\")
+            :language-id \"typescript\")))"
+  "The servers used when there is no lsp.sexp: each is kept only if its
+command is on PATH, and started only when a file of its kind is queried.")
+
+(defun lsp-default-configurations ()
+  (let ((file (uiop:tmpize-pathname (merge-pathnames "cl-agent-default-lsp.sexp" (uiop:temporary-directory)))))
+    (unwind-protect
+         (progn (write-string-atomically file *default-lsp-configuration*)
+                (cl-lsp:lsp-read-configurations file))
+      (ignore-errors (delete-file file)))))
+
 (defun initialize-lsp (&optional (path (lsp-configuration-path)) )
   "Read configured LSP servers and retain only executables available on PATH.
+Without a configuration file, *DEFAULT-LSP-CONFIGURATION*'s servers are used.
 
 This deliberately does not start a server: LSP processes are launched only when
 an agent asks a query about a matching file.  The returned values are the
 available configurations and a list of unavailable server names."
   (cl-lsp:lsp-manager-close *lsp-manager*)
-  (if (not (probe-file path))
+  (if (and (not (probe-file path)) (null *default-lsp-configuration*))
       (progn
         (setf (cl-lsp:lsp-manager-configurations *lsp-manager*) nil
               (cl-lsp:lsp-manager-loaded-p *lsp-manager*) t)
         (values nil nil))
-      (let* ((configured (cl-lsp:lsp-read-configurations path))
+      (let* ((configured (if (probe-file path)
+                             (cl-lsp:lsp-read-configurations path)
+                             (lsp-default-configurations)))
              (available (remove-if-not #'lsp-command-available-p configured))
              (unavailable (mapcar #'cl-lsp:lsp-server-configuration-name
                                   (remove-if #'lsp-command-available-p configured))))

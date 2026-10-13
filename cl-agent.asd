@@ -139,6 +139,7 @@
            (:static-file "sessions.js")
            (:static-file "lisp-editor.js")
            (:static-file "lisp.js")
+           (:static-file "code.js")
            (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"
@@ -166,6 +167,7 @@
       :serial t
       :components ((:file "host")
                    (:file "highlight")))
+     (:file "scratch")
      (:file "tasks")
      (:file "repl")
      (:file "completion")
@@ -179,8 +181,10 @@
                    (:file "lisp-repl")
                    (:file "lisp-introspect")
                    (:file "lisp-routes")
-                   (:file "session-routes")))
+                   (:file "session-routes")
+                   (:file "scratch-routes")))
      (:file "tools/lisp-scratch-tool")
+     (:file "tools/scratch-tool")
      (:file "acp")
      (:file "main")))))
 
@@ -229,7 +233,8 @@
    (:file "test-web-session")
    (:file "test-context-window")
    (:file "test-session-tools")
-   (:file "test-lem"))
+   (:file "test-lem")
+   (:file "test-scratch"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

@@ -89,8 +89,11 @@ with whatever content type BODY set), or NIL (an empty JSON object).
   (hunchentoot:parameter name))
 
 (defun web-json-body ()
-  "The current request body decoded as a JSON object (empty if absent/invalid)."
-  (let ((text (hunchentoot:raw-post-data :force-text t)))
+  "The current request body decoded as a JSON object (empty if absent/invalid).
+JSON is UTF-8 (RFC 8259) whatever the request's Content-Type says: the page
+sends plain application/json, which hunchentoot would read as Latin-1."
+  (let* ((octets (hunchentoot:raw-post-data :force-binary t))
+         (text (and octets (babel:octets-to-string octets :encoding :utf-8 :errorp nil))))
     (if (and text (plusp (length text)))
         (values (decode-json-object text))
         (jobj))))
