@@ -13,6 +13,7 @@ import * as panels from './panels.js';
 import * as views from './views.js';
 import * as session from './session.js';
 import './agents.js';
+import './sessions.js';
 import { lispApi } from './lisp.js';
 
 const { state, on, el, boot } = core;
@@ -20,7 +21,7 @@ const $ = id => document.getElementById(id);
 
 // ---------- toasts and the mouse-documentation line ----------
 
-const DEFAULT_DOC = 'Enter: send · Tab: complete · ↑↓: history · Esc: abort · Alt-L: Lisp tab · Alt-M: model · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
+const DEFAULT_DOC = 'Enter: send · Tab: complete · ↑↓: history · Esc: abort · Alt-L: Lisp tab · Alt-S: sessions · Alt-M: model · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
 let docOverride = null;
 let docTimer = null;
 
@@ -123,6 +124,11 @@ function installKeys() {
   document.addEventListener('keydown', e => {
     if (e.altKey && (e.key === 't' || e.key === 'T' || e.code === 'KeyT')) { e.preventDefault(); core.setTheme('toggle'); return; }
     if (e.altKey && !e.ctrlKey && e.code === 'KeyM') { e.preventDefault(); session.openModelMenu(); return; }
+    if (e.altKey && !e.ctrlKey && e.code === 'KeyS') {
+      e.preventDefault();
+      views.showView(views.activeView() === 'sessions' ? 'listener' : 'sessions');
+      return;
+    }
     if (e.altKey && !e.ctrlKey && e.code === 'KeyL') {
       e.preventDefault();
       views.showView(views.activeView() === 'lisp' ? 'listener' : 'lisp');

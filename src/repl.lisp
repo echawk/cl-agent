@@ -515,22 +515,78 @@ startup rather than silently falling back to the host model."
                       rows))
       "Session timeline is empty."))
 
-(defun rename-session (session name)
-  "Give SESSION a durable human-readable NAME and return it.
-
-Names are metadata only: session IDs and event paths remain immutable, so
-renaming cannot invalidate links, branches, or replay references."
+(defun normalize-session-name (name)
+  "NAME trimmed, or an error unless it is 1-160 printable characters."
   (let ((trimmed (and (stringp name) (string-trim " " name))))
     (unless (and trimmed (plusp (length trimmed)) (<= (length trimmed) 160)
                  (every (lambda (character)
                           (or (graphic-char-p character) (char= character #\Space)))
                         trimmed))
       (error "Session name must be 1-160 printable characters"))
+    trimmed))
+
+(defun rename-session (session name)
+  "Give SESSION a durable human-readable NAME and return it.
+
+Names are metadata only: session IDs and event paths remain immutable, so
+renaming cannot invalidate links, branches, or replay references."
+  (let ((trimmed (normalize-session-name name)))
     (setf (session-display-name session) trimmed)
     (persist-session-manifest session)
     (record-session-event session :session-renamed :component "session" :status "finished"
                           :payload (list :name trimmed))
     trimmed))
+
+(defun durable-session-id-p (id)
+  "True when ID is a well-formed session ID with a manifest on disk."
+  (and (stringp id) (plusp (length id)) (<= (length id) 128)
+       (every (lambda (c) (or (alphanumericp c) (member c '(#\- #\_)))) id)
+       (probe-file (session-manifest-pathname id))
+       t))
+
+(defun durable-session-in-use-p (id)
+  "True when a session in this image is working under ID right now.
+(*LIVE-SESSIONS* also keeps sessions that have since resumed or branched
+into another ID; those no longer use this one.)"
+  (let ((session (find-live-session id)))
+    (and session (equal (session-id session) id))))
+
+(defun rename-durable-session (id name)
+  "Name the durable session ID, or clear its name when NAME is blank, and
+return the new name.  A session in use is renamed through RENAME-SESSION, so
+its event log records it; a stored one only has its manifest rewritten."
+  (unless (durable-session-id-p id) (error "There is no session ~a." id))
+  (let ((name (and (stringp name) (plusp (length (string-trim " " name))) (normalize-session-name name)))
+        (live (and (durable-session-in-use-p id) (find-live-session id))))
+    (cond ((and live name) (rename-session live name))
+          (live (setf (session-display-name live) nil)
+                (persist-session-manifest live)
+                (record-session-event live :session-renamed :component "session" :status "finished"
+                                      :payload (list :name nil))
+                nil)
+          (t (call-with-session-event-lock
+              id (lambda ()
+                   (let* ((path (session-manifest-pathname id))
+                          (manifest (copy-list (sexp-store:snapshot-read path))))
+                     (setf (getf manifest :name) name)
+                     (sexp-store:snapshot-write path manifest))))
+             name))))
+
+(defun delete-durable-session (id)
+  "Permanently delete the durable session ID: its events, blobs and
+manifest.  Refuses a session in use in this image.  Branches copy what
+they need, so they survive their parent's deletion."
+  (unless (durable-session-id-p id) (error "There is no session ~a." id))
+  (when (durable-session-in-use-p id)
+    (error "Session ~a is in use; resume another session before deleting it." id))
+  (remhash id *live-sessions*)
+  (let ((root (truename (session-events-root)))
+        (directory (uiop:pathname-directory-pathname (truename (session-manifest-pathname id)))))
+    (uiop:delete-directory-tree directory
+                                :validate (lambda (path)
+                                            (and (uiop:subpathp path root)
+                                                 (not (uiop:pathname-equal path root))))))
+  id)
 
 (defun normalize-session-checkpoint-name (name)
   "Validate a concise human-facing name for a durable checkpoint."
@@ -2485,7 +2541,7 @@ with a tool-free continuity summary. It is never invoked automatically."
 
 (define-slash-command session (session arg)
   "Usage: /session save [NAME], /session restore NAME, /session list,
-or /session durable-list|resume ID|replay ID|timeline [LIMIT]|branch [SEQUENCE]|export PATH|rewind SEQUENCE [files].
+or /session durable-list|resume ID|replay ID|rename NAME|delete ID|timeline [LIMIT]|branch [SEQUENCE]|export PATH|rewind SEQUENCE [files].
 
 SAVE writes a named local JSON snapshot (or a generated timestamped name when
 NAME is omitted). RESTORE replaces the current conversation and compatible
@@ -2548,6 +2604,11 @@ session settings; LIST displays every saved snapshot."
              (ui-system (session-frontend session)
                         (format nil "Created durable branch ~a from the current session."
                                 (session-id session)))))
+          ((string= action "delete")
+           (if (zerop (length name))
+               (ui-system (session-frontend session) "Usage: /session delete ID")
+               (ui-system (session-frontend session)
+                          (format nil "Deleted durable session ~a." (delete-durable-session name)))))
           ((string= action "rename")
            (if (zerop (length name))
                (ui-system (session-frontend session) "Usage: /session rename NAME")

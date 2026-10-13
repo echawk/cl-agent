@@ -127,6 +127,7 @@
            (:static-file "menu.js")
            (:static-file "views.js")
            (:static-file "session.js")
+           (:static-file "sessions.js")
            (:static-file "lisp-editor.js")
            (:static-file "lisp.js")
            (:static-file "EXTENDING.md")))))))

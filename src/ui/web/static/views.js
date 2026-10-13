@@ -1,8 +1,10 @@
 // views.js -- the main pane's tabs: the Listener (the conversation with the
-// agent) and every registered view, e.g. the Lisp tab (lisp.js).  A view is
+// agent) and every registered view, e.g. the Lisp tab (lisp.js) and the
+// Sessions tab (sessions.js).  A view is
 // {id, title, color, order, doc, badge(state), mount(el), show(el)?, hide(el)?}
 // (CLAgent.registerView); mount runs once, the first time it is shown, with
-// the view's own container.  Alt-L toggles between the Listener and Lisp.
+// the view's own container.  Alt-L toggles between the Listener and Lisp,
+// Alt-S between the Listener and Sessions.
 
 import { state, on, el, views, registerView, storage, store, frameThrottle } from './core.js';
 

@@ -232,9 +232,15 @@ evaluated (with CONTEXT bound) to a list of strings or (name . doc) conses."
                           (getf (subagent-task-snapshot task) :description)))))
 
 (define-word-completer "session"
-  '("save" "restore" "list" "durable-list" "resume" "replay" "timeline" "branch" "export" "rewind")
-  (when (string-equal (first (getf context :args)) "restore")
-    (remove nil (mapcar (lambda (s) (getf s :name)) (list-saved-sessions)))))
+  '("save" "restore" "list" "durable-list" "resume" "replay" "rename" "delete" "timeline" "branch" "export" "rewind")
+  (let ((action (first (getf context :args))))
+    (cond ((string-equal action "restore")
+           (remove nil (mapcar (lambda (s) (getf s :name)) (list-saved-sessions))))
+          ((member action '("resume" "replay" "delete") :test #'string-equal)
+           ;; Sessions with more than their creation event, named ones described.
+           (loop for manifest in (list-durable-sessions)
+                 when (> (or (getf manifest :last-sequence) 0) 1)
+                   collect (cons (getf manifest :id) (or (getf manifest :name) "")))))))
 
 (define-word-completer "settings"
   '("list" "get" "set")

@@ -21,6 +21,7 @@ changes restyle in place, anything else reloads the page.
 | `lisp-editor.js` | The Lisp code editor: highlighting, rainbow parens, indentation, key sequences. |
 | `lisp.js` | The Lisp tab (REPL, scratch buffer, debugger, echo area) and the Inspect panel. |
 | `session.js` | The resume-a-session card and the model picker (title bar, Alt-M). |
+| `sessions.js` | The Sessions tab (Alt-S): every stored conversation, to read, rename, resume or delete. |
 | `main.js` | Boot, `window.CLAgent`, who-line, mouse-doc line, keys, toasts, live reload. |
 | `patches/*.css`, `patches/*.js` | **Your additions.** Loaded after the core files, in name order. |
 

@@ -18,7 +18,7 @@ const $ = id => document.getElementById(id);
 
 // ---------- small pieces ----------
 
-function ago(unix) {
+export function ago(unix) {
   if (!unix) return '';
   const s = Math.max(0, Date.now() / 1000 - unix);
   if (s < 90) return 'just now';
@@ -66,15 +66,17 @@ function dismiss() {
   setCard('resume', null);
 }
 
-async function resume(session, button) {
+export async function resume(session, button) {
   if (button) { button.disabled = true; button.textContent = 'Resuming…'; }
   try {
     await api('/api/sessions/resume', { method: 'POST', body: { id: session.id } });
     setCard('resume', null);
-    toast(`Resuming "${session.title || session.id}"…`, 'green');
+    toast(`Resuming "${session.name || session.title || session.id}"…`, 'green');
+    return true;
   } catch (err) {
     if (button) { button.disabled = false; button.textContent = 'Resume'; }
     toast(err.message, 'red');
+    return false;
   }
 }
 
