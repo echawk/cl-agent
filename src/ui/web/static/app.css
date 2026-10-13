@@ -933,3 +933,61 @@ a { color: var(--blue); text-underline-offset: 2px; }
   .code-diag { grid-template-columns: 6ch minmax(0, 1fr); }
   .code-diag-sev, .code-diag > .faint { display: none; }
 }
+
+/* Code tab: files (dired), open buffers, the minibuffer */
+.code-side-tabs { display: flex; border-bottom: 1.5px solid var(--rule-soft); }
+.code-side-tab {
+  flex: 1; padding: 4px 6px; background: none; border: 0; border-right: 1px solid var(--rule-soft);
+  font: inherit; font-size: 0.82em; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-2); cursor: pointer;
+}
+.code-side-tab:last-child { border-right: 0; }
+.code-side-tab.active { background: var(--select); color: var(--ink); box-shadow: inset 0 -3px 0 var(--orange); }
+.code-side { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
+.code-dir-head { padding: 5px 8px; border-bottom: 1.5px solid var(--rule-soft); display: grid; gap: 4px; }
+.code-crumbs { display: flex; flex-wrap: nowrap; align-items: baseline; font-size: 0.86em; overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
+.code-crumbs::-webkit-scrollbar { display: none; }
+.code-crumb { background: none; border: 0; padding: 0 1px; font: inherit; color: var(--blue); cursor: pointer; }
+.code-crumb:hover { text-decoration: underline; }
+.code-crumb + .code-crumb::before { content: '/'; color: var(--ink-3); padding-right: 1px; }
+.code-dir-actions { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.btn-tiny { font-size: 0.74em; padding: 0 5px; line-height: 1.6; }
+.code-sort { font-size: 0.78em; padding: 0 4px; height: auto; width: auto; flex: none; }
+.code-hidden-toggle { font-size: 0.78em; display: inline-flex; gap: 2px; align-items: center; color: var(--ink-2); }
+.code-files { flex: 1; min-height: 0; overflow-y: auto; outline: none; font-size: 0.92em; }
+.code-files:focus-visible { box-shadow: inset 0 0 0 2px var(--orange); }
+.code-file {
+  display: grid; grid-template-columns: 1.5ch minmax(0, 1fr) 5ch auto auto; gap: 8px; align-items: baseline;
+  padding: 2px 8px; cursor: pointer; border-bottom: 1px dashed var(--rule-soft);
+}
+.code-file:hover { background: var(--paper-2); }
+.code-file.selected { background: var(--select); }
+.code-file.current .code-file-name { text-decoration: underline; }
+.code-file.is-dir .code-file-name { color: var(--blue); font-weight: 700; }
+.code-file-icon { color: var(--ink-3); }
+.code-file-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.code-file-size, .code-file-time { color: var(--ink-3); font-size: 0.86em; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.code-file-actions { visibility: hidden; display: inline-flex; gap: 2px; }
+.code-file:hover .code-file-actions, .code-file.selected .code-file-actions { visibility: visible; }
+.code-list-pane { container-type: inline-size; container-name: code-side; }
+@container code-side (max-width: 420px) {
+  .code-file-time { display: none; }
+  .code-file { grid-template-columns: 1.5ch minmax(0, 1fr) 5ch auto; }
+}
+.code-minibuffer {
+  position: relative; display: flex; align-items: center; gap: 6px;
+  padding: 3px 8px; border-top: var(--border) solid var(--rule); background: var(--paper-2);
+}
+.code-mb-label { font-weight: 700; color: var(--violet); white-space: nowrap; }
+.code-mb-input { flex: 1; min-width: 0; border: 0; background: transparent; font: inherit; color: var(--ink); outline: none; }
+.completions.code-mb-menu { position: absolute; left: 8px; right: 8px; bottom: 100%; width: auto; }
+.code-welcome { display: grid; gap: 8px; text-align: center; padding: 16px; }
+.code-welcome kbd { font: inherit; font-weight: 700; color: var(--violet); }
+#title-info { cursor: pointer; }
+/* Long paths keep their end in view. */
+.code-toolbar { flex-wrap: nowrap; }
+.code-toolbar .code-count { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
+.code-toolbar .spacer { flex: 0 0 4px; }
+.code-toolbar .btn { flex: none; }
+.code-row .code-row-file { flex: 0 1 auto; min-width: 0; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; }
+.code-row .code-row-name { flex: 1 0 auto; max-width: 60%; }

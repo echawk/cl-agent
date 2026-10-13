@@ -208,6 +208,7 @@ CLAgent.registerUICommand) with ARGS, a JOBJ."
           "user" (or (uiop:getenv "USER") (uiop:getenv "USERNAME") "user")
           "host" (or (ignore-errors (machine-instance)) "localhost")
           "cwd" (namestring (uiop:getcwd))
+          "home" (uiop:native-namestring (user-homedir-pathname))
           "lisp" (format nil "~a ~a" (lisp-implementation-type) (lisp-implementation-version))
           "port" (web-frontend-port frontend))))
 

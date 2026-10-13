@@ -676,11 +676,33 @@ you would expect from SLY or SLIME:
 
 ### The Code tab
 
-The Code tab (`Alt-C`) holds scratch buffers in other languages: C, Ruby,
-Python, Rust, Go, shell, and every other language Lem has a mode for.
-**New** asks for a name and a language. Each buffer is a real file,
-`~/.config/cl-agent/scratch/NAME.EXT`, saved as you type, so everything
-that works on files works on it.
+The Code tab (`Alt-C`) edits your own files through Lem, the way Lem and
+Emacs do, and holds scratch buffers in any language.
+
+**Files.** `C-x C-f` (find-file) opens a minibuffer with Lem's file-name
+completion on `Tab`.
+- Enter on a file visits it. It opens with Lem's `find-file-buffer`, so Lem
+  picks the mode (from the extension, a `#!` line or a `-*- mode -*-` line),
+  and its find-file and mode hooks run, including your init file's.
+- Enter on a directory lists it. The Files pane is dired-like: Lem's own
+  directory listing, with `n`/`p`, `RET`, `^`, `g`, `R` and `+` as in dired,
+  plus new file, new folder, rename and delete.
+- While you edit, the text goes into the Lem buffer, not the disk.
+- `C-x C-s` saves through Lem's `save-buffer`, so your Lem save settings
+  (newline at end of file, trailing whitespace) and save hooks apply. A file
+  that changed on disk meanwhile is not overwritten unless you choose to.
+- **Revert** reads the file again, and `C-x k` closes it.
+- `C-x b` switches buffer, `C-x d` opens dired, and `M-x` lists the commands.
+
+**The working directory** is the one the shell, file and language-server
+tools use. Change it with `M-x cd`, **cd here** in the Files pane, `/cd DIR`
+in the REPL, or by asking the agent. The title bar shows it, and clicking it
+opens the Code tab.
+
+**Scratch buffers.** **New** asks for a name and a language: C, Ruby, Python,
+Rust, Go, shell, or any other language Lem has a mode for. Each buffer is a
+real file, `~/.config/cl-agent/scratch/NAME.EXT`, saved as you type, so
+everything that works on files works on it.
 
 - **Highlighting** comes from Lem's own mode for the language. Lem's core is
   hosted inside cl-agent without a display (`src/lem/`). Fenced code blocks
@@ -700,11 +722,28 @@ that works on files works on it.
   `C-c C-d d` shows its hover text. With no `lsp.sexp`, cl-agent uses
   clangd, pyright, rust-analyzer, gopls, ruby-lsp or
   typescript-language-server, whichever are installed.
-- **The agent** lists, reads and edits these buffers with the
-  `scratch-buffers` and `scratch-buffer-write` tools. It asks the same
-  language server through `lsp-diagnostics` on the buffer's path. Its
-  edits show up live, and a backup of the text it replaced is kept in
-  `scratch/.history/`.
+- **The agent** lists, reads and edits scratch buffers with the
+  `scratch-buffers` and `scratch-buffer-write` tools, and keeps a backup of
+  the text it replaced in `scratch/.history/`.
+  - For files, `editor-files` shows what you have open, including unsaved
+    changes; `read-file` tells it when there are some. `open-in-editor`
+    shows you a file at a line, and `set-working-directory` changes the
+    working directory.
+  - When the agent writes a file you have open, a buffer without unsaved
+    changes reloads. One with unsaved changes asks whether to revert or
+    keep yours.
+  - It asks the same language server through `lsp-diagnostics`. For a file
+    you are editing, the server sees the unsaved text.
+- **Hooks** let extensions join in. The hook points are:
+  - `:working-directory-changed`;
+  - `:file-opened`;
+  - `:before-file-save`, a chain hook that can rewrite the text (a
+    formatter, say) or refuse the save;
+  - `:after-file-save`;
+  - `:file-written`, for both the editor's and the agent's writes;
+  - `:file-closed`.
+
+  Lem's own hooks, from your init file, run as they do in Lem.
 
 The hosted Lem loads your Lem init file, the one Lem itself would load
 (`$LEM_HOME`, `~/.lem/`, or `~/.config/lem/`), and then `cl-agent.lisp`

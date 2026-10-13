@@ -24,6 +24,8 @@ const TITLES = {
   'lisp-keywords': 'Keyword arguments',
   'lisp-files': 'Files',
   lsp: 'Language server',
+  commands: 'M-x',
+  buffers: 'Buffers',
   'buffer-words': 'Words in this buffer',
 };
 

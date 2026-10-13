@@ -2,6 +2,7 @@
 
 Status: **partly implemented.**
 - Implemented: §4.1–4.3 (Lem pinned through ocicl and hosted without a display, in `src/lem/host.lisp`), §4.8's init-file loading, §4.9 (micros self-connection off), and §7's highlighting (`src/lem/highlight.lisp`) of reply code blocks and of the Code tab's scratch buffers (`src/scratch.lisp`, `static/code.js`).
+- Also implemented: files are opened, edited and saved through Lem buffers (`src/lem/files.lisp`, the Code tab), with Lem's find-file mode detection and hooks, `save-buffer`, directory listing and file-name completion. Edits sync as text into the buffer; Lem's own lsp-mode is kept off in favour of cl-agent's language servers.
 - Not yet: Lem driving the input boxes' keys (§4.4–4.7, phases 2–5).
 
 This plan covers two things:

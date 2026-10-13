@@ -262,6 +262,11 @@ on('connection', connected => {
   if (!connected) mousedoc('Lost the connection to cl-agent — retrying…');
 });
 for (const type of ['state', 'status', 'subagents']) on(type, () => { updateTitle(); updateWholine(); });
+// The working directory in the title opens it in the Code tab.
+$('title-info').addEventListener('click', () => views.showView('code'));
+$('title-info').dataset.doc = 'Open the working directory in the Code tab';
+// /cd, the Code tab or the agent changed the working directory.
+on('cwd', ev => { if (state.session) state.session.cwd = ev.cwd; updateTitle(); });
 setInterval(updateWholine, 1000);
 
 updateThemeButton();
