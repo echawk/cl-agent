@@ -283,7 +283,8 @@ header).  NIL lets a websocket upgrade through to Lem."
     ("LEM/PROMPT-WINDOW" "PROMPT-ATTRIBUTE" :foreground "pink" :bold t)
     ("LEM/TABBAR" "TABBAR-ACTIVE-TAB-ATTRIBUTE" :foreground "ink" :background "paper")
     ("LEM/TABBAR" "TABBAR-ATTRIBUTE" :foreground "ink-2" :background "paper-2")
-    ("LEM/TABBAR" "TABBAR-BACKGROUND-ATTRIBUTE" :background "paper-2"))
+    ("LEM/TABBAR" "TABBAR-BACKGROUND-ATTRIBUTE" :background "paper-2")
+    ("CL-AGENT" "COPILOT-SUGGESTION-ATTRIBUTE" :foreground "ink-3"))
   "Lem's colours as the page's theme tokens (theme.css): base16 slots, then
 (package attribute . arguments), a string argument naming a token.")
 

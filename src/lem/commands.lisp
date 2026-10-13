@@ -92,6 +92,7 @@ ARGUMENTS bound) replaces it."
 
 (defun lem-buffer-for (path)
   "Editor thread: the buffer visiting PATH, opening it; or the one shown."
+  (lem-before-buffer-access)
   (if path
       (values (lem:find-file-buffer (expand-user-path path)))
       (let ((prompt (lem:active-prompt-window)))

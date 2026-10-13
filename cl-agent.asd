@@ -178,6 +178,7 @@
      (:file "completion")
      (:file "scratch")
      (:file "editor")
+     (:file "copilot")
      ;; Web UI slash commands need DEFINE-SLASH-COMMAND (repl.lisp) and
      ;; DEFINE-COMMAND-COMPLETER (completion.lisp), and the Lisp tab's REPL
      ;; uses completion.lisp, clspec.lisp and apropos.lisp, so they load late.
@@ -247,7 +248,8 @@
    (:file "test-source-archive")
    (:file "test-editor-files")
    (:file "test-systems")
-   (:file "test-lem-commands"))
+   (:file "test-lem-commands")
+   (:file "test-copilot"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

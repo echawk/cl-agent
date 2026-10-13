@@ -110,6 +110,7 @@ Lem's dired lists them; dot files only with HIDDEN."
   "The open Lem buffer visiting PATH, or NIL.  Editor thread.  Lem names a
 buffer's file by its true name (symbolic links resolved: /var/... is
 /private/var/... on macOS), so PATH matches as written or resolved."
+  (lem-before-buffer-access)
   (let* ((full (expand-user-path path))
          (true (ignore-errors (namestring (truename full)))))
     (find-if (lambda (buffer)

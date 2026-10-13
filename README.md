@@ -703,6 +703,21 @@ The agent runs Lem's editing commands too, with the `lem-command` tool:
 - **You see the edits live** in the Lem view, and they stay unsaved unless
   the agent saves.
 
+**The copilot.** As you type, a model suggests the code that comes next. It
+works in the Lem view and in the simple editor.
+- **How it looks:** the suggestion shows faint at the cursor. `Tab` takes
+  it, `M-Right` takes its first line, and any other key leaves it.
+- **Asking:** a comment saying what to write gets the code that does it.
+  `C-c Tab` (`M-x copilot-complete` in Lem) asks at any time. **Copilot on**
+  in the editor's toolbar also asks after every pause in typing.
+- **Separate from the agent:** it makes its own tool-free requests,
+  showing the model only the file around the cursor and nothing of the
+  conversation. It uses the session's model unless you pick another in the
+  toolbar. The settings `copilot-auto`, `copilot-model` and
+  `copilot-delay-ms` keep the choices (`/settings set copilot-model NAME`).
+- **Private until taken:** a suggestion is never saved, never in the undo
+  history, and never seen by the agent until you take it.
+
 **Files in the simple editor.** `C-x C-f` (find-file) opens a minibuffer
 with Lem's file-name completion on `Tab`.
 - Enter on a file visits it. It opens with Lem's `find-file-buffer`, so Lem

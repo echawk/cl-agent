@@ -695,6 +695,7 @@ a { color: var(--blue); text-underline-offset: 2px; }
   white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 8;
 }
 .le-view { min-height: 100%; color: var(--ink); pointer-events: none; }
+.le-ghost { color: var(--ink-3); }   /* the copilot's suggestion, until Tab takes it */
 .le-input {
   position: absolute; inset: 0; width: 100%; height: 100%;
   border: 0; outline: 0; resize: none; overflow: hidden;
@@ -997,5 +998,7 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .code-editor-pane > [hidden] { display: none; }
 .code-lem-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: 1.5px solid var(--rule-soft); background: var(--paper-2); }
 .code-lem-file { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; color: var(--ink-2); font-size: 0.9em; }
+.code-copilot.on { background: var(--green); color: var(--on-green); border-color: var(--green); }
+.code-copilot-model { max-width: 14em; padding: 1px 4px; font-size: 0.8em; }
 .code-lem-host { flex: 1; min-height: 0; display: flex; background: var(--paper); }
 .code-lem-frame { flex: 1; width: 100%; height: 100%; border: 0; display: block; }

@@ -47,6 +47,21 @@
   :environment "CL_AGENT_SANDBOX_NETWORK_MODE"
   :options '(:isolated :enabled :proxy-only) :default :isolated)
 
+(setinka:define-setting :copilot-auto (setinka:boolean-setting :registry *agent-setting-registry*)
+  :label "Copilot as you type" :group :copilot :scope :durable
+  :documentation "Whether the editor's copilot suggests code whenever you pause typing (C-c Tab asks it anyway)."
+  :environment "CL_AGENT_COPILOT_AUTO" :default nil)
+
+(setinka:define-setting :copilot-model (setinka:string-setting :registry *agent-setting-registry*)
+  :label "Copilot model" :group :copilot :scope :durable
+  :documentation "The model the editor's copilot asks; \"session\" means the session's own model."
+  :environment "CL_AGENT_COPILOT_MODEL" :default "session")
+
+(setinka:define-setting :copilot-delay-ms (setinka:integer-setting :registry *agent-setting-registry*)
+  :label "Copilot pause" :group :copilot :scope :durable
+  :documentation "How long a pause in typing, in milliseconds, before the copilot suggests."
+  :environment "CL_AGENT_COPILOT_DELAY_MS" :minimum 100 :maximum 10000 :default 700)
+
 (defun agent-settings-path ()
   (merge-pathnames "state/settings.sexp" *config-directory*))
 

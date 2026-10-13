@@ -44,6 +44,14 @@
 //   wordPattern   a RegExp matching word characters, for M-/ and narrowing
 //   triggerCharacters  () => ["." , "->", ...]: typing one opens completion
 //                 (a candidate's own `start`, as from an LSP textEdit, is honoured)
+//
+// And a copilot (copilot.lisp), as in the Lem view:
+//   suggest       async (text, cursor) => string: code to follow the cursor,
+//                 shown faint after the caret until a key decides: Tab takes
+//                 it, M-Right its first line, anything else leaves it.
+//                 C-c TAB asks now
+//   suggestAuto   () => bool: also ask after each pause in typing of
+//                 suggestDelay() ms (default 700)
 
 import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
 import { el } from './core.js';
@@ -393,6 +401,7 @@ export function createLispEditor(host, options = {}) {
     'C-M-i': editor => editor.complete(),
     'M-TAB': editor => editor.complete(),
     'M-/': editor => editor.dabbrev(),
+    ...(options.suggest ? { 'C-c TAB': () => suggest(true) } : {}),
     ...options.keymap,
   };
   const prefixes = new Set(Object.keys(keymap).flatMap(seq => {
@@ -419,6 +428,9 @@ export function createLispEditor(host, options = {}) {
   let follow = false;         // keep the caret in view after this render
   let refining = false;       // the menu is open and a key just changed the token
   let expansion = null;       // the M-/ in progress: {start, prefix, words, index, end}
+  let ghost = null;           // the copilot's suggestion shown: {text, value, at}
+  let suggestTimer = 0;
+  let suggestNumber = 0;
 
   const message = text => options.onMessage?.(text);
 
@@ -430,6 +442,11 @@ export function createLispEditor(host, options = {}) {
       if (input.value !== runsText) { runs = shiftRuns(runsText, input.value, runs); runsText = input.value; }
       view.innerHTML = `${markupRuns(input.value, runs, caret, flash)}\n`;
     } else view.innerHTML = `${markup(input.value, caret, flash)}\n`;
+    if (ghost && (ghost.value !== input.value || ghost.at !== caret)) ghost = null;
+    if (ghost) {
+      const marker = view.querySelector('.le-caret');
+      marker?.after(el('span', { class: 'le-ghost' }, ghost.text));
+    }
     if (follow) { follow = false; keepCaretVisible(); }
   }
 
@@ -644,10 +661,51 @@ export function createLispEditor(host, options = {}) {
     expansion.end = expansion.start + word.length;
   }
 
+  // ----- the copilot -----
+
+  async function suggest(manual = false) {
+    if (!options.suggest) return;
+    clearTimeout(suggestTimer);
+    const value = input.value;
+    const at = input.selectionStart;
+    if (at !== input.selectionEnd) return;
+    const number = ++suggestNumber;
+    if (manual) message('Copilot…');
+    let text;
+    try { text = await options.suggest(value, at); } catch (err) { if (manual) message(`Copilot: ${err.message}`); return; }
+    // Typed or moved meanwhile: the answer is for text that is gone.
+    if (number !== suggestNumber || input.value !== value || input.selectionStart !== at || input.selectionEnd !== at) return;
+    if (!text) { if (manual) message('Copilot: nothing to suggest here.'); return; }
+    if (manual) message('');
+    ghost = { text, value, at };
+    schedule({ now: true });
+  }
+
+  function suggestLater() {
+    suggestNumber += 1;
+    clearTimeout(suggestTimer);
+    if (options.suggest && options.suggestAuto?.()) suggestTimer = setTimeout(() => suggest(), options.suggestDelay?.() || 700);
+  }
+
+  function takeSuggestion(firstLine = false) {
+    const { text, at } = ghost;
+    ghost = null;
+    const end = firstLine ? text.indexOf('\n', 1) : -1;
+    replaceRange(at, at, end > 0 ? text.slice(0, end) : text);
+  }
+
   // ----- keys -----
 
   function onKeyDown(e) {
     if (e.isComposing) return;
+    if (ghost && !['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) {
+      const plain = !e.shiftKey && !e.ctrlKey && !e.altKey && !e.metaKey;
+      if (e.key === 'Tab' && plain) { e.preventDefault(); takeSuggestion(); return; }
+      if (e.key === 'ArrowRight' && e.altKey) { e.preventDefault(); takeSuggestion(true); return; }
+      ghost = null;
+      schedule({ now: true });
+      if (e.key === 'Escape') { e.preventDefault(); return; }
+    }
     const state = menu.state;
     if (state) {
       const step = menuStep(e);
@@ -716,6 +774,8 @@ export function createLispEditor(host, options = {}) {
 
   input.addEventListener('keydown', onKeyDown);
   input.addEventListener('input', event => {
+    ghost = null;
+    suggestLater();
     schedule({ keep: true, now: true });
     contextChanged();
     options.onChange?.(input.value);
@@ -748,6 +808,8 @@ export function createLispEditor(host, options = {}) {
     insert(text) { replaceRange(input.selectionStart, input.selectionEnd, text); },
     complete,
     dabbrev,
+    suggest: () => suggest(true),
+    get suggestion() { return ghost && ghost.text; },
     tree() { return parse(input.value); },
     symbolAtPoint() { return symbolAt(input.value, input.selectionStart); },
     toplevelAtPoint() {

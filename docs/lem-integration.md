@@ -426,6 +426,18 @@ The protocol to implement is lem-server's: `make-view`/`resize-view`/`move-view`
 - While the command runs, the buffer is shown in the window the user is looking at, and put back before Lem redraws, so the view doesn't move.
 - Changes are published to open pages.
 
+## 11. The copilot (implemented)
+
+`src/copilot.lisp`. It works like Lem's own `copilot-mode`: the suggestion is shown in the buffer, Tab takes it, and other keys leave it. It doesn't reuse that extension, because Lem's version is tied to GitHub Copilot's language server and Lem's LSP client.
+- **Requests.** Each one is tool-free and goes to a provider of the copilot's own, made with `provider-for-model`. It uses the session's model unless `copilot-model` names another. The request holds a system prompt, plus the file around the cursor with a `<CURSOR>` marker. The reply is cleaned of thinking, fences, repeated text and repeated indentation.
+- **Display.** The suggestion is real text in the buffer, drawn in `copilot-suggestion-attribute`, which the page theme colours. It is inserted under `with-inhibit-undo`, and the modified flag is restored. It is taken out by:
+  - the next command (`*pre-command-hook*`);
+  - a save (`before-save-hook`);
+  - cl-agent reading or changing the buffer (`*lem-before-buffer-access*`, run by `editor-find-buffer` and `lem-buffer-for`).
+- **Keys.** `copilot-suggestion-mode`, a minor mode that is on only while a suggestion shows, binds Tab and M-Right. `C-c Tab` is `copilot-complete`.
+- **When it asks.** With `copilot-auto` on, a change to the buffer's text starts a timer for `copilot-delay-ms`. A request runs on its own thread. Its answer is shown only if the generation, buffer tick, point and current buffer are all unchanged.
+- **The simple editor.** `lisp-editor.js` takes `suggest` and `suggestAuto` options. The suggestion is drawn after the caret in the highlighted copy of the text, and the textarea is untouched until Tab. `POST /api/copilot/suggest` asks the same copilot about the unsaved text.
+
 ## 8. Risks and open questions
 
 - **Lem internals.** The plan calls internal functions: `run-editor-thread`'s body, `load-init-file`, `invoke-frontend` and `with-editor-stream`. Pin the commit, and keep each internal call in one file (`src/ui/lem/host.lisp`) so moving to a newer Lem is a single review.

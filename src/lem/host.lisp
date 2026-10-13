@@ -145,6 +145,17 @@ keeping this process's PATH (Lem's macOS init hook rewrites it)."
   (:report (lambda (condition stream)
              (format stream "Lem is not available~@[: ~a~]" (lem-host-unavailable-reason condition)))))
 
+;; Something other than the person typing is about to read or change a
+;; buffer (the agent, the simple editor, a save): copilot.lisp's suggestion,
+;; text shown in the buffer but not yet accepted, leaves first.
+(defvar *lem-before-buffer-access* '()
+  "Functions run on the editor thread before cl-agent itself reads or
+changes a Lem buffer.")
+
+(defun lem-before-buffer-access ()
+  (dolist (function *lem-before-buffer-access*)
+    (ignore-errors (funcall function))))
+
 (defun lem-call (function &key (timeout *lem-call-timeout*))
   "Run FUNCTION on Lem's editor thread and return its value; its errors are
 signalled here.  From the editor thread itself, just call it."

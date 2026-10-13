@@ -1,0 +1,130 @@
+;;;; t/test-copilot.lisp -- the editor's copilot (copilot.lisp): what it asks,
+;;;; what it shows, and that a suggestion never leaks out of the editor.
+
+(in-package :cl-agent)
+
+(defclass test-copilot-provider (llm-provider)
+  ((reply :initarg :reply :accessor test-copilot-reply)
+   (delay :initarg :delay :initform 0 :reader test-copilot-delay)
+   (prompts :initform '() :accessor test-copilot-prompts)))
+
+(defmethod chat ((provider test-copilot-provider) messages tools)
+  (declare (ignore tools))
+  (push (getf (second messages) :content) (test-copilot-prompts provider))
+  (sleep (test-copilot-delay provider))
+  (list :role "assistant" :content (test-copilot-reply provider)))
+
+(defun copilot-test-context (before after)
+  (list :before before :after after :path "x.c" :language "c"))
+
+(deftest copilot-cleans-what-the-model-says ()
+  (check-equal (copilot-clean (format nil "```c~%return 0;~%```") (copilot-test-context "  " "")) "return 0;"
+               "no fences")
+  (check-equal (copilot-clean (format nil "<think>hmm</think>x + 1;") (copilot-test-context "int y = " "")) "x + 1;"
+               "no thinking")
+  (check-equal (copilot-clean "int y = x + 1;" (copilot-test-context (format nil "a~%  int y = ") "")) "x + 1;"
+               "not the line it was given again")
+  (check-equal (copilot-clean (format nil "x + 1;~%}") (copilot-test-context "int y = " (format nil "~%}~%"))) "x + 1;"
+               "not what follows the cursor")
+  (check-equal (copilot-clean (format nil "    int a;~%    return a;") (copilot-test-context (format nil "{~%    ") "")) (format nil "int a;~%    return a;")
+               "not the indentation the cursor is already past")
+  (check-equal (length (uiop:split-string (copilot-clean (format nil "~{~a~%~}" (loop for i below 60 collect i))
+                                                         (copilot-test-context "" ""))
+                                          :separator '(#\Newline)))
+               40 "at most 40 lines"))
+
+(defun copilot-raw-text (path)
+  "PATH's buffer text as Lem holds it, suggestion and all."
+  (let ((buffer (lem:find-file-buffer (expand-user-path path))))
+    (lem:points-to-string (lem:buffer-start-point buffer) (lem:buffer-end-point buffer))))
+
+(deftest a-copilot-suggestion-stays-in-the-editor ()
+  ;; Checks run here, not on Lem's thread: values come back from LEM-CALL.
+  (with-lem-test-file (path (format nil "int main() {~%  ~%}~%"))
+    (let ((start 16) (empty (format nil "int main() {~%  ~%}~%")) (full (format nil "int main() {~%  return 0;~%}~%")))
+      (flet ((buffer () (lem:find-file-buffer (expand-user-path path))))
+        (destructuring-bind (text point modified)
+            (lem-call (lambda ()
+                        (copilot-show (buffer) start "return 0;")
+                        (list (copilot-raw-text path) (lem:position-at-point (lem:buffer-point (buffer)))
+                              (lem:buffer-modified-p (buffer)))))
+          (check-equal text full "shown in the buffer")
+          (check-equal point start "the cursor stays before it")
+          (check (not modified) "not a change to the file"))
+        (check-equal (lem-buffer-text-of path) empty "cl-agent reading the buffer takes it out first")
+        (check (null *copilot-shown*))
+        (check (not (lem-call (lambda () (lem:buffer-modified-p (buffer))))) "and the buffer is as unmodified as before")
+        (check-equal (lem-call (lambda ()
+                                 (copilot-show (buffer) start "return 0;")
+                                 (lem:with-current-buffer (buffer) (lem:call-command (lem:find-command "forward-char") nil))
+                                 (copilot-raw-text path)))
+                     empty "any other command leaves it")
+        (destructuring-bind (text modified)
+            (lem-call (lambda ()
+                        (lem:move-to-position (lem:buffer-point (buffer)) start)
+                        (copilot-show (buffer) start "return 0;")
+                        (lem:with-current-buffer (buffer) (lem:call-command (lem:find-command "copilot-accept") nil))
+                        (list (copilot-raw-text path) (lem:buffer-modified-p (buffer)))))
+          (check-equal text full "Tab takes it")
+          (check modified "a real change now"))
+        (check-equal (lem-call (lambda ()
+                                 (lem:buffer-undo (lem:buffer-point (buffer)))
+                                 (copilot-raw-text path)))
+                     empty "and one undo takes it back")))))
+
+(defun wait-for (predicate &key (seconds 5))
+  (loop repeat (* seconds 20) until (funcall predicate) do (sleep 0.05))
+  (funcall predicate))
+
+(deftest the-copilot-asks-its-own-model-and-drops-stale-answers ()
+  (with-lem-test-file (path (format nil "// add a and b~%int add(int a, int b) {~%  ~%}~%"))
+    ;; SETF, not LET: the request runs on a thread of its own.
+    (setf *copilot-provider* (make-instance 'test-copilot-provider :reply "return a + b;"))
+    (unwind-protect (let ((shown nil))
+      (lem-call (lambda ()
+                  (let ((buffer (lem:find-file-buffer (expand-user-path path))))
+                    (lem:switch-to-buffer buffer)
+                    (lem:move-to-line (lem:buffer-point buffer) 3)
+                    (lem:line-end (lem:buffer-point buffer))
+                    (copilot-request buffer (incf *copilot-generation*)))))
+      (check (wait-for (lambda () (lem-call (lambda () (and *copilot-shown* t))))) "a suggestion comes")
+      (lem-call (lambda () (setf shown (getf *copilot-shown* :text)) (copilot-dismiss)))
+      (check-equal shown "return a + b;")
+      (let ((prompt (first (test-copilot-prompts *copilot-provider*))))
+        (check (search (format nil "~%  <CURSOR>~%}") prompt) "the model sees the cursor in the file")
+        (check (search "// add a and b" prompt) "and the comment before it"))
+      ;; Through the command (C-c Tab), whose own after-command hook must
+      ;; not count as an edit.
+      (lem-call (lambda () (lem:call-command (lem:find-command "copilot-complete") nil)))
+      (check (wait-for (lambda () (lem-call (lambda () (and *copilot-shown* t))))) "C-c Tab shows one too")
+      (lem-call #'copilot-dismiss)
+      (setf *copilot-provider* (make-instance 'test-copilot-provider :reply "late" :delay 0.3))
+      (lem-call (lambda ()
+                  (let ((buffer (lem:find-file-buffer (expand-user-path path))))
+                    (copilot-request buffer (incf *copilot-generation*))
+                    (lem:insert-string (lem:buffer-point buffer) "x"))))
+      (check (wait-for (lambda () (equal (getf *copilot-status* :state) "stale"))) "typed meanwhile: dropped")
+      (check (null *copilot-shown*)))
+      (setf *copilot-provider* nil))))
+
+(deftest the-copilot-follows-the-sessions-model-unless-told ()
+  (check (null (copilot-chosen-model)) "no session: the session's own")
+  (check-equal (gethash "auto" (copilot-status-json)) nil "off until switched on")
+  (with-test-web-frontend (frontend)
+    (let ((json (web-get-json frontend "/api/copilot")))
+      (check (nth-value 1 (gethash "model" json)))
+      (check (nth-value 1 (gethash "sessionModel" json))))))
+
+(deftest the-simple-editor-asks-the-same-copilot ()
+  (setf *copilot-provider* (make-instance 'test-copilot-provider :reply (format nil "```ruby~%a + b~%```")))
+  (unwind-protect
+       (with-test-web-frontend (frontend)
+         (let ((json (json-decode (web-post frontend "/api/copilot/suggest"
+                                            :json (jobj "path" "/x/add.rb"
+                                                        "before" (format nil "# add them~%def add(a, b)~%  ")
+                                                        "after" (format nil "~%end~%"))))))
+           (check-equal (gethash "text" json) "a + b"))
+         (check (search (format nil "File: /x/add.rb (rb)") (first (test-copilot-prompts *copilot-provider*)))
+                "the file's name and language")
+         (check-equal (nth-value 1 (web-post frontend "/api/copilot/suggest" :json (jobj "path" "x"))) 400))
+    (setf *copilot-provider* nil)))

@@ -67,6 +67,7 @@ const view = {
   lemMode: storage('code-lem', true),   // the editor is Lem itself
   lemFrame: null,
   lemFile: null,
+  copilot: null,          // the copilot's settings and its models (loadCopilot)
 };
 
 const $ = sel => view.node?.querySelector(sel);
@@ -230,7 +231,67 @@ function renderLemHead() {
       class: 'btn btn-small btn-primary', type: 'button', 'data-doc': 'Ask the agent about this file',
       onclick: () => insertInComposer(f ? `Help me with ${short(f.path)} (open in the Lem editor).` : 'Help me with the file open in the Lem editor.'),
     }, 'Ask the agent'),
+    copilotBox(),
     el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Use the lightweight editor instead of Lem', onclick: () => setLemMode(false) }, 'Simple editor'));
+}
+
+// The copilot (copilot.lisp): suggestions in Lem as you type, from a model
+// of its own -- the session's unless another is chosen here.
+async function loadCopilot() {
+  view.copilot = view.copilot || {};
+  try {
+    const [status, models] = await Promise.all([api('/api/copilot'), api('/api/models').catch(() => ({ models: [] }))]);
+    view.copilot = { ...status, models: models.models || [] };
+  } catch (err) { view.copilot = { error: err.message, models: [] }; }
+  renderCopilot();
+}
+
+async function setCopilot(change) {
+  try { view.copilot = { ...view.copilot, ...(await api('/api/copilot', { method: 'POST', body: change })) }; }
+  catch (err) { message(`Copilot: ${err.message}`); }
+  renderCopilot();
+  if (view.lemMode) focusLem(); else view.editor?.focus();
+}
+
+// The controls, in whichever editor's head is showing.
+function copilotBox() {
+  if (!view.copilot) loadCopilot();
+  return el('span', { class: 'code-copilot-box' }, ...copilotControls());
+}
+
+function renderCopilot() {
+  for (const box of document.querySelectorAll('.code-copilot-box')) box.replaceChildren(...copilotControls());
+}
+
+// The simple editor asks the same copilot about its own (unsaved) text.
+async function copilotSuggest(text, cursor) {
+  const d = view.doc;
+  const path = d?.path || `scratch.${d?.extension || 'txt'}`;
+  const json = await api('/api/copilot/suggest', { method: 'POST', body: { path, before: text.slice(0, cursor), after: text.slice(cursor) } });
+  return json.text || '';
+}
+
+function copilotControls() {
+  const c = view.copilot || {};
+  const session = c.sessionModel ? `session (${c.sessionModel})` : 'session model';
+  const models = (c.models || []).filter(m => m !== c.sessionModel);
+  if (c.model && !models.includes(c.model)) models.unshift(c.model);
+  return [
+    el('button', {
+      class: `btn btn-small code-copilot ${c.auto ? 'on' : ''}`, type: 'button', 'aria-pressed': String(!!c.auto),
+      'data-doc': c.auto
+        ? 'Copilot is suggesting as you type (Tab takes a suggestion, M-Right its first line). Click to stop; C-c Tab still asks.'
+        : 'Have the copilot suggest code as you type. Off, C-c Tab in Lem asks it anyway.',
+      onclick: () => setCopilot({ auto: !c.auto }),
+    }, c.auto ? 'Copilot on' : 'Copilot off'),
+    el('select', {
+      class: 'field code-copilot-model', 'aria-label': 'Copilot model',
+      'data-doc': 'The model the copilot asks: its own requests, apart from the conversation',
+      onchange: e => setCopilot({ model: e.target.value }),
+    },
+    el('option', { value: '', selected: !c.model }, session),
+    ...models.map(m => el('option', { value: m, selected: m === c.model }, m))),
+  ];
 }
 
 async function openDoc(kind, key, { line } = {}) {
@@ -914,6 +975,7 @@ function renderEditor() {
             : `Help me with ${what}.`);
         }, 'btn-primary'),
         el('span', { class: 'spacer' }),
+        copilotBox(),
         el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Edit in Lem itself', onclick: () => setLemMode(true) }, 'Lem'),
         file
           ? el('button', { class: 'btn btn-small code-close', type: 'button', 'data-doc': 'Close this buffer (C-x k)', onclick: closeDoc }, 'Close')
@@ -924,7 +986,7 @@ function renderEditor() {
   view.editor = createLispEditor(host, {
     className: 'code-editor',
     value: d.text,
-    doc: `${language} · Tab complete · C-x C-s save · C-x C-f find file · C-x b switch · C-c C-c check · C-c C-d d hover · M-/ expand`,
+    doc: `${language} · Tab complete · C-c Tab copilot · C-x C-s save · C-x C-f find file · C-x b switch · C-c C-c check · C-c C-d d hover · M-/ expand`,
     highlight: file
       ? async text => (await syncFile(text))?.runs
       : async text => (await api('/api/highlight', { method: 'POST', body: { text, pathname: `x.${d.extension}` } })).runs,
@@ -932,6 +994,9 @@ function renderEditor() {
     wordPattern: /[\w$]/,
     complete,
     triggerCharacters: () => view.triggers,
+    suggest: copilotSuggest,
+    suggestAuto: () => !!view.copilot?.auto,
+    suggestDelay: () => view.copilot?.delayMs || 700,
     keymap: {
       'C-x C-s': () => saveFile(),
       'C-x C-f': () => prompt('find-file'),

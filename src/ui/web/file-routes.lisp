@@ -23,6 +23,12 @@
 ;;;;   POST /api/files/hover               {path, text?, line, character}
 ;;;;   GET  /api/lem/display?font=&size=   {url}: Lem's own view of itself (lem/display.lisp)
 ;;;;   POST /api/lem/theme                 {mode, colors}: Lem in the page's colours
+;;;;   GET  /api/copilot                   the editor's copilot (copilot.lisp): {auto,
+;;;;                                       model, sessionModel, state, error, ...}
+;;;;   POST /api/copilot                   {auto?, model?}: change it (model "" = the
+;;;;                                       session's own)
+;;;;   POST /api/copilot/suggest           {path, before, after}: a suggestion for the
+;;;;                                       simple editor's text at its cursor; {text}
 ;;;;   POST /api/lem/visit                 {path, line?}: show a file in Lem's window
 ;;;;   POST /api/lem/run                   {command}: run a Lem command as M-x would,
 ;;;;                                       its prompts answered in the Lem view
@@ -174,3 +180,23 @@
       ;; Queued, not awaited: its prompts are for the person at the Lem view.
       (lem:send-event (lambda () (lem:call-command (lem:find-command name) nil)))
       (jobj "queued" name))))
+
+(define-web-route copilot (:path "/api/copilot")
+  (copilot-status-json))
+
+(define-web-route copilot-change (:method :post :path "/api/copilot")
+  (let ((body (web-json-body)))
+    (with-file-errors
+      (apply #'copilot-configure
+             (append (multiple-value-bind (auto present) (gethash "auto" body)
+                       (and present (list :auto (and auto t))))
+                     (multiple-value-bind (model present) (gethash "model" body)
+                       (and present (list :model (and (stringp model) model)))))))))
+
+(define-web-route copilot-suggest (:method :post :path "/api/copilot/suggest")
+  (let* ((body (web-json-body)) (before (jget body "before")) (after (jget body "after" "")))
+    (if (not (and (stringp before) (stringp after)))
+        (web-respond 400 (jobj "error" "Give the text before and after the cursor."))
+        (with-file-errors
+          (jobj "text" (copilot-suggest-text (jget body "path") before after)
+                "model" (json-or-null (copilot-model)))))))
