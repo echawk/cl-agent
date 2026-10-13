@@ -37,25 +37,60 @@ is .../v1 (see this file's DEFCLASS), so strip it to get .../api/tags,
         (subseq base 0 (- (length base) 3))
         base)))
 
-(defmethod provider-context-window ((provider ollama-provider))
-  "Return the running Ollama model's configured num_ctx, if available."
+(defun ollama-api-json (provider path &optional body)
+  "Ollama's native PATH (POSTed BODY, or a GET) as decoded JSON, or NIL."
   (handler-case
-      (multiple-value-bind (body status)
-          (drakma:http-request (concatenate 'string (ollama-api-root provider) "/api/show")
-                                :method :post :content-type "application/json"
-                                :content (json-encode (jobj "model" (provider-model provider)))
-                                :connection-timeout 3)
+      (multiple-value-bind (raw status)
+          (drakma:http-request (concatenate 'string (ollama-api-root provider) path)
+                               :method (if body :post :get) :content-type "application/json"
+                               :content (and body (json-encode body)) :connection-timeout 3)
         (when (= status 200)
-          (let ((parameters (jget (json-decode (if (stringp body) body
-                                                    (flexi-streams:octets-to-string body :external-format :utf-8)))
-                                  "parameters")))
-            (when (stringp parameters)
-              (let ((match (search "num_ctx " parameters)))
-                (when match
-                  (let* ((rest (subseq parameters (+ match (length "num_ctx "))))
-                         (end (or (position #\Newline rest) (length rest))))
-                    (parse-integer (subseq rest 0 end) :junk-allowed t))))))))
+          (json-decode (if (stringp raw) raw (flexi-streams:octets-to-string raw :external-format :utf-8)))))
     (error () nil)))
+
+(defun ollama-model-names (model)
+  "MODEL and the name Ollama reports for it (an untagged name means :latest)."
+  (if (find #\: model) (list model) (list model (concatenate 'string model ":latest"))))
+
+(defun ollama-loaded-context-length (provider)
+  "The context PROVIDER's model is running with right now, if it is loaded (/api/ps)."
+  (let ((names (ollama-model-names (provider-model provider))))
+    (loop for entry in (jget (ollama-api-json provider "/api/ps") "models")
+          when (or (member (jget entry "name") names :test #'equal)
+                   (member (jget entry "model") names :test #'equal))
+            return (positive-token-count (jget entry "context_length")))))
+
+(defun ollama-show-context-length (provider)
+  "From /api/show: the model's num_ctx parameter, else the context length it
+was trained for (model_info's ARCH.context_length)."
+  (let ((show (ollama-api-json provider "/api/show" (jobj "model" (provider-model provider)))))
+    (when show
+      (or (let* ((parameters (jget show "parameters"))
+                 (match (and (stringp parameters) (search "num_ctx" parameters))))
+            (and match (positive-token-count (string-left-trim " " (subseq parameters (+ match 7))))))
+          (let ((info (jget show "model_info")))
+            (when (hash-table-p info)
+              (loop for key being the hash-keys of info using (hash-value value)
+                    when (uiop:string-suffix-p key ".context_length")
+                      return (positive-token-count value))))))))
+
+(defvar *ollama-context-windows* (make-hash-table :test 'equal)
+  "(API-ROOT MODEL) -> (EXPIRES-AT . WINDOW).")
+
+(defmethod provider-context-window ((provider ollama-provider))
+  "Ollama's window for the current model: the context the loaded model is
+running with (/api/ps), else its num_ctx, else the length it was trained
+for (/api/show).  Cached for 30 seconds: a model can be reloaded with a
+different context, and it is only loaded once the first request reaches it."
+  (let* ((key (list (ollama-api-root provider) (provider-model provider)))
+         (now (get-universal-time))
+         (cached (bt:with-lock-held (*context-window-cache-lock*) (gethash key *ollama-context-windows*))))
+    (if (and cached (< now (car cached)))
+        (cdr cached)
+        (let ((window (or (ollama-loaded-context-length provider) (ollama-show-context-length provider))))
+          (bt:with-lock-held (*context-window-cache-lock*)
+            (setf (gethash key *ollama-context-windows*) (cons (+ now 30) window)))
+          window))))
 
 (defun ollama-reachable-p (provider)
   "True if PROVIDER's Ollama server responds to a quick request."

@@ -163,3 +163,71 @@ history before a request exceeds a known limit.")
   (:method ((provider llm-provider))
     (declare (ignore provider))
     nil))
+
+;;; --- context windows servers advertise ---
+;;;
+;;; Many servers say how large each model's context is in their model
+;;; listing.  Asking before every request would be slow, so a listing is
+;;; cached per server; a failed or silent one is cached briefly too.
+
+(defparameter *advertised-context-window-fields*
+  '(("loaded_context_length") ("max_input_tokens") ("context_length") ("context_window")
+    ("max_context_length") ("max_model_len") ("top_provider" "context_length")
+    ("meta" "n_ctx_train"))
+  "Where a model listing puts a model's context window, most specific first:
+LM Studio (loaded_context_length, max_context_length), LiteLLM gateways
+such as REALLMS (max_input_tokens), OpenRouter, Together and Fireworks
+(context_length), Groq (context_window), vLLM (max_model_len), llama.cpp
+(meta.n_ctx_train).")
+
+(defparameter *context-window-cache-seconds* 600
+  "How long a server's advertised windows are reused before asking again.")
+(defparameter *context-window-retry-seconds* 60
+  "How long to wait before asking again after a listing failed or said nothing.")
+
+(defvar *context-window-cache* (make-hash-table :test 'equal)
+  "Cache key -> (EXPIRES-AT . TABLE of model id -> window).")
+(defvar *context-window-cache-lock* (bt:make-lock "cl-agent-context-windows"))
+
+(defun positive-token-count (value)
+  "VALUE as a positive integer token count, or NIL (servers send integers,
+floats such as 131072.0, or numeric strings)."
+  (let ((number (typecase value
+                  (integer value)
+                  (real (round value))
+                  (string (ignore-errors (parse-integer value :junk-allowed t))))))
+    (and (integerp number) (plusp number) number)))
+
+(defun model-entry-context-window (entry)
+  "The context window one model listing ENTRY (a JSON object) advertises, or NIL."
+  (loop for path in *advertised-context-window-fields*
+        for window = (positive-token-count (apply #'jpath entry path))
+        when window return window))
+
+(defun cached-context-windows (key fetch-entries)
+  "A hash table of model id -> advertised window for the server named by
+KEY, from the model listing entries FETCH-ENTRIES returns, cached for
+*CONTEXT-WINDOW-CACHE-SECONDS*.  Never signals: a failure gives an empty
+table, retried after *CONTEXT-WINDOW-RETRY-SECONDS*."
+  (let ((now (get-universal-time)))
+    (let ((cached (bt:with-lock-held (*context-window-cache-lock*) (gethash key *context-window-cache*))))
+      (if (and cached (< now (car cached)))
+          (cdr cached)
+          (let ((table (make-hash-table :test 'equal)))
+            (dolist (entry (ignore-errors (funcall fetch-entries)))
+              (let ((id (or (jget entry "id") (jget entry "name")))
+                    (window (model-entry-context-window entry)))
+                (when (and (stringp id) window)
+                  (setf (gethash id table) window))))
+            (bt:with-lock-held (*context-window-cache-lock*)
+              (setf (gethash key *context-window-cache*)
+                    (cons (+ now (if (plusp (hash-table-count table))
+                                     *context-window-cache-seconds*
+                                     *context-window-retry-seconds*))
+                          table)))
+            table)))))
+
+(defun forget-context-windows ()
+  "Drop every cached advertised window (e.g. after a server's models change)."
+  (bt:with-lock-held (*context-window-cache-lock*)
+    (clrhash *context-window-cache*)))

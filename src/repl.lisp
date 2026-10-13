@@ -1340,43 +1340,80 @@ positive KEEP-RECENT so fresh tool calls and results remain verbatim."
                          (loop for message in (session-messages session)
                                sum (message-context-characters message))))))))))
 
+(defun tool-schema-tokens (session)
+  "Estimated tokens of the tool schemas SESSION offers with every request."
+  (approximate-token-count
+   (loop for tool in (session-tools session)
+         sum (length (json-encode (tool-json-schema tool))))))
+
 (defun estimated-context-tokens (session)
   "Estimate tokens sent in SESSION's next provider request."
   (+ (approximate-token-count
       (loop for message in (session-messages session) sum (message-context-characters message)))
-     (approximate-token-count
-      (loop for tool in (session-tools session)
-            sum (length (json-encode (tool-json-schema tool)))))))
+     (tool-schema-tokens session)))
+
+(defun fixed-context-tokens (session)
+  "Estimated tokens every request carries that compaction cannot shrink: the
+tool schemas, and the root system prompt (kept verbatim through compaction)."
+  (+ (tool-schema-tokens session)
+     (let ((root (first (session-messages session))))
+       (if (equal (getf root :role) "system")
+           (approximate-token-count (message-context-characters root))
+           0))))
+
+(defun compaction-limit (session window)
+  "The estimated request size above which SESSION compacts, for WINDOW."
+  (floor (* window (session-context-compaction-threshold session))))
 
 (defun count-recent-messages-for-window (session window)
-  "Choose a trailing verbatim slice targeting roughly one quarter of WINDOW."
-  (let ((target (floor (* window 1/4))) (accumulated 0) (count 0))
+  "Choose a trailing verbatim slice of SESSION's history to keep through a
+compaction: roughly a quarter of WINDOW, but at most half of the room the
+compaction limit leaves beside the system prompt and tool schemas, so the
+compacted request lands well under the limit instead of compacting again on
+the next one."
+  (let* ((room (- (compaction-limit session window) (fixed-context-tokens session)))
+         (target (max 0 (min (floor window 4) (floor room 2))))
+         (accumulated 0) (count 0))
     (loop for message in (reverse (session-messages session))
           while (< accumulated target)
           do (incf accumulated (approximate-token-count (message-context-characters message)))
              (incf count))
     count))
 
+(defvar *compaction-futility-warned* (make-hash-table :test 'eq :weakness :key)
+  "Sessions already told that their tool schemas alone exceed the limit.")
+
 (defun auto-compact-if-needed (session)
-  "Compact SESSION before a known provider window is exhausted; never signal."
+  "Compact SESSION before a known provider window is exhausted; never signal.
+The window is what the provider's server advertises for the model
+(PROVIDER-CONTEXT-WINDOW); without one, nothing happens."
   (let ((threshold (session-context-compaction-threshold session)))
     (when (and (numberp threshold) (plusp threshold) (< threshold 1))
       (let ((window (provider-context-window (session-provider session))))
         (when (and (integerp window) (plusp window)
-                   (> (estimated-context-tokens session) (floor (* window threshold))))
-          (handler-case
-              (multiple-value-bind (compacted-p before after)
-                  (compact-session-history
-                   session :keep-recent (max 6 (count-recent-messages-for-window session window)))
-                (when compacted-p
+                   (> (estimated-context-tokens session) (compaction-limit session window)))
+          (if (>= (fixed-context-tokens session) (compaction-limit session window))
+              ;; Summarizing history cannot get under the limit: say so once.
+              (unless (gethash session *compaction-futility-warned*)
+                (setf (gethash session *compaction-futility-warned*) t)
+                (ui-system (session-frontend session)
+                           (format nil "[context] The system prompt and ~d tool schemas alone take ~~~d tokens, more than the compaction limit (~d of a ~d-token window), so compacting history cannot help. Offer fewer tools (/capabilities, /policy), use a model with a larger context, or raise the threshold."
+                                   (length (session-tools session)) (fixed-context-tokens session)
+                                   (compaction-limit session window) window))
+                nil)
+              (handler-case
+                  (multiple-value-bind (compacted-p before after)
+                      (compact-session-history
+                       session :keep-recent (max 6 (count-recent-messages-for-window session window)))
+                    (when compacted-p
+                      (ui-system (session-frontend session)
+                                 (format nil "[context] Auto-compacted: ~d -> ~d tokens (window ~d, threshold ~,2F)."
+                                         before after window threshold))
+                      t))
+                (error (condition)
                   (ui-system (session-frontend session)
-                             (format nil "[context] Auto-compacted: ~d -> ~d tokens (window ~d, threshold ~,2F)."
-                                     before after window threshold))
-                  t))
-            (error (condition)
-              (ui-system (session-frontend session)
-                         (format nil "[context] Auto-compaction attempted but failed: ~a" condition))
-              nil)))))))
+                             (format nil "[context] Auto-compaction attempted but failed: ~a" condition))
+                  nil))))))))
 
 (defun session-note-request (session assistant-message)
   "Fold one CHAT-STREAM/CHAT round trip into SESSION's running stats:
@@ -2344,8 +2381,9 @@ complete data-only descriptor."
   "Show the estimated context load for the next model request.
 
 The diagram separates conversation history from the tool schemas currently
-offered to the model. It is an estimate because providers use model-specific
-tokenizers and do not currently expose their context-window size here."
+offered to the model. Token counts are estimates (tokenizers are model-specific);
+the capacity is the context window the provider's server advertises for the
+model (see PROVIDER-CONTEXT-WINDOW), which also drives automatic compaction."
   (declare (ignore arg))
   (ui-system (session-frontend session) (session-context-report session))
   t)
@@ -2505,7 +2543,7 @@ session settings; LIST displays every saved snapshot."
                    (ui-conversation-replaced (session-frontend session) session)
                    (ui-system (session-frontend session)
                               (format nil "Rewound conversation to event ~d~@[ and restored ~d guarded file edit~:p~]."
-                                      sequence files-p restored))))))
+                                      sequence (and files-p restored)))))))
           (t
            (ui-system (session-frontend session)
                       "Usage: /session save [NAME], /session restore NAME, /session list, or /session durable-list|resume ID|replay ID|timeline [LIMIT]|branch [SEQUENCE]|rename NAME|checkpoint NAME|checkpoints|restore-checkpoint NAME|export PATH|rewind SEQUENCE [files].")))

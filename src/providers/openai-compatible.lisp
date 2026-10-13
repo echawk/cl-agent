@@ -122,6 +122,21 @@ that harmless variation too."
                  :message (format nil "GET /models returned HTTP ~a: ~a" status
                                   (or (jpath response "error" "message") response)))))))
 
+(defun openai-model-listing (provider)
+  "The entries of PROVIDER's GET /models, for advertised context windows."
+  (multiple-value-bind (chat-url headers) (openai-provider-url-and-headers provider)
+    (declare (ignore chat-url))
+    (multiple-value-bind (response status)
+        (http-get-json (concatenate 'string (provider-base-url provider) "/models") :headers headers :timeout 10)
+      (and (<= 200 status 299) (jget response "data")))))
+
+(defmethod provider-context-window ((provider openai-compatible-provider))
+  "The window PROVIDER's server advertises for the current model in GET
+/models (see *ADVERTISED-CONTEXT-WINDOW-FIELDS*), or NIL."
+  (values (gethash (provider-model provider)
+                   (cached-context-windows (list :openai-models (provider-base-url provider))
+                                           (lambda () (openai-model-listing provider))))))
+
 (defmethod provider-for-model ((provider openai-compatible-provider) model)
   (make-instance (class-name (class-of provider))
                  :model model

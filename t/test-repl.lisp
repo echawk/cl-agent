@@ -950,9 +950,11 @@
   (let* ((session (make-session (make-instance 'test-fixed-window-provider)
                                 :tools nil :context-compaction-threshold 0.1))
          (complete (symbol-function 'session-complete)))
+    ;; A short system prompt: the default one alone exceeds this tiny window,
+    ;; which (rightly) makes compaction decline as futile.
     (setf (session-messages session)
-          (append (session-messages session)
-                  (loop repeat 20 collect (list :role "user" :content (make-string 120 :initial-element #\x)))))
+          (cons (list :role "system" :content "Be brief.")
+                (loop repeat 20 collect (list :role "user" :content (make-string 120 :initial-element #\x)))))
     (unwind-protect
          (progn
            (setf (symbol-function 'session-complete)

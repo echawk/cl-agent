@@ -42,15 +42,20 @@ request; override if 4096 is too small/large for your use."))
 (defmethod provider-display-name ((provider anthropic-provider)) "Anthropic")
 (defmethod provider-api-key-env-var ((provider anthropic-provider)) "ANTHROPIC_API_KEY")
 
+(defun anthropic-model-listing (provider)
+  (let ((headers (list (cons "x-api-key" (or (provider-api-key provider) ""))
+                       (cons "anthropic-version" *anthropic-api-version*))))
+    (multiple-value-bind (response status)
+        (http-get-json (concatenate 'string (provider-base-url provider) "/models") :headers headers :timeout 10)
+      (and (<= 200 status 299) (jget response "data")))))
+
 (defmethod provider-context-window ((provider anthropic-provider))
+  "The window /models advertises for the model, if it does; otherwise
+200,000 tokens, the standard context of every Claude model."
   (let ((model (provider-model provider)))
-    (cond
-      ((and (stringp model) (search "claude-sonnet-4" model)) 200000)
-      ((and (stringp model) (search "claude-opus-4" model)) 200000)
-      ((and (stringp model) (search "claude-haiku" model)) 200000)
-      ((and (stringp model) (search "claude-3-5" model)) 200000)
-      ((and (stringp model) (search "claude-3" model)) 200000)
-      (t nil))))
+    (or (gethash model (cached-context-windows (list :anthropic-models (provider-base-url provider))
+                                               (lambda () (anthropic-model-listing provider))))
+        (and (stringp model) (search "claude" model) 200000))))
 
 (defmethod provider-list-models ((provider anthropic-provider))
   (let ((headers (list (cons "x-api-key" (or (provider-api-key provider) ""))

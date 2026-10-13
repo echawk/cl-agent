@@ -13,8 +13,10 @@
 (defmethod provider-api-key-env-var ((provider xai-provider)) "XAI_API_KEY")
 
 (defmethod provider-context-window ((provider xai-provider))
+  "What the server advertises, else known sizes."
   (let ((model (provider-model provider)))
     (cond
+      ((call-next-method))
       ((and (stringp model) (search "grok-4" model)) 256000)
       ((and (stringp model) (search "grok-3" model)) 131072)
       ((and (stringp model) (search "grok-2" model)) 131072)
