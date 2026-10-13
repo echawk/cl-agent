@@ -20,6 +20,7 @@ changes restyle in place, anything else reloads the page.
 | `menu.js` | The completion menu, shared by the input line and the Lisp editors. |
 | `lisp-editor.js` | The Lisp code editor: highlighting, rainbow parens, indentation, key sequences. |
 | `lisp.js` | The Lisp tab (REPL, scratch buffer, debugger, echo area) and the Inspect panel. |
+| `copilot.js` | The editors' copilot: its toolbar controls and the suggestion options every editor takes. |
 | `session.js` | The resume-a-session card and the model picker (title bar, Alt-M). |
 | `sessions.js` | The Sessions tab (Alt-S): every stored conversation, to read, rename, resume or delete. |
 | `main.js` | Boot, `window.CLAgent`, who-line, mouse-doc line, keys, toasts, live reload. |

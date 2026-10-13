@@ -28,6 +28,7 @@ import { createLispEditor, highlight, isComplete } from './lisp-editor.js';
 import { showPanel } from './panels.js';
 import { insert as insertInComposer } from './composer.js';
 import { showView, activeView } from './views.js';
+import { copilotBox, copilotOptions } from './copilot.js';
 
 const toast = (text, color) => window.CLAgent?.toast(text, color);
 const client = Math.random().toString(36).slice(2);
@@ -512,6 +513,7 @@ function mount(container) {
         button('Compile form', 'Compile the toplevel form at the cursor (C-c C-c)', () => actions.compileForm(ui.scratch)),
         button('Eval last', 'Evaluate the form before the cursor (C-x C-e)', () => actions.evalLast(ui.scratch)),
         button('Load buffer', 'Compile and load the whole buffer (C-c C-k)', () => actions.compileBuffer()),
+        copilotBox(() => ui.scratch.focus()),
         button('Ask the agent', 'Ask the agent to review this buffer (or the selected lines)', () => {
           const { start, end, text } = ui.scratch.selection;
           insertInComposer(text.trim()
@@ -533,7 +535,7 @@ function mount(container) {
   ui.scratch = createLispEditor(scratchHost, {
     className: 'scratch-editor',
     value: lisp.scratch.text,
-    doc: 'Scratch buffer: Lisp you and the agent share · C-c C-c compile form · C-c C-k load buffer',
+    doc: 'Scratch buffer: Lisp you and the agent share · C-c C-c compile form · C-c C-k load buffer · C-c Tab copilot',
     keymap: {
       ...sharedKeys,
       'C-c C-c': actions.compileForm,
@@ -542,6 +544,7 @@ function mount(container) {
       'C-x C-s': () => saveScratch(true).then(() => message('Saved.')),
     },
     complete: (text, cursor) => lispComplete(ui.scratch, text, cursor),
+    ...copilotOptions(() => 'scratch.lisp'),
     dabbrevText: () => [ui.repl.value, ...[...history].reverse(), ui.transcript.textContent].join('\n'),
     onChange: () => { ui.dirty = true; updateChrome(); saveScratch(); },
     onContext: call => updateAutodoc(ui.scratch, call),
@@ -560,6 +563,9 @@ function mount(container) {
       'M-n': () => recall(1),
     },
     complete: (text, cursor) => lispComplete(ui.repl, text, cursor),
+    // In the REPL only C-c Tab asks: a suggestion per pause would get in
+    // the way of quick evaluation.
+    ...copilotOptions(() => 'repl.lisp', { auto: false }),
     dabbrevText: () => [ui.scratch.value, ...[...history].reverse(), ui.transcript.textContent].join('\n'),
     onEnter: submitRepl,
     onKey: (editor, e) => {

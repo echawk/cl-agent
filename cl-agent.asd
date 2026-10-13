@@ -143,6 +143,7 @@
            (:static-file "lisp-editor.js")
            (:static-file "lisp.js")
            (:static-file "code.js")
+           (:static-file "copilot.js")
            (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"
