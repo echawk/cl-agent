@@ -75,7 +75,7 @@ could change between calls."
     (clingon:make-option :string :long-name "model" :short-name #\m :key :model
                           :description "Model name, overriding the provider's own default.")
     (clingon:make-option :string :long-name "config-dir" :key :config-dir
-                          :description "Use PATH instead of ~/.config/cl-agent/ for config.lisp and extensions/.")
+                          :description "Use PATH instead of ~/.config/cl-agent/ for config.lisp, extensions/ and all saved state. Defaults to the CL_AGENT_CONFIG_DIR env var, then ~/.config/cl-agent/.")
     (clingon:make-option :string :long-name "ui" :key :ui
                           :description "Frontend to run: cli (default), tui, web, or one an extension registered. See src/ui/frontend.lisp.")
     (clingon:make-option :flag :long-name "mcp-serve" :key :mcp-serve
@@ -93,8 +93,10 @@ see RESOLVE-PROVIDER-KEYWORD and the inline uses below. Never signals
 out to the top level on an ordinary configuration mistake (missing API
 key, unknown provider name): those are reported with a readable
 message and a non-zero exit, not a Lisp backtrace."
-  (when (clingon:getopt cmd :config-dir)
-    (setf *config-directory* (uiop:ensure-directory-pathname (clingon:getopt cmd :config-dir))))
+  ;; Read at startup, not when the image was built.
+  (setf *config-directory* (if (clingon:getopt cmd :config-dir)
+                               (uiop:ensure-directory-pathname (clingon:getopt cmd :config-dir))
+                               (default-config-directory)))
   (if (clingon:getopt cmd :doctor)
       (let ((results (run-doctor)))
         (format t "~a~%" (format-doctor-report results))

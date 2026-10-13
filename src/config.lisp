@@ -19,12 +19,25 @@
 
 (in-package :cl-agent)
 
-(defparameter *config-directory*
-  (merge-pathnames ".config/cl-agent/" (user-homedir-pathname))
+(defun user-config-directory ()
+  "The per-user default, ~/.config/cl-agent/."
+  (merge-pathnames ".config/cl-agent/" (user-homedir-pathname)))
+
+(defun default-config-directory ()
+  "CL_AGENT_CONFIG_DIR when it is set (the test suite points it at a
+temporary directory), else USER-CONFIG-DIRECTORY."
+  (let ((env (uiop:getenv "CL_AGENT_CONFIG_DIR")))
+    (if (and env (plusp (length env)))
+        (uiop:ensure-absolute-pathname (uiop:parse-native-namestring env :ensure-directory t)
+                                       (uiop:getcwd))
+        (user-config-directory))))
+
+(defparameter *config-directory* (default-config-directory)
   "Root of cl-agent's per-user state: config.lisp lives directly here;
 extensions/ and scratch/ are subdirectories of this (see extensions.lisp).
-Rebind this (e.g. in tests, or via --config-dir) to
-point somewhere else entirely.")
+--config-dir, then CL_AGENT_CONFIG_DIR, then ~/.config/cl-agent/ (see
+DEFAULT-CONFIG-DIRECTORY).  Set it -- not just bind it -- to move every
+thread's state; a LET binding is invisible to other threads.")
 
 (defparameter *config-file-name* "config.lisp"
   "Filename, relative to *CONFIG-DIRECTORY*, of the user's config plist.")

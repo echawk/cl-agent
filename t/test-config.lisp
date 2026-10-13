@@ -46,3 +46,11 @@ of BODY, so config/extensions tests never touch the user's real
   (check-equal (config-value '(:context-compaction-threshold 0.5)
                              :context-compaction-threshold 0.8)
                0.5))
+
+(deftest threads-a-test-starts-see-its-state-directory ()
+  ;; A LET binding is thread-local: threads used to see the global value,
+  ;; the user's ~/.config/cl-agent/, and filled it with test sessions.
+  (let ((seen nil))
+    (bt:join-thread (bt:make-thread (lambda () (setf seen *config-directory*))))
+    (check (uiop:pathname-equal seen *config-directory*))
+    (check (not (under-directory-p seen (user-config-directory))))))

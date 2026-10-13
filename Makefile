@@ -9,6 +9,12 @@ OLLAMA_TEST_MODEL ?= qwen2.5:0.5b
 
 .PHONY: all check-env install-deps build run test test-ollama test-mcp-external clspec-data clean
 
+# Tests keep every file they write (sessions, tasks, extensions, config) in
+# a fresh temporary directory, never ~/.config/cl-agent/: CL_AGENT_CONFIG_DIR
+# points cl-agent there, and the directory is removed afterwards, pass or fail.
+with-test-dir = dir=$$(mktemp -d "$${TMPDIR:-/tmp}/cl-agent-test.XXXXXX") || exit 1; \
+	CL_AGENT_CONFIG_DIR="$$dir" $(1); status=$$?; rm -rf "$$dir"; exit $$status
+
 all: build
 
 check-env:
@@ -24,7 +30,7 @@ run: install-deps
 	$(SBCL) --script run.lisp -- $(ARGS)
 
 test: install-deps
-	$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:test-system "cl-agent/tests")'
+	$(call with-test-dir,$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:test-system "cl-agent/tests")')
 
 # Starts `ollama serve` if it isn't already running (same
 # PROVIDER-ENSURE-READY logic cl-agent itself uses, see
@@ -35,14 +41,13 @@ test-ollama: install-deps
 	$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:load-system "cl-agent")' \
 		--eval '(cl-agent::provider-ensure-ready (make-instance (quote cl-agent::ollama-provider)))'
 	ollama pull $(OLLAMA_TEST_MODEL)
-	CL_AGENT_OLLAMA_TEST_MODEL=$(OLLAMA_TEST_MODEL) \
-		$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:load-system "cl-agent/tests/ollama")'
+	$(call with-test-dir,CL_AGENT_OLLAMA_TEST_MODEL=$(OLLAMA_TEST_MODEL) $(SBCL) --non-interactive --load boot.lisp --eval '(asdf:load-system "cl-agent/tests/ollama")')
 
 # A genuine third-party MCP interoperability suite. npx downloads the pinned
 # server automatically on its first run; no LLM provider is required.
 test-mcp-external: install-deps
 	command -v npx >/dev/null 2>&1 || { echo "npx not found; install Node.js first"; exit 1; }
-	$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:test-system "cl-agent/tests/mcp-external")'
+	$(call with-test-dir,$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:test-system "cl-agent/tests/mcp-external")')
 
 
 # Regenerates data/cl-spec.sdoc (already committed; most people never

@@ -696,9 +696,10 @@ a failed mutation. `src/ui/web/static/EXTENDING.md` has worked examples.
 start) is a plain data file -- read, never evaluated -- for
 `:provider`, `:model`, `:api-key-env`, `:base-url`, `:system-prompt`,
 `:extensions`, `:max-tool-iterations`, `:ui`, and `:mcp-servers`. See
-`src/config.lisp` for the full list. `--config-dir PATH` points the
-whole thing (config *and* extensions) somewhere other than
-`~/.config/cl-agent/`.
+`src/config.lisp` for the full list. `--config-dir PATH` (or the
+`CL_AGENT_CONFIG_DIR` environment variable) points the whole thing --
+config, extensions and saved state such as sessions -- somewhere other
+than `~/.config/cl-agent/`.
 
 ## Development
 
@@ -718,7 +719,10 @@ loading, the extension loader, the REPL's slash commands, the
 against a real local HTTP server, and tab completion) -- all offline in the sense of no
 external network access, though not all mocked: several of those spawn
 a real subprocess or open a real (loopback) socket, deliberately,
-rather than stub out the thing actually being tested. `make test-ollama`
+rather than stub out the thing actually being tested. Every test target
+sets `CL_AGENT_CONFIG_DIR` to a fresh temporary directory and removes it
+afterwards, so tests never read or write `~/.config/cl-agent/`; the test
+runner refuses to run against that directory. `make test-ollama`
 is the one
 exception: it pulls a tiny model (`qwen2.5:0.5b` by default, override
 with `OLLAMA_TEST_MODEL=...`) and exercises the real HTTP + JSON +

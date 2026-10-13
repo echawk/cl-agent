@@ -50,23 +50,62 @@ DESCRIPTION only needs to say what's being checked, not what went wrong."
        (progn ,form (report-fail (or ,description (format nil "expected ~a" ',condition-type))))
      (,condition-type () (incf *pass-count*))))
 
+(defun under-directory-p (path directory)
+  (let ((path (uiop:ensure-directory-pathname path)))
+    (or (uiop:pathname-equal path directory)
+        (uiop:subpathp path (uiop:ensure-directory-pathname directory)))))
+
+(defun call-with-test-state (function)
+  "Call FUNCTION with *CONFIG-DIRECTORY*'s global value -- the one every
+thread sees, web request handlers and subagent workers included -- set to
+the run's own directory, and restore it afterwards.
+
+The directory is CL_AGENT_CONFIG_DIR (`make test` points it at a fresh
+temporary directory and removes it afterwards), else a new temporary
+directory removed here.  Never the user's ~/.config/cl-agent/: tests create
+sessions, tasks and extensions by the hundred."
+  (let* ((saved *config-directory*)
+         (env (uiop:getenv "CL_AGENT_CONFIG_DIR"))
+         (own (not (and env (plusp (length env)))))
+         (root (if own
+                   (merge-pathnames (format nil "cl-agent-test-~36r/" (random (expt 36 8)))
+                                    (uiop:temporary-directory))
+                   (default-config-directory))))
+    (when (under-directory-p root (user-config-directory))
+      (error "Refusing to run tests with CL_AGENT_CONFIG_DIR=~a: it is the user's own ~
+              cl-agent directory.  Point it at a temporary directory." root))
+    (ensure-directories-exist root)
+    (unwind-protect
+         (progn (setf *config-directory* root)
+                (funcall function root))
+      (setf *config-directory* saved)
+      (when own (ignore-errors (uiop:delete-directory-tree root :validate t))))))
+
+(defmacro with-test-state ((&optional (root (gensym "ROOT"))) &body body)
+  "Run BODY with every thread's cl-agent state under a temporary directory
+ROOT (see CALL-WITH-TEST-STATE)."
+  `(call-with-test-state (lambda (,root) (declare (ignorable ,root)) ,@body)))
+
 (defun run-all-tests ()
   "Run every registered test, print a summary, and return T iff
 everything passed. Called by `(asdf:test-op :cl-agent)` / `make test`;
 exits the process with status 1 on any failure so CI (or a human
-running make) can tell at a glance."
+running make) can tell at a glance.  Each test gets a fresh state
+directory under the run's (see CALL-WITH-TEST-STATE)."
   (setf *pass-count* 0 *fail-count* 0)
-  (dolist (test *tests*)
-    (let* ((*current-test* (car test))
-           ;; Never let an ordinary-session test take the user's state lock.
-           (*config-directory*
-             (merge-pathnames (format nil "cl-agent-test-~a/" (gensym))
-                              (uiop:temporary-directory))))
-      (format t "~&* ~a~%" (car test))
-      (unwind-protect
-           (handler-case (funcall (cdr test))
-             (error (c) (incf *fail-count*) (format t "~&  ERROR: ~a~%" c)))
-        (ignore-errors (uiop:delete-directory-tree *config-directory* :validate t)))))
+  (with-test-state (root)
+    (format t "~&State directory: ~a~%" (uiop:native-namestring root))
+    (loop for test in *tests*
+          for index from 1
+          do (let ((*current-test* (car test)))
+               ;; SETF, not LET: threads a test starts must see it too.
+               (setf *config-directory* (merge-pathnames (format nil "test-~d/" index) root))
+               (format t "~&* ~a~%" (car test))
+               (unwind-protect
+                    (handler-case (funcall (cdr test))
+                      (error (c) (incf *fail-count*) (format t "~&  ERROR: ~a~%" c)))
+                 (ignore-errors (uiop:delete-directory-tree *config-directory* :validate t))
+                 (setf *config-directory* root)))))
   (format t "~&~%~d passed, ~d failed~%" *pass-count* *fail-count*)
   (let ((ok (zerop *fail-count*)))
     (unless ok (uiop:quit 1))

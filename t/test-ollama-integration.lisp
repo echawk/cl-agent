@@ -71,6 +71,6 @@
                          models are flaky about tool-calling; the HTTP/JSON round trip for ~
                          plain completion above is what primarily matters here)~%" *ollama-test-model*))))))
 
-(run-ollama-integration-tests)
+(with-test-state () (run-ollama-integration-tests))
 (format t "~&~%~d passed, ~d failed~%" *pass-count* *fail-count*)
 (when (plusp *fail-count*) (uiop:quit 1))
