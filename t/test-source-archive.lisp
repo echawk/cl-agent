@@ -101,3 +101,14 @@ other threads), restoring the real one after."
     (check (search "(in-package :lem-core)"
                    (call-tool "lisp-source" (jobj "action" "read" "path" "lem/core/src/lem.lisp" "end_line" 5)))
            "system names with a slash")))
+
+(deftest review-lisp-reviews-source-only-the-image-holds ()
+  (let ((path (write-test-source (merge-pathnames "image-only.lisp" *config-directory*)
+                                 (format nil "(in-package :cl-user)~%(defun image-only-fn (x) (ignore-errors x))~%"))))
+    (with-source-archive ()
+      (archive-file-for-test path)
+      (delete-file path)
+      (let ((text (call-tool "review-lisp" (jobj "path" (uiop:native-namestring path)))))
+        (check (search "Lisp quality score" text) text)
+        (check (search "image-only.lisp:" text) "findings name the file, not a temporary copy")
+        (check (search "no-ignore-errors" text))))))

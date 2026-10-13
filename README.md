@@ -453,7 +453,17 @@ SBCL compile pass. The result includes a weighted score whose direction is
 simple—lower is better. Smells are advisory because occasionally awkward code
 is necessary; compiler failures prevent execution/writing and are returned to
 the model to fix. The `review-lisp` tool exposes that pipeline directly for
-code destined for a normal reply or another file.
+code destined for a normal reply or another file. It accepts any Common Lisp:
+- source text, with an optional package for a snippet that has no
+  `in-package`;
+- a file path;
+- `SYSTEM/PATH` as `lisp-source` names it, which reaches the agent's own
+  source even when only the built image holds it.
+
+The compile check never changes the running image. The macros, compiler
+macros, classes and packages that compiling would define are put back
+afterwards. Code whose packages are not loaded is linted and reported as not
+compile-checked, rather than as a failed compilation.
 
 ## ACP (Agent Client Protocol)
 

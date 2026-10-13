@@ -86,3 +86,43 @@
   (check (find-tool "load-asdf-system"))
   (check (search "Loaded ASDF system alexandria"
                  (call-tool "load-asdf-system" (jobj "system" "alexandria")))))
+
+;;; Reviewing any Lisp: other projects' files, snippets, and the agent's own
+;;; source, without the compile check changing the running image.
+
+(deftest review-lisp-never-changes-the-running-image ()
+  (eval '(defmacro cl-agent::review-test-macro () :original))
+  (let ((review (review-lisp-source
+                 (format nil "(in-package :cl-agent)~%(defmacro review-test-macro () :replaced)~%~
+                              (defmacro review-test-new-macro () 1)~%(defpackage :review-test-package (:use :cl))~%~
+                              (defstruct review-test-struct a)~%"))))
+    (check (not (getf review :compile-failure-p)))
+    (check-equal (macroexpand '(cl-agent::review-test-macro)) :original "a changed macro is put back")
+    (check (null (macro-function 'cl-agent::review-test-new-macro)) "a new macro is removed")
+    (check (null (find-package :review-test-package)) "a new package is deleted")
+    (check (null (find-class 'cl-agent::review-test-struct nil)) "a new structure is forgotten")))
+
+(deftest review-lisp-lints-code-whose-package-is-not-loaded ()
+  (dolist (source (list (format nil "(in-package :review-absent-package)~%(defun f () 1)~%")
+                        (format nil "(defun g () (review-absent-package:thing))~%")))
+    (let ((review (review-lisp-source source)))
+      (check (not (getf review :compile-failure-p)) "not a failed compilation")
+      (check (search "REVIEW-ABSENT-PACKAGE" (getf review :compile-skipped)))
+      (check (< (getf review :score) 1000))
+      (check (search "not checked" (format-lisp-review review))))))
+
+(deftest review-lisp-compiles-snippets-in-a-given-package ()
+  (let ((snippet "(defun review-probe () (lisp-name-match :prefix \"a\" \"ab\"))"))
+    (check (null (getf (review-lisp-source snippet :package "cl-agent") :compiler-diagnostics))
+           "cl-agent's functions are known")
+    (let ((*package* (find-package :cl-user)))
+      (check (some (lambda (d) (search "LISP-NAME-MATCH" (string-upcase d)))
+                   (getf (review-lisp-source snippet) :compiler-diagnostics))
+             "elsewhere it is an undefined function"))
+    (check-condition error (review-lisp-source snippet :package "no-such-package-xyz"))))
+
+(deftest review-lisp-reviews-the-agents-own-source-by-system-path ()
+  (let ((text (call-tool "review-lisp" (jobj "path" "cl-agent/src/quality.lisp"))))
+    (check (search "Lisp quality score" text) text)
+    (check (not (search "does not exist" text))))
+  (check (search "lisp-source tool lists" (call-tool "review-lisp" (jobj "path" "cl-agent/src/nope.lisp")))))

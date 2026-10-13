@@ -19,17 +19,24 @@
                   :type type)
    (uiop:temporary-directory)))
 
-(defun call-with-temporary-lisp-source (source function)
-  "Write SOURCE to a temporary .lisp file and call FUNCTION with its path."
-  (let ((path (temporary-lisp-pathname)))
+(defun call-with-temporary-lisp-source (source function &key name)
+  "Write SOURCE to a temporary .lisp file and call FUNCTION with its path.
+With NAME (\"repl.lisp\"), the file has that name, in a fresh temporary
+directory, so findings about it read as findings about NAME."
+  (let* ((directory (and name (merge-pathnames (format nil "~a/" (pathname-name (temporary-lisp-pathname)))
+                                               (uiop:temporary-directory))))
+         (path (if directory (merge-pathnames (file-namestring name) directory) (temporary-lisp-pathname))))
     (unwind-protect
          (progn
+           (ensure-directories-exist path)
            (with-open-file (out path :direction :output :if-exists :error
-                                :if-does-not-exist :create)
+                                :if-does-not-exist :create :external-format :utf-8)
              (write-string source out))
            (funcall function path))
       (when (probe-file path)
-        (delete-file path)))))
+        (delete-file path))
+      (when directory
+        (ignore-errors (uiop:delete-empty-directory directory))))))
 
 (defun definition-name-key (name)
   "Normalize an ordinary or (SETF ...) function NAME for comparison."
@@ -95,10 +102,91 @@ printed names so this analysis also works for source defining a new package."
     (let ((*print-pretty* nil))
       (princ condition out))))
 
-(defun compile-lisp-source (source)
-  "Compile SOURCE in a temporary file.
+;;; Compiling is not inert in SBCL: COMPILE-FILE defines the macros, compiler
+;;; macros, structures and packages a file names, at compile time, in this
+;;; very image -- so reviewing an edited copy of the agent's own source would
+;;; change the macros it runs on.  The compile check therefore snapshots
+;;; those and puts back what it changed (constants it cannot), and reviews
+;;; run one at a time.
 
-Returns (values diagnostics warnings-p failure-p).  No FASL is retained."
+(defvar *review-compile-lock* (bordeaux-threads:make-recursive-lock "cl-agent review compile"))
+
+(defun image-definitions-snapshot ()
+  "The packages, and every symbol's macro, compiler macro and class."
+  (let ((symbols (make-hash-table :test 'eq)))
+    (do-all-symbols (symbol)
+      (let ((macro (macro-function symbol))
+            (compiler-macro (compiler-macro-function symbol))
+            (class (find-class symbol nil)))
+        (when (or macro compiler-macro class)
+          (setf (gethash symbol symbols) (list macro compiler-macro class)))))
+    (list :packages (list-all-packages) :symbols symbols)))
+
+(defun restore-image-definitions (snapshot source)
+  "Undo what compiling SOURCE did to the definitions SNAPSHOT recorded: put
+back changed macros and compiler macros, remove new ones and new classes,
+and delete new packages.  Only symbols SOURCE names are touched, so another
+thread's definitions made meanwhile are left alone."
+  (let ((symbols (getf snapshot :symbols))
+        (text (string-upcase source)))
+    (sb-ext:without-package-locks
+      (do-all-symbols (symbol)
+        (destructuring-bind (&optional old-macro old-compiler-macro old-class) (gethash symbol symbols)
+          (let ((macro (macro-function symbol))
+                (compiler-macro (compiler-macro-function symbol))
+                (class (find-class symbol nil)))
+            (when (and (or (not (eq macro old-macro)) (not (eq compiler-macro old-compiler-macro))
+                           (and class (not old-class)))
+                       (search (symbol-name symbol) text))
+              (handler-case
+                  (progn
+                    (unless (eq macro old-macro)
+                      (if old-macro (setf (macro-function symbol) old-macro) (fmakunbound symbol)))
+                    (unless (eq compiler-macro old-compiler-macro)
+                      (setf (compiler-macro-function symbol) old-compiler-macro))
+                    (when (and class (not old-class))
+                      (setf (find-class symbol) nil)))
+                (error () nil)))))))
+    (dolist (package (set-difference (list-all-packages) (getf snapshot :packages)))
+      (handler-case (delete-package package) (error () nil)))))
+
+(defun missing-package-names (diagnostics)
+  "Names of packages DIAGNOSTICS say do not exist."
+  (let ((names nil))
+    (dolist (text diagnostics (nreverse names))
+      (dolist (pattern '("Package " "The name \""))
+        (loop with start = 0
+              for at = (search pattern text :start2 start)
+              while at
+              do (let* ((from (+ at (length pattern)))
+                        (to (position-if (lambda (c) (member c '(#\Space #\" #\Newline))) text :start from)))
+                   (when (and to (or (search " does not exist" text :start2 to :end2 (min (length text) (+ to 16)))
+                                     (search "\" does not designate any package" text :start2 to
+                                                                                      :end2 (min (length text) (+ to 34)))))
+                     (pushnew (subseq text from to) names :test #'string=))
+                   (setf start from)))))))
+
+(defun compile-lisp-source (source &key package name)
+  "Compile SOURCE in a temporary file (named NAME, if given), in PACKAGE
+(a designator) when given, else the current package.
+
+Returns (values diagnostics warnings-p failure-p missing-packages).  No FASL
+is retained, and the definitions compiling installs in this image are undone
+(see RESTORE-IMAGE-DEFINITIONS)."
+  (bordeaux-threads:with-recursive-lock-held (*review-compile-lock*)
+    (let ((snapshot (image-definitions-snapshot)))
+      (unwind-protect
+           (multiple-value-bind (diagnostics warnings-p failure-p)
+               (let ((*package* (if package
+                                    (or (find-package (string-upcase (string package)))
+                                        (error "There is no package ~a in this image." package))
+                                    *package*)))
+                 (%compile-lisp-source source name))
+             (let ((missing (and failure-p (missing-package-names diagnostics))))
+               (values diagnostics warnings-p failure-p missing)))
+        (restore-image-definitions snapshot source)))))
+
+(defun %compile-lisp-source (source name)
   (call-with-temporary-lisp-source
    source
    (lambda (source-path)
@@ -116,8 +204,12 @@ Returns (values diagnostics warnings-p failure-p).  No FASL is retained."
                     (*standard-output* compiler-output))
                 (handler-case
                     (multiple-value-bind (result warnings-p failure-p)
-                        (compile-file source-path :output-file output-path
-                                                  :verbose nil :print nil)
+                        ;; Its own compilation unit: undefined functions are
+                        ;; reported when a unit ends, and an enclosing one
+                        ;; (a load in progress) would keep them from this review.
+                        (with-compilation-unit (:override t)
+                          (compile-file source-path :output-file output-path
+                                                    :verbose nil :print nil))
                       (declare (ignore result))
                       (let ((captured (string-trim '(#\Space #\Tab #\Newline #\Return)
                                                    (get-output-stream-string compiler-output))))
@@ -128,7 +220,8 @@ Returns (values diagnostics warnings-p failure-p).  No FASL is retained."
                     (pushnew (condition-summary condition) diagnostics :test #'string=)
                     (values (nreverse diagnostics) nil t)))))
          (when (probe-file output-path)
-           (delete-file output-path)))))))
+           (delete-file output-path)))))
+   :name name))
 
 (defun violation-weight (violation)
   "Weight a Mallet VIOLATION for the aggregate smell score."
@@ -137,50 +230,76 @@ Returns (values diagnostics warnings-p failure-p).  No FASL is retained."
     (:warning 10)
     (otherwise 1)))
 
-(defun review-lisp-input (source lint-path &key (compile-p t))
+(defun review-lisp-input (source lint-path &key (compile-p t) package)
   "Review SOURCE, reporting Mallet findings against LINT-PATH.
 
 Compilation deliberately still uses a disposable copy of SOURCE, so checking
-an ordinary project file never leaves a FASL beside that file."
+an ordinary project file never leaves a FASL beside that file.  Code that
+needs a package this image lacks (another project's file whose system is not
+loaded) cannot be compiled here: the review then says so, under
+:COMPILE-SKIPPED, rather than calling it a failed compilation."
   (let* ((violations (mallet:lint-file lint-path :config (lisp-review-config)))
          (missing (missing-type-claims source lint-path)))
-    (multiple-value-bind (diagnostics warnings-p failure-p)
-        (if compile-p (compile-lisp-source source) (values nil nil nil))
-      (list :score (+ (reduce #'+ violations :key #'violation-weight :initial-value 0)
-                      (* 25 (length missing))
-                      (* 10 (length diagnostics))
-                      (if failure-p 1000 0))
-            :violations violations
-            :missing-type-claims missing
-            :compiler-diagnostics diagnostics
-            :compiler-warnings-p warnings-p
-            :compile-failure-p failure-p))))
+    (multiple-value-bind (diagnostics warnings-p failure-p missing-packages)
+        (if compile-p
+            (compile-lisp-source source :package package :name (file-namestring lint-path))
+            (values nil nil nil nil))
+      (let ((skipped (and missing-packages
+                          (format nil "it uses package~p ~{~a~^, ~}, not loaded in this image (load ~
+                                       its system with load-asdf-system to compile-check it here)"
+                                  (length missing-packages) missing-packages))))
+        (list :score (+ (reduce #'+ violations :key #'violation-weight :initial-value 0)
+                        (* 25 (length missing))
+                        (if skipped 0 (* 10 (length diagnostics)))
+                        (if (and failure-p (not skipped)) 1000 0))
+              :violations violations
+              :missing-type-claims missing
+              :compiler-diagnostics (if skipped nil diagnostics)
+              :compiler-warnings-p (and (not skipped) warnings-p)
+              :compile-failure-p (and failure-p (not skipped))
+              :compile-skipped (or skipped (and (not compile-p) "not requested")))))))
 
-(defun review-lisp-source (source &key (compile-p t))
-  "Review SOURCE with Mallet, type-claim checks, and optionally SBCL.
+(defun review-lisp-source (source &key (compile-p t) package name)
+  "Review SOURCE with Mallet, type-claim checks, and optionally SBCL
+(compiling in PACKAGE when SOURCE has no IN-PACKAGE of its own).  NAME is the
+file name findings are reported against.
 
 The returned plist contains :SCORE, :VIOLATIONS, :MISSING-TYPE-CLAIMS,
-:COMPILER-DIAGNOSTICS, :COMPILER-WARNINGS-P and :COMPILE-FAILURE-P.  A score is
-guidance, not a gate; only :COMPILE-FAILURE-P should prevent code from running."
+:COMPILER-DIAGNOSTICS, :COMPILER-WARNINGS-P, :COMPILE-FAILURE-P and
+:COMPILE-SKIPPED.  A score is guidance, not a gate; only :COMPILE-FAILURE-P
+should prevent code from running."
   (check-type source string)
   (call-with-temporary-lisp-source
    source
    (lambda (path)
-     (review-lisp-input source path :compile-p compile-p))))
+     (review-lisp-input source path :compile-p compile-p :package package))
+   :name name))
 
-(defun review-lisp-file (path &key (compile-p t))
+(defun review-lisp-file (path &key (compile-p t) package)
   "Review the Common Lisp source file at PATH without modifying it.
 
-Mallet receives the actual file, preserving useful file/line locations in its
-findings, while compilation runs against a disposable copy to avoid artifacts
-in the project tree."
+PATH is a file on disk, or a source the lisp-source tool names: SYSTEM/PATH
+(cl-agent/src/repl.lisp), or a file only the built image still holds
+(source-archive.lisp).  Mallet receives the actual file when there is one,
+preserving useful file/line locations in its findings, while compilation runs
+against a disposable copy to avoid artifacts in the project tree."
   (unless (and (stringp path) (plusp (length (string-trim " " path))))
     (error "Lisp review path must be a non-empty string"))
   (let ((resolved (probe-file path)))
-    (unless resolved (error "Lisp review file does not exist: ~a" path))
-    (when (uiop:directory-pathname-p resolved)
-      (error "Lisp review path names a directory, not a file: ~a" path))
-    (review-lisp-input (uiop:read-file-string resolved) resolved :compile-p compile-p)))
+    (cond ((and resolved (uiop:directory-pathname-p resolved))
+           (error "Lisp review path names a directory, not a file: ~a" path))
+          (resolved
+           (review-lisp-input (read-text-file resolved) resolved :compile-p compile-p :package package))
+          (t
+           (let ((found (find-archived-source path)))
+             (unless found
+               (error "Lisp review file does not exist: ~a (give a file path, SYSTEM/PATH as the ~
+                       lisp-source tool lists it, or the source text itself)" path))
+             (destructuring-bind (key . entry) found
+               (review-lisp-source (or (archived-source-text key entry)
+                                       (error "Cannot read the source of ~a." path))
+                                   :compile-p compile-p :package package
+                                   :name (file-namestring (archived-source-path entry)))))))))
 
 (defun format-lisp-review (review)
   "Render REVIEW-LISP-SOURCE's result for a model or human."
@@ -200,6 +319,8 @@ in the project tree."
     (dolist (diagnostic (getf review :compiler-diagnostics))
       (format out "Compiler: ~a~%" diagnostic))
     (cond
+      ((getf review :compile-skipped)
+       (format out "Compilation: not checked: ~a.~%" (getf review :compile-skipped)))
       ((getf review :compile-failure-p) (format out "Compilation: FAILED.~%"))
       ((getf review :compiler-warnings-p) (format out "Compilation: succeeded with warnings.~%"))
       (t (format out "Compilation: succeeded.~%")))))
