@@ -82,7 +82,9 @@
 
 (define-web-route tools (:path "/api/tools")
   (let* ((session (web-frontend-session *web-frontend*))
-         (enabled (and session (mapcar #'tool-name (session-tools session)))))
+         (enabled (and session
+                       (progn (sync-session-tools session)
+                              (mapcar #'tool-name (session-tools session))))))
     (jobj "tools"
           (jarray
            (mapcar (lambda (tool)

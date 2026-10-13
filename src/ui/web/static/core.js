@@ -11,7 +11,7 @@
 // into `state` with a reducer and re-emits it, so UI code subscribes with
 // on('message' | 'delta' | 'pending' | 'activity' | 'status' | 'subagents'
 // | 'asset' | 'ui' | 'change' | 'state' | 'connection' | 'lisp-entry'
-// | 'lisp-output' | 'lisp-scratch' | 'lisp-clear', fn).
+// | 'lisp-output' | 'lisp-scratch' | 'lisp-clear' | 'model' | 'tools', fn).
 
 export const boot = window.CL_AGENT_BOOT || { safe: false, assets: '/assets' };
 

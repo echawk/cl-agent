@@ -166,6 +166,7 @@ TEXT at CURSOR: replace TEXT[START, END) with a candidate's :VALUE."
 
 (defun context-session-tools (context)
   (let ((session (getf context :session)))
+    (when session (sync-session-tools session))
     (sort (copy-list (if session (session-tools session) (list-tools))) #'string< :key #'tool-name)))
 
 (defun tool-argument-skeleton (tool)

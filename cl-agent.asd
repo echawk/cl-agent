@@ -213,7 +213,8 @@
    (:file "test-completion")
    (:file "test-lisp-repl")
    (:file "test-web-session")
-   (:file "test-context-window"))
+   (:file "test-context-window")
+   (:file "test-session-tools"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

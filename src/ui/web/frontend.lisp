@@ -369,6 +369,12 @@ or the frontend stops.  Holds one hunchentoot worker thread per open page."
         ((null content) "")
         (t (princ-to-string content))))
 
+(defmethod ui-tools-changed :after ((frontend web-frontend) session added removed)
+  "Let the page's Tools panel refetch."
+  (declare (ignore session))
+  (with-web-state (frontend)
+    (web-frontend-publish frontend "tools" (jobj "added" (jarray added) "removed" (jarray removed)))))
+
 (defmethod ui-conversation-replaced ((frontend web-frontend) session)
   "Rebuild the transcript from SESSION's restored messages.  Pages reload
 their state on the \"reset\" event; the conversation then arrives through

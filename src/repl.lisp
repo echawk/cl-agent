@@ -182,6 +182,12 @@ code (and tests) that doesn't care about UI can ignore this slot.")
                  :documentation "The full, session-scoped tool inventory. In
 :PLAN mode SESSION-TOOLS is a curated working subset of this catalog; direct
 mode exposes the full catalog.")
+   (follows-registry :initarg :follows-registry :initform nil :accessor session-follows-registry
+                     :documentation "True when the catalog is the whole tool registry,
+so tools registered later -- an MCP server connected by a startup hook or by
+the model mid-conversation, a reloaded extension -- join it (see
+SYNC-SESSION-TOOLS).  Sessions given an explicit tool list, like subagents,
+keep to that list.")
    (capability-mode :initarg :capability-mode :initform :full
                     :accessor session-capability-mode
                     :documentation "Deterministic authority mode for tool effects.")
@@ -425,7 +431,7 @@ startup rather than silently falling back to the host model."
                                     (getf profile :description)))
                             profiles)))))
 
-(defun make-session (provider &key frontend system-prompt (tools (list-tools)) max-tool-iterations orchestration-mode orchestration-tool-limit
+(defun make-session (provider &key frontend system-prompt (tools (list-tools) tools-supplied-p) max-tool-iterations orchestration-mode orchestration-tool-limit
                               (subagent-depth 0) max-subagent-depth subagent-model-profiles settings
                               context-compaction-threshold (capability-mode :full) (policy-rules nil))
   (let* ((settings (or settings (load-agent-settings)))
@@ -439,6 +445,7 @@ startup rather than silently falling back to the host model."
                            :frontend (or frontend (make-frontend :cli))
                            :tools tools
                            :tool-catalog tools
+                           :follows-registry (not tools-supplied-p)
                            :capability-mode (normalize-capability-mode capability-mode)
                            :policy-rules policy-rules
                            :orchestration-mode (normalize-orchestration-mode
@@ -738,6 +745,48 @@ facts so the branch is independently resumable."
 (defun find-session-catalog-tool (session name)
   "Find NAME in SESSION's full catalog, not just its currently exposed set."
   (find name (session-tool-catalog session) :key #'tool-name :test #'string=))
+
+(defvar *session-tools-sync-lock* (bt:make-lock "cl-agent session tools sync")
+  "Serializes SYNC-SESSION-TOOLS, which the agent thread and web requests
+both call, so a change is announced once.")
+
+(defun same-elements-p (a b)
+  (and (= (length a) (length b)) (every #'eq a b)))
+
+(defun sync-session-tools (session)
+  "Bring SESSION's tools in step with the registry: a tool that was
+unregistered is no longer offered, one that was redefined is offered in its
+new form, and -- when SESSION follows the registry -- one registered since
+is added to the catalog and, in :DIRECT mode, offered to the model (plan mode
+leaves it to discover-tools).  Tells the frontend when the set changed.
+Returns the added tools."
+  (bt:with-recursive-lock-held (*session-tools-sync-lock*)
+    (sync-session-tools-1 session)))
+
+(defun sync-session-tools-1 (session)
+  (let* ((registry (list-tools))
+         (current (lambda (tools)
+                    (loop for tool in tools
+                          for now = (find-tool (tool-name tool))
+                          when now collect now)))
+         (catalog (funcall current (session-tool-catalog session)))
+         (added (and (session-follows-registry session)
+                     (sort (remove-if (lambda (tool) (find (tool-name tool) catalog :key #'tool-name :test #'string=))
+                                      registry)
+                           #'string< :key #'tool-name)))
+         (offered (funcall current (session-tools session)))
+         (removed (remove-if (lambda (tool) (find-tool (tool-name tool))) (session-tool-catalog session))))
+    (when (or added removed
+              (not (same-elements-p catalog (session-tool-catalog session)))
+              (not (same-elements-p offered (session-tools session))))
+      (setf (session-tool-catalog session) (append catalog added)
+            (session-tools session) (if (eq (session-orchestration-mode session) :direct)
+                                        (append offered added)
+                                        offered))
+      (when (or added removed)
+        (ui-tools-changed (session-frontend session) session
+                          (mapcar #'tool-name added) (mapcar #'tool-name removed))))
+    added))
 
 (defun session-enable-tools (session names)
   "Add the valid catalog tool NAMES to SESSION's exposed set. Returns the
@@ -1861,6 +1910,9 @@ during this turn can call SESSION-COMPLETE."
           do (when (ui-interrupt-requested-p frontend)
                (return-from run-agent-turn (interrupt-agent-turn session)))
              (session-absorb-queued-input session)
+             ;; A tool registered last iteration (connect-mcp-server, an
+             ;; extension) is offered from this request on.
+             (sync-session-tools session)
              (auto-compact-if-needed session)
              (let* ((ctx (run-hook-chain :before-request
                                           (list :messages (session-provider-messages session)
@@ -2133,6 +2185,7 @@ frontend, not just the CLI."
 (define-slash-command tools (session arg)
   "List the tools offered to the model in this session."
   (declare (ignore arg))
+  (sync-session-tools session)
   (ui-system (session-frontend session)
              (format nil "~{~a~^~%~}"
                      (mapcar (lambda (tool) (format nil "~a - ~a" (tool-name tool) (tool-description tool)))
@@ -2385,6 +2438,7 @@ offered to the model. Token counts are estimates (tokenizers are model-specific)
 the capacity is the context window the provider's server advertises for the
 model (see PROVIDER-CONTEXT-WINDOW), which also drives automatic compaction."
   (declare (ignore arg))
+  (sync-session-tools session)
   (ui-system (session-frontend session) (session-context-report session))
   t)
 
@@ -2632,6 +2686,8 @@ can still call SESSION-COMPLETE."
     (unwind-protect
          (progn
            (run-hook :on-startup)
+           ;; Startup hooks may register tools (an MCP server for this repo).
+           (sync-session-tools session)
            (unwind-protect
                 (progn
                   (when (and initial-task (plusp (length initial-task)))

@@ -90,6 +90,19 @@ does nothing; a terminal's scrollback cannot be rewritten anyway.")
     (declare (ignore session))
     (values)))
 
+(defgeneric ui-tools-changed (frontend session added removed)
+  (:documentation "SESSION's tools changed under it (see SYNC-SESSION-TOOLS):
+ADDED and REMOVED are lists of tool names.  The default says so in one line.")
+  (:method ((frontend agent-frontend) session added removed)
+    (declare (ignore session))
+    (flet ((names (list) (format nil "~{~a~^, ~}~:[~;, ...~]"
+                                 (subseq list 0 (min 6 (length list))) (> (length list) 6))))
+      (ui-system frontend
+                 (format nil "[tools] ~@[Now available: ~a.~]~:[~; ~]~@[No longer available: ~a.~]"
+                         (and added (format nil "~d (~a)" (length added) (names added)))
+                         (and added removed)
+                         (and removed (format nil "~d (~a)" (length removed) (names removed))))))))
+
 (defgeneric ui-session-event (frontend event)
   (:documentation "Publish a durable session EVENT to a frontend activity view.
 EVENT is a data-only, versioned envelope already committed to the session

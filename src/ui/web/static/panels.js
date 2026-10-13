@@ -257,8 +257,11 @@ function renderTools(target) {
 registerPanel({
   id: 'tools', title: 'Tools', color: 'orange', order: 30,
   doc: 'The tools the agent can call; click a name to /call it yourself',
-  render: renderTools, events: ['state'],
+  render: renderTools, events: ['state', 'tools'],
 });
+
+// An MCP server connected or an extension reloaded: refetch.
+on('tools', () => { toolCache = null; });
 
 // ---------- UI (customize) ----------
 
