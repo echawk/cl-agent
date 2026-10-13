@@ -154,6 +154,7 @@ function chips(s) {
     s.id === view.current ? el('span', { class: 'chip fill-green', 'data-doc': 'The conversation in the Listener' }, 'current')
       : s.in_use ? el('span', { class: 'chip fill-yellow', 'data-doc': 'Used by a session in this cl-agent' }, 'in use') : '',
     s.parent ? el('span', { class: 'chip fill-paper', 'data-doc': `Branched from ${s.parent}` }, 'branch') : '',
+    s.error ? el('span', { class: 'chip fill-red', 'data-doc': `Its log could not be read: ${s.error}` }, 'unreadable') : '',
   ];
 }
 
@@ -183,14 +184,15 @@ function row(s) {
   return el('div', {
     class: `session-row ${s.id === view.selected ? 'selected' : ''}`, 'data-id': s.id,
     'data-doc': 'Click: preview · Double-click: resume', onclick: () => select(s.id),
-    ondblclick: () => resumeSession(s),
+    ondblclick: () => { if (!s.error && s.id !== view.current) resumeSession(s); },
   },
     box,
     el('div', { class: 'session-text' },
       view.renaming === s.id ? nameField(s)
         : el('div', { class: 'session-name' }, el('span', { class: s.name ? 'named' : '' }, title(s)), chips(s)),
       el('div', { class: 'session-meta' },
-        `${s.user_messages} message${s.user_messages === 1 ? '' : 's'} from you · ${ago(s.last_active)}`,
+        s.error ? `${s.events} events · ${ago(s.last_active)} · ${s.error}`
+          : `${s.user_messages} message${s.user_messages === 1 ? '' : 's'} from you · ${ago(s.last_active)}`,
         s.name && s.title ? el('span', { class: 'faint' }, ` · ${s.title}`) : '')));
 }
 
@@ -261,7 +263,7 @@ function head(s) {
     el('div', { class: 'session-head-meta' },
       `${s.id} · started ${ago(s.created_at)} · active ${ago(s.last_active)} · ${s.messages} messages · ${s.events} events`),
     el('div', { class: 'session-head-actions' },
-      s.id === view.current ? '' : el('button', {
+      s.id === view.current || s.error ? '' : el('button', {
         class: 'btn btn-small btn-primary', type: 'button', disabled: busy(),
         'data-doc': busy() ? 'The agent is busy' : 'Continue this conversation in the Listener (Enter)',
         onclick: e => resumeSession(s, e.currentTarget),
@@ -316,7 +318,7 @@ function onKey(e) {
     e.preventDefault();
     const next = rows[Math.max(0, Math.min(rows.length - 1, index + (e.key === 'ArrowDown' ? 1 : -1)))];
     if (next) select(next.id, { scroll: true });
-  } else if (e.key === 'Enter' && s && s.id !== view.current) {
+  } else if (e.key === 'Enter' && s && s.id !== view.current && !s.error) {
     e.preventDefault(); resumeSession(s);
   } else if (e.key === 'F2' && s) {
     e.preventDefault(); startRename(s);

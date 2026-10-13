@@ -29,16 +29,16 @@
 
 (defun durable-session-summary (manifest)
   "(:ID :NAME :TITLE :LAST :MESSAGES :USER-MESSAGES :LAST-ACTIVE :CREATED-AT
-:EVENTS :PARENT) for the session MANIFEST describes; NIL if its log cannot be
-read.  The log is read once per new event; the name comes from MANIFEST, so a
-rename shows at once."
+:EVENTS :PARENT) for the session MANIFEST describes, with :ERROR saying why
+when its log cannot be read.  The log is read once per new event; the name
+comes from MANIFEST, so a rename shows at once."
   (let* ((id (getf manifest :id))
          (events (or (getf manifest :last-sequence) 0))
          (key (cons id events))
          (summary
            (or (bt:with-lock-held (*web-session-summaries-lock*) (gethash key *web-session-summaries*))
                (let ((summary
-                       (ignore-errors
+                       (handler-case
                         (let* ((messages (if (> events 1)   ; more than its creation
                                              (nth-value 1 (replay-session id))
                                              nil))
@@ -53,7 +53,16 @@ rename shows at once."
                                               (ignore-errors (file-write-date (session-manifest-pathname id))))
                                 :created-at (universal-to-unix-time (getf manifest :created-at))
                                 :events events
-                                :parent (getf manifest :parent-session-id))))))
+                                :parent (getf manifest :parent-session-id)))
+                         (error (condition)
+                           (return-from durable-session-summary
+                             (list :id id :name (getf manifest :name) :title "" :last ""
+                                   :messages 0 :user-messages 0 :events events
+                                   :error (first-line (princ-to-string condition) 300)
+                                   :last-active (universal-to-unix-time
+                                                 (ignore-errors (file-write-date (session-manifest-pathname id))))
+                                   :created-at (universal-to-unix-time (getf manifest :created-at))
+                                   :parent (getf manifest :parent-session-id)))))))
                  (when summary
                    (bt:with-lock-held (*web-session-summaries-lock*)
                      (setf (gethash key *web-session-summaries*) summary)))
@@ -93,7 +102,8 @@ newest first, leaving out the session EXCLUDE names."
         "created_at" (json-or-null (getf summary :created-at))
         "events" (or (getf summary :events) 0)
         "parent" (json-or-null (getf summary :parent))
-        "in_use" (and (durable-session-in-use-p (getf summary :id)) t)))
+        "in_use" (and (durable-session-in-use-p (getf summary :id)) t)
+        "error" (json-or-null (getf summary :error))))
 
 (defun web-current-session-id ()
   (let ((session (web-frontend-session *web-frontend*)))
@@ -119,8 +129,9 @@ newest first, leaving out the session EXCLUDE names."
 
 ;;; --- the session viewer (static/sessions.js) ---
 ;;;
-;;;   GET  /api/sessions                every session with a conversation,
-;;;                                     newest first, and how many have none
+;;;   GET  /api/sessions                every session with a conversation (or
+;;;                                     an unreadable log), newest first, and
+;;;                                     how many have no conversation
 ;;;   GET  /api/sessions/transcript?id= one session's conversation
 ;;;   POST /api/sessions/rename         {id, name}: a blank name clears it
 ;;;   POST /api/sessions/delete         {ids} or {empty: true}
@@ -138,7 +149,8 @@ newest first, leaving out the session EXCLUDE names."
 
 (define-web-route sessions (:path "/api/sessions")
   (let* ((summaries (durable-session-summaries))
-         (talked (remove-if-not (lambda (s) (plusp (getf s :user-messages))) summaries)))
+         (talked (remove-if-not (lambda (s) (or (plusp (getf s :user-messages)) (getf s :error)))
+                                summaries)))
     (jobj "current" (json-or-null (web-current-session-id))
           "sessions" (jarray (mapcar #'web-session-summary-json talked))
           "empty" (- (length summaries) (length talked)))))
@@ -197,7 +209,9 @@ Listener shows them -- tool calls summarized, tool output clipped."
   (let* ((body (web-json-body))
          (ids (if (jget body "empty")
                   (loop for summary in (durable-session-summaries)
-                        when (zerop (getf summary :user-messages)) collect (getf summary :id))
+                        ;; An unreadable log is never "empty": it may hold a conversation.
+                        when (and (zerop (getf summary :user-messages)) (not (getf summary :error)))
+                          collect (getf summary :id))
                   (remove-if-not #'stringp (let ((ids (jget body "ids"))) (if (listp ids) ids (coerce ids 'list))))))
          (deleted nil) (skipped nil))
     (dolist (id ids)

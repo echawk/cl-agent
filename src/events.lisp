@@ -142,7 +142,7 @@ removed."
      (let ((paths (%session-event-paths session-id)) (expected 1) (repaired nil))
        (loop for path in paths for tail-p = (eq path (car (last paths))) do
          (handler-case
-             (multiple-value-bind (event complete-p) (sexp-store:snapshot-read path)
+             (multiple-value-bind (event complete-p) (read-session-event-file path)
                (unless (and complete-p (listp event) (= (getf event :schema-version) 1)
                             (= (getf event :sequence) expected))
                  (if tail-p
@@ -154,6 +154,95 @@ removed."
                  (progn (ignore-errors (delete-file path)) (setf repaired t) (return))
                  (error "Session ~a has corrupt event data at ~a: ~a" session-id path condition)))))
        repaired))))
+
+;;; Durable values.  A tool call's parsed arguments are hash tables, which
+;;; SBCL prints readably only as #.(...) -- a form a reader with *READ-EVAL*
+;;; off rejects, which made every session with a tool call unreadable.
+;;; Events are therefore written with each hash table as plain data,
+;;; (:%HASH-TABLE :TEST EQUAL :ENTRIES ((KEY . VALUE) ...)), and read back
+;;; through *SESSION-EVENT-READTABLE*, which also rebuilds the #.(...) hash
+;;; tables in logs written before this -- reading, never evaluating, them.
+
+(defun map-list-elements (function list)
+  "LIST with FUNCTION applied to each element, and to a non-NIL dotted tail."
+  (let* ((head (list nil)) (tail head))
+    (loop for rest = list then (cdr rest)
+          while (consp rest)
+          do (setf tail (setf (cdr tail) (list (funcall function (car rest)))))
+          finally (setf (cdr tail) (and rest (funcall function rest))))
+    (cdr head)))
+
+(defun durable-encode (value)
+  "VALUE with every hash table in it replaced by readable plain data."
+  (typecase value
+    (hash-table
+     (list :%hash-table :test (hash-table-test value)
+           :entries (loop for key being the hash-keys of value using (hash-value item)
+                          collect (cons (durable-encode key) (durable-encode item)))))
+    (string value)
+    (cons (map-list-elements #'durable-encode value))
+    (vector (map 'vector #'durable-encode value))
+    (t value)))
+
+(defun durable-hash-table (test entries)
+  (let ((table (make-hash-table :test (or (find test '(eq eql equal equalp)) 'eql))))
+    (loop for (key . item) in entries do (setf (gethash key table) item))
+    table))
+
+(defun durable-decode (value)
+  "Undo DURABLE-ENCODE."
+  (typecase value
+    (cons (if (eq (car value) :%hash-table)
+              (durable-hash-table (getf (cdr value) :test)
+                                  (mapcar (lambda (entry)
+                                            (cons (durable-decode (car entry)) (durable-decode (cdr entry))))
+                                          (getf (cdr value) :entries)))
+              (map-list-elements #'durable-decode value)))
+    (string value)
+    (vector (map 'vector #'durable-decode value))
+    (t value)))
+
+(defun legacy-hash-table (form)
+  "The hash table FORM -- what SBCL prints after #. for one, read but not
+evaluated -- describes: (MAKE-HASH-TABLE ARGS...), or
+(SB-IMPL::%STUFF-HASH-TABLE (MAKE-HASH-TABLE ARGS...) '((KEY . VALUE) ...)).
+NIL for anything else."
+  (flet ((named-p (thing name) (and (symbolp thing) (string= (symbol-name thing) name)))
+         (table (make-form entries)
+           (let ((test (getf (cdr make-form) :test 'eql)))
+             (when (and (consp test) (symbolp (car test)) (string= (symbol-name (car test)) "QUOTE"))
+               (setf test (second test)))
+             (durable-hash-table (and (symbolp test)
+                                      (find (symbol-name test) '(eq eql equal equalp)
+                                            :key #'symbol-name :test #'string=))
+                                 entries))))
+    (cond ((and (consp form) (named-p (car form) "MAKE-HASH-TABLE"))
+           (table form nil))
+          ((and (consp form) (named-p (car form) "%STUFF-HASH-TABLE")
+                (consp (second form)) (named-p (car (second form)) "MAKE-HASH-TABLE")
+                (consp (third form)) (named-p (car (third form)) "QUOTE"))
+           (table (second form) (second (third form))))
+          (t nil))))
+
+(defvar *session-event-readtable*
+  (let ((readtable (copy-readtable nil)))
+    (set-dispatch-macro-character
+     #\# #\. (lambda (stream subchar argument)
+                (declare (ignore subchar argument))
+                (let ((form (let ((*read-eval* nil)) (read stream t nil t))))
+                  (or (legacy-hash-table form)
+                      (error "Refusing to evaluate #.~s in a session log" form))))
+     readtable)
+    readtable)
+  "The standard syntax, plus #. for the hash tables older logs hold, and
+nothing else (see LEGACY-HASH-TABLE).")
+
+(defun read-session-event-file (path)
+  "(VALUES EVENT COMPLETE-P) for the event snapshot at PATH."
+  (multiple-value-bind (event complete-p)
+      (let ((*readtable* *session-event-readtable*))
+        (sexp-store:snapshot-read path))
+    (values (durable-decode event) complete-p)))
 
 (defun record-session-event (session kind &key parent-id component status payload)
   "Durably append KIND before notifying in-memory observers.
@@ -175,7 +264,8 @@ silently inventing history."
        (let ((event (make-session-event session kind :parent-id parent-id
                                         :component component :status status :payload payload)))
          (sexp-store:snapshot-write
-          (session-event-pathname (session-id session) (getf event :sequence)) event :require-absent t)
+          (session-event-pathname (session-id session) (getf event :sequence)) (durable-encode event)
+          :require-absent t)
          (persist-session-manifest session)
          (emit-event kind :component component :payload event)
          (when (fboundp 'ui-session-event)
@@ -188,7 +278,7 @@ silently inventing history."
   (let ((paths (%session-event-paths session-id))
         (expected 1) (events nil))
     (dolist (path paths (nreverse events))
-      (multiple-value-bind (event complete-p) (sexp-store:snapshot-read path)
+      (multiple-value-bind (event complete-p) (read-session-event-file path)
         (unless (and complete-p (listp event) (= (getf event :schema-version) 1)
                      (= (getf event :sequence) expected))
           (error "Session ~a has an invalid or non-contiguous event log at ~a" session-id path))

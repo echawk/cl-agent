@@ -235,3 +235,71 @@
       (multiple-value-bind (events messages) (replay-session (session-id session))
         (check (find :user-message-accepted events :key (lambda (event) (getf event :kind))))
         (check-equal (getf (car (last messages)) :content) "queued durable input")))))
+
+;;; --- tool-call arguments are hash tables ---
+
+(defun tool-call-message (arguments)
+  (list :role "assistant" :content nil
+        :tool-calls (list (list :id "call-1" :name "shell" :arguments arguments))))
+
+(defun replayed-arguments (session-id)
+  (getf (first (getf (find "assistant" (nth-value 1 (replay-session session-id))
+                           :key (lambda (m) (getf m :role)) :test #'equal)
+                     :tool-calls))
+        :arguments))
+
+(deftest sessions-with-tool-calls-replay-and-resume ()
+  ;; The arguments used to be written as #.(...), which a log reader that
+  ;; never evaluates rejects: such sessions could not be listed or resumed.
+  (let* ((session (make-session (make-instance 'ollama-provider)))
+         (arguments (jobj "command" "ls" "options" (jobj "all" t) "paths" (list "a" "b"))))
+    (session-submit-user-text session "list the files")
+    (record-session-event session :assistant-response-finished :component "fixture"
+                          :payload (list :message (tool-call-message arguments)))
+    (let ((text (uiop:read-file-string (session-event-pathname (session-id session)
+                                                               (session-event-sequence session)))))
+      (check (not (search "#." text)) "nothing in the log needs evaluating"))
+    (let ((replayed (replayed-arguments (session-id session))))
+      (check (hash-table-p replayed))
+      (check-equal (gethash "command" replayed) "ls")
+      (check-equal (gethash "all" (gethash "options" replayed)) t "nested tables too")
+      (check-equal (gethash "paths" replayed) '("a" "b")))
+    (check (hash-table-p (gethash "options" arguments)) "the live message is left as it was")
+    (let ((restored (make-session (make-instance 'ollama-provider))))
+      (resume-session restored (session-id session))
+      (check (hash-table-p (getf (first (getf (car (last (session-messages restored))) :tool-calls))
+                                 :arguments))))))
+
+(defun write-raw-session-event (session kind payload)
+  "Append an event exactly as logs were written before DURABLE-ENCODE."
+  (let ((event (make-session-event session kind :component "fixture" :payload payload)))
+    (sexp-store:snapshot-write (session-event-pathname (session-id session) (getf event :sequence))
+                               event :require-absent t)
+    (persist-session-manifest session)
+    (getf event :sequence)))
+
+(deftest logs-written-before-the-fix-still-replay ()
+  (let ((session (make-session (make-instance 'ollama-provider)))
+        (arguments (jobj "action" "guide" "inner" (jobj "k" (vector 1 "a")) "empty" (jobj))))
+    (session-submit-user-text session "show the guide")
+    (let ((sequence (write-raw-session-event session :assistant-response-finished
+                                             (list :message (tool-call-message arguments)))))
+      (write-raw-session-event session :system-message-recorded
+                               (list :message (list :role "system" :content "after")))
+      (check (search "#.(" (uiop:read-file-string (session-event-pathname (session-id session) sequence)))
+             "the fixture holds the old #. form"))
+    (let ((replayed (replayed-arguments (session-id session))))
+      (check-equal (gethash "action" replayed) "guide")
+      (check (equalp (gethash "k" (gethash "inner" replayed)) #(1 "a")))
+      (check (hash-table-p (gethash "empty" replayed)))
+      (check-equal (hash-table-test replayed) 'equal))))
+
+(defvar *legacy-read-probe* nil)
+
+(deftest session-logs-never-evaluate-sharp-dot ()
+  (let ((session (make-session (make-instance 'ollama-provider))))
+    (with-open-file (out (session-event-pathname (session-id session) 2)
+                         :direction :output :if-does-not-exist :create)
+      (format out "(:SCHEMA-VERSION 1 :SEQUENCE 2 :KIND :SYSTEM-MESSAGE-RECORDED :PAYLOAD #.(setf cl-agent::*legacy-read-probe* t))~%"))
+    (check-condition error (read-session-event-file (session-event-pathname (session-id session) 2)))
+    (check (not *legacy-read-probe*) "the form was not evaluated")))

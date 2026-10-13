@@ -207,3 +207,16 @@
         (check (member empty (gethash "deleted" result) :test #'equal))
         (check (every (lambda (skip) (search "in use" (gethash "reason" skip))) (gethash "skipped" result))
                "only sessions in use are left")))))
+
+(deftest web-sessions-lists-unreadable-sessions-and-never-clears-them ()
+  (let ((broken (stored-session "this one breaks")))
+    ;; A gap in the middle of the log: replay refuses it.
+    (delete-file (session-event-pathname broken 1))
+    (with-test-web-frontend (frontend)
+      (let ((row (find broken (gethash "sessions" (web-get-json frontend "/api/sessions"))
+                       :key (lambda (s) (gethash "id" s)) :test #'equal)))
+        (check row "listed, not dropped")
+        (check (stringp (gethash "error" row))))
+      (let ((result (json-decode (web-post frontend "/api/sessions/delete" :json (jobj "empty" t)))))
+        (check (not (member broken (gethash "deleted" result) :test #'equal))))
+      (check (probe-file (session-manifest-pathname broken))))))
