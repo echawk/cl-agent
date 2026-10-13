@@ -97,6 +97,8 @@ message and a non-zero exit, not a Lisp backtrace."
   (setf *config-directory* (if (clingon:getopt cmd :config-dir)
                                (uiop:ensure-directory-pathname (clingon:getopt cmd :config-dir))
                                (default-config-directory)))
+  ;; Libraries the agent loads go to config/systems/, never the working directory.
+  (use-agent-systems-directory)
   (if (clingon:getopt cmd :doctor)
       (let ((results (run-doctor)))
         (format t "~a~%" (format-doctor-report results))

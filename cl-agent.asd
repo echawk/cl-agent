@@ -61,6 +61,7 @@
      (:file "hooks")
      (:file "json-util")
      (:file "source-archive")
+     (:file "systems")
      (:file "http")
      (:file "storage")
      (:file "config")
@@ -241,7 +242,8 @@
    (:file "test-lem")
    (:file "test-scratch")
    (:file "test-source-archive")
-   (:file "test-editor-files"))
+   (:file "test-editor-files")
+   (:file "test-systems"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

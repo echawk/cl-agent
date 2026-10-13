@@ -514,6 +514,13 @@ The `load-asdf-system` tool loads libraries by ASDF system name. `boot.lisp`
 installs ocicl's missing-system hook into ASDF, so a missing system is fetched
 through ocicl rather than by downloading `.asd` files manually.
 
+While the agent runs, ocicl keeps what it fetches in the config directory,
+`~/.config/cl-agent/systems/`, which holds `ocicl.csv` and `ocicl/`. It never
+writes to the working directory, so starting `bin/cl-agent` in a repository
+never leaves ocicl files there. The tool is the only thing that fetches.
+A saved `bin/cl-agent` still finds the systems it was built with, by their
+recorded `.asd` paths.
+
 ## Emacs integration
 
 `integrations/emacs/cl-agent.el` is a copy-into-your-init.el starting

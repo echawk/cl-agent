@@ -3,7 +3,7 @@
 (in-package :cl-agent)
 
 (define-tool load-asdf-system (args)
-    (:description "Load a Common Lisp library by ASDF system name into the running agent image. ASDF is configured by boot.lisp with ocicl's missing-system hook, so an unavailable dependency is fetched through ocicl automatically; do not curl .asd files. Returns the loaded system's name and version, or an actionable ASDF/ocicl error."
+    (:description "Load a Common Lisp library by ASDF system name into the running agent image. An unavailable dependency is fetched through ocicl automatically into cl-agent's config directory (systems/), never the working directory; do not curl .asd files. Returns the loaded system's name and version, or an actionable ASDF/ocicl error."
      :parameters
      (jobj "type" "object"
            "properties"
@@ -14,7 +14,9 @@
       (error "load-asdf-system requires a non-empty string \"system\" argument"))
     (handler-case
         (progn
-          (asdf:load-system name :verbose nil)
+          ;; The one place ocicl may fetch a missing system: into
+          ;; config/systems/ (systems.lisp), never the working directory.
+          (with-ocicl-fetching () (asdf:load-system name :verbose nil))
           (let ((system (asdf:find-system name)))
             (format nil "Loaded ASDF system ~a~@[ version ~a~]."
                     (asdf:component-name system) (asdf:component-version system))))
