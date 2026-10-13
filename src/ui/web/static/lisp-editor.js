@@ -26,7 +26,7 @@
 //   onChange      (text) => ...            onContext (call | null) => ... (autodoc)
 //   onMessage     (text) => ...            (echo area: chord prefixes, "No completions")
 
-import { createMenu, commonPrefix } from './menu.js';
+import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
 import { el } from './core.js';
 
 // ---------- reading ----------
@@ -463,13 +463,10 @@ export function createLispEditor(host, options = {}) {
     if (e.isComposing) return;
     const state = menu.state;
     if (state) {
-      if (e.key === 'Tab' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        menu.move(e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey) ? -1 : 1);
-        return;
-      }
+      const step = menuStep(e);
+      if (step) { e.preventDefault(); menu.move(step); return; }
       if (e.key === 'Enter' && menu.selected) { e.preventDefault(); accept(menu.selected, state.result); return; }
-      if (e.key === 'Escape') { e.preventDefault(); menu.hide(); return; }
+      if (menuCancel(e)) { e.preventDefault(); menu.hide(); return; }
       if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) menu.hide();
     }
     if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;

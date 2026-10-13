@@ -5,6 +5,9 @@
 //   const menu = createMenu(node, { onAccept: candidate => ... });
 //   menu.show(result, index)   result: {candidates, total, source}
 //   menu.move(+1 | -1)  menu.hide()  menu.state -> {result, index} | null
+//   menuStep(e)    +1 / -1 for the keys that move the selection (Tab,
+//                  Shift-Tab, ↓ ↑, and Emacs's C-n C-p), else 0
+//   menuCancel(e)  whether the key closes the menu (Esc, C-g)
 //
 // `result` is what GET /api/complete or /api/lisp/complete returns.
 
@@ -17,6 +20,21 @@ const TITLES = {
   lisp: 'Lisp symbols',
   'lisp-abbreviations': 'Lisp symbols · abbreviation',
 };
+
+const plainCtrl = e => e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
+
+export function menuStep(e) {
+  if (e.key === 'Tab' && !e.ctrlKey && !e.altKey && !e.metaKey) return e.shiftKey ? -1 : 1;
+  if (e.key === 'ArrowDown' && !e.ctrlKey && !e.metaKey) return 1;
+  if (e.key === 'ArrowUp' && !e.ctrlKey && !e.metaKey) return -1;
+  if (plainCtrl(e) && e.code === 'KeyN') return 1;
+  if (plainCtrl(e) && e.code === 'KeyP') return -1;
+  return 0;
+}
+
+export function menuCancel(e) {
+  return e.key === 'Escape' || (plainCtrl(e) && e.code === 'KeyG');
+}
 
 export function menuTitle(source) {
   if (source?.startsWith('command:')) return `/${source.slice(8)} arguments`;
@@ -32,7 +50,7 @@ export function createMenu(node, { onAccept }) {
     node.replaceChildren(
       el('div', { class: 'completions-title' },
         el('span', {}, menuTitle(result.source)),
-        el('span', {}, `${candidates.length}${total > candidates.length ? ` of ${total}` : ''} · Tab ↑↓ Enter Esc`)),
+        el('span', {}, `${candidates.length}${total > candidates.length ? ` of ${total}` : ''} · Tab ↑↓ C-n C-p Enter Esc`)),
       el('div', { class: 'completions-list', role: 'listbox' },
         candidates.map((c, i) => el('div', {
           class: `completion kind-${c.kind || 'other'} ${i === index ? 'selected' : ''}`,

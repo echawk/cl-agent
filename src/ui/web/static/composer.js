@@ -10,7 +10,7 @@
 import {
   state, on, el, api, send, interrupt, clientCommands, completers, storage, store,
 } from './core.js';
-import { createMenu, commonPrefix } from './menu.js';
+import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
 
 const $ = id => document.getElementById(id);
 let input, menu;
@@ -191,10 +191,9 @@ function caretOnLastLine() { return !input.value.slice(input.selectionEnd).inclu
 function onKeyDown(e) {
   const menuState = menu.state;
   if (menuState) {
-    if (e.key === 'Tab') { e.preventDefault(); if (menuState.index < 0 && !e.shiftKey) moveSelection(1); else moveSelection(e.shiftKey ? -1 : 1); return; }
-    if (e.key === 'ArrowDown') { e.preventDefault(); moveSelection(1); return; }
-    if (e.key === 'ArrowUp') { e.preventDefault(); moveSelection(-1); return; }
-    if (e.key === 'Escape') { e.preventDefault(); hideMenu(); return; }
+    const step = menuStep(e);
+    if (step) { e.preventDefault(); moveSelection(step); return; }
+    if (menuCancel(e)) { e.preventDefault(); hideMenu(); return; }
     if ((e.key === 'Enter' || e.key === 'ArrowRight') && menuState.index >= 0 && !e.shiftKey) {
       e.preventDefault();
       accept(menuState.result.candidates[menuState.index], menuState.result);
