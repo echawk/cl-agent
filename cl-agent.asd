@@ -31,7 +31,8 @@
                "cl-lsp" "cl-skills"                           ; agent LSP + Skills
                "clingon" "3bmd" "3bmd-ext-tables"           ; CLI parsing; Markdown web rendering
                "tuition"                                     ; TUI frontend, src/ui/tui.lisp
-               "hunchentoot")                                ; web frontend, src/ui/web.lisp
+               "hunchentoot"                                 ; web frontend, src/ui/web.lisp
+               "slynk" "slynk/arglists")                     ; SLY's completion and arglists, lisp-introspect.lisp
   :build-operation "program-op"
   :build-pathname "bin/cl-agent"
   :entry-point "cl-agent:main"

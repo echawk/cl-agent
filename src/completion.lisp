@@ -72,10 +72,11 @@ argument is being typed."
                    (not (getf ,context-var :command-token-p)))
           ,@body)))))
 
-(defun make-completion (value &key doc kind display)
+(defun make-completion (value &key doc kind display match)
   "One candidate: VALUE replaces the token; DISPLAY (default VALUE) is what the
-menu shows; DOC is a one-line description; KIND a short category string."
-  (list :value value :display (or display value) :doc doc :kind kind))
+menu shows; DOC is a one-line description; KIND a short category string;
+MATCH the (START END) ranges of DISPLAY the typed text matched, highlighted."
+  (list :value value :display (or display value) :doc doc :kind kind :match match))
 
 (defun first-line (text &optional (limit 110))
   (when (stringp text)
@@ -145,7 +146,8 @@ TEXT at CURSOR: replace TEXT[START, END) with a candidate's :VALUE."
           "candidates" (jarray (mapcar (lambda (c)
                                          (jobj "value" (getf c :value) "display" (getf c :display)
                                                "doc" (json-or-null (getf c :doc))
-                                               "kind" (json-or-null (getf c :kind))))
+                                               "kind" (json-or-null (getf c :kind))
+                                               "match" (jarray (mapcar #'jarray (getf c :match)))))
                                        candidates)))))
 
 ;;; --- 10: slash command names ---

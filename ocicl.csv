@@ -101,6 +101,7 @@ setinka, git+https://github.com/lambda-symbolics/setinka@f896272b4bde04e09385a1f
 sexp-config, git+https://github.com/lambda-symbolics/sexp-config@09e0b86650d08d98c7624ec525d346a41b98323c, sexp-config-09e0b86/sexp-config.asd
 sexp-store, git+https://github.com/lambda-symbolics/sexp-store@4d38e6544d87412d99acef9f097272df41359eff, sexp-store-4d38e65/sexp-store.asd
 shasht, ghcr.io/ocicl/shasht@sha256:ed683f73d865bb2d7231786797211774fce8f783890b295768f0794cd3de633b, shasht-20251015-40a4aee/shasht.asd
+slynk, ghcr.io/ocicl/slynk@sha256:7bd34c2521a5db51b7c18f1e5a7c4c028f9c8d8efe4ad851ab3b65c7b753107a, sly-20260812-3ffa216/slynk/slynk.asd
 split-sequence, ghcr.io/ocicl/split-sequence@sha256:3a37662eedd99c42995587b9d443c4631f25c4c523091bcca31a27b880585b8e, split-sequence-2.0.1/split-sequence.asd
 string-case, ghcr.io/ocicl/string-case@sha256:9db2d4160b76ce1ed9f754d12f679c665593a9a436177d36380a1a8a176ec16a, string-case-20240503-718c761/string-case.asd
 structlisp, git+https://github.com/lambda-symbolics/structlisp@0a276cd18f6d85576de7d761d96e40a34667b8b7#ref=0a276cd18f6d85576de7d761d96e40a34667b8b7, structlisp-0a276cd/structlisp.asd

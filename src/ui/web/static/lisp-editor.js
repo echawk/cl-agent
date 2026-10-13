@@ -13,7 +13,13 @@
 //                 buffer's (in-package ...) at point
 //   indentation   Lisp style: body forms by 2, arguments aligned with the
 //                 first one; on Enter, and on Tab within a line's indentation
-//   completion    Tab anywhere else completes the symbol (menu.js)
+//   completion    Tab anywhere else (or C-M-i) completes at point (menu.js):
+//                 the server picks file names in a string, the call's keyword
+//                 arguments, or symbols by prefix, m-v-b, then SLY's flex
+//                 matching.  Tab inserts what every candidate shares; with
+//                 the menu open, typing narrows it and Tab/C-n/C-p move
+//   dabbrev       M-/ expands the word before point from the buffer's words,
+//                 nearest first, then options.dabbrevText()'s; again cycles
 //   keys          Emacs-style key sequences ("C-c C-c", "M-.", "C-x C-e")
 //                 from the keymap its owner passes in
 //
@@ -25,6 +31,7 @@
 //   onKey         (editor, event) => true when it handled any other key
 //   onChange      (text) => ...            onContext (call | null) => ... (autodoc)
 //   onMessage     (text) => ...            (echo area: chord prefixes, "No completions")
+//   dabbrevText   () => text               more words for M-/ (the other editor's)
 
 import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
 import { el } from './core.js';
@@ -319,7 +326,12 @@ function keyName(e) {
 }
 
 export function createLispEditor(host, options = {}) {
-  const keymap = options.keymap || {};
+  const keymap = {
+    'C-M-i': editor => editor.complete(),
+    'M-TAB': editor => editor.complete(),
+    'M-/': editor => editor.dabbrev(),
+    ...options.keymap,
+  };
   const prefixes = new Set(Object.keys(keymap).flatMap(seq => {
     const parts = seq.split(' ');
     return parts.slice(1).map((_, i) => parts.slice(0, i + 1).join(' '));
@@ -342,6 +354,8 @@ export function createLispEditor(host, options = {}) {
   let contextTimer = null;
   let requestNumber = 0;
   let follow = false;         // keep the caret in view after this render
+  let refining = false;       // the menu is open and a key just changed the token
+  let expansion = null;       // the M-/ in progress: {start, prefix, words, index, end}
 
   const message = text => options.onMessage?.(text);
 
@@ -437,7 +451,9 @@ export function createLispEditor(host, options = {}) {
     menu.hide();
   }
 
-  async function complete() {
+  // REFINE: the menu is open and the user typed; show the new candidates
+  // but never insert or accept anything on their behalf.
+  async function complete({ refine = false } = {}) {
     if (!options.complete) return;
     const text = input.value;
     const cursor = input.selectionStart;
@@ -446,15 +462,65 @@ export function createLispEditor(host, options = {}) {
     try { result = await options.complete(text, cursor); } catch (err) { message(err.message); return; }
     if (number !== requestNumber || input.value !== text || !result) return;
     const { candidates } = result;
-    if (!candidates.length) { menu.hide(); message(`No completions for "${result.token}".`); return; }
+    const typed = text.slice(result.start, result.end);
+    if (!candidates.length) { menu.hide(); if (!refine) message(`No completions for "${result.token}".`); return; }
+    if (candidates.length === 1 && candidates[0].value === typed) {
+      menu.hide();
+      if (!refine) message('Sole completion');
+      return;
+    }
+    if (refine) { menu.show(result, 0); placeMenu(); return; }
     if (candidates.length === 1) { accept(candidates[0], result); return; }
+    // Only a common part that extends what was typed: a flex match's
+    // candidates need not start with it.
     const common = commonPrefix(candidates.map(c => c.value));
-    if (common.length > result.end - result.start) {
+    if (common.length > typed.length && common.toLowerCase().startsWith(typed.toLowerCase())) {
       replaceRange(result.start, result.end, common);
       result.end = result.start + common.length;
     }
     menu.show(result, 0);
     placeMenu();
+  }
+
+  // Keys that change the token being completed, so an open menu follows them.
+  const refines = e => !e.ctrlKey && !e.altKey && !e.metaKey
+    && (e.key === 'Backspace' || (e.key.length === 1 && !DELIMITER.test(e.key)));
+
+  // ----- M-/ (dabbrev-expand) -----
+
+  function dabbrevWords(text, start, prefix) {
+    const lower = prefix.toLowerCase();
+    const words = source => tokenize(source).filter(t => t.type === 'atom')
+      .map(t => ({ t, word: source.slice(t.start, t.end) }))
+      .filter(({ word }) => word.length > prefix.length && word.toLowerCase().startsWith(lower));
+    const here = words(text).filter(({ t }) => t.start !== start);
+    const before = here.filter(({ t }) => t.end <= start).reverse();
+    const after = here.filter(({ t }) => t.start > start);
+    const elsewhere = words(options.dabbrevText?.() || '');
+    return [...new Set([...before, ...after, ...elsewhere].map(({ word }) => word))];
+  }
+
+  function dabbrev() {
+    const text = input.value;
+    const pos = input.selectionStart;
+    if (!expansion || expansion.end !== pos || text.slice(expansion.start, pos) !== expansion.words[expansion.index]) {
+      let start = pos;
+      while (start > 0 && !DELIMITER.test(text[start - 1])) start -= 1;
+      const prefix = text.slice(start, pos);
+      if (!prefix) { message('No dynamic expansion for an empty word'); return; }
+      expansion = { start, prefix, words: dabbrevWords(text, start, prefix), index: -1 };
+    }
+    expansion.index += 1;
+    const word = expansion.words[expansion.index];
+    if (word === undefined) {
+      const { start, prefix } = expansion;
+      expansion = null;
+      if (pos !== start + prefix.length || text.slice(start, pos) !== prefix) replaceRange(start, pos, prefix);
+      message(`No further dynamic expansions for "${prefix}" found`);
+      return;
+    }
+    replaceRange(expansion.start, pos, word);
+    expansion.end = expansion.start + word.length;
   }
 
   // ----- keys -----
@@ -467,7 +533,8 @@ export function createLispEditor(host, options = {}) {
       if (step) { e.preventDefault(); menu.move(step); return; }
       if (e.key === 'Enter' && menu.selected) { e.preventDefault(); accept(menu.selected, state.result); return; }
       if (menuCancel(e)) { e.preventDefault(); menu.hide(); return; }
-      if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) menu.hide();
+      if (refines(e)) refining = true;
+      else if (!['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) menu.hide();
     }
     if (['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) return;
     const name = keyName(e);
@@ -515,7 +582,12 @@ export function createLispEditor(host, options = {}) {
   }
 
   input.addEventListener('keydown', onKeyDown);
-  input.addEventListener('input', () => { schedule({ keep: true, now: true }); contextChanged(); options.onChange?.(input.value); });
+  input.addEventListener('input', () => {
+    schedule({ keep: true, now: true });
+    contextChanged();
+    options.onChange?.(input.value);
+    if (refining) { refining = false; if (menu.state) complete({ refine: true }); }
+  });
   input.addEventListener('keyup', () => { schedule(); contextChanged(); });
   input.addEventListener('mouseup', () => { schedule(); contextChanged(); });
   input.addEventListener('focus', () => { schedule(); contextChanged(); });
@@ -540,6 +612,7 @@ export function createLispEditor(host, options = {}) {
     replaceRange,
     insert(text) { replaceRange(input.selectionStart, input.selectionEnd, text); },
     complete,
+    dabbrev,
     tree() { return parse(input.value); },
     symbolAtPoint() { return symbolAt(input.value, input.selectionStart); },
     toplevelAtPoint() {

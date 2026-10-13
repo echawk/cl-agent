@@ -1,6 +1,7 @@
 // menu.js -- the completion menu (an Interlisp pop-up menu) shared by the
 // composer and the Lisp editors: a titled list of candidates, each
-// "value · kind · doc", with one selected.
+// "value · kind · doc", with one selected and the letters the typed text
+// matched (a candidate's `match`, [start, end] ranges of its display) marked.
 //
 //   const menu = createMenu(node, { onAccept: candidate => ... });
 //   menu.show(result, index)   result: {candidates, total, source}
@@ -19,6 +20,9 @@ const TITLES = {
   'lisp-symbols': 'Lisp symbols',
   lisp: 'Lisp symbols',
   'lisp-abbreviations': 'Lisp symbols · abbreviation',
+  'lisp-flex': 'Lisp symbols · flex',
+  'lisp-keywords': 'Keyword arguments',
+  'lisp-files': 'Files',
 };
 
 const plainCtrl = e => e.ctrlKey && !e.altKey && !e.metaKey && !e.shiftKey;
@@ -57,7 +61,7 @@ export function createMenu(node, { onAccept }) {
           role: 'option',
           'data-doc': c.doc || c.value,
           onmousedown: e => { e.preventDefault(); onAccept(c, result); },
-        }, el('span', { class: 'c-value' }, c.display || c.value),
+        }, el('span', { class: 'c-value' }, marked(c.display || c.value, c.match)),
            el('span', { class: 'c-kind' }, c.kind || ''),
            el('span', { class: 'c-doc' }, c.doc || '')))));
     // One value column for every row, sized to the longest candidate.
@@ -85,6 +89,20 @@ export function createMenu(node, { onAccept }) {
     get state() { return current; },
     get selected() { return current && current.index >= 0 ? current.result.candidates[current.index] : null; },
   };
+}
+
+/** TEXT with the [start, end] RANGES wrapped in <mark>. */
+function marked(text, ranges) {
+  if (!ranges?.length) return text;
+  const parts = [];
+  let at = 0;
+  for (const [start, end] of ranges) {
+    if (start < at || end > text.length) continue;
+    parts.push(text.slice(at, start), el('mark', { class: 'c-match' }, text.slice(start, end)));
+    at = end;
+  }
+  parts.push(text.slice(at));
+  return parts;
 }
 
 /** Longest common prefix of VALUES, ignoring case. */

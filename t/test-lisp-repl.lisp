@@ -163,6 +163,61 @@
   (check-equal (getf (lisp-repl-complete "#'mapc" 6 (find-package :cl-agent)) :start) 2
                "#' stays in front of the completed name"))
 
+;;; Like SLY: the form at point as SLYNK reads it, and the stages Tab tries.
+
+(defun lisp-completion (text &optional (package (find-package :cl-agent)))
+  (lisp-repl-complete text (length text) package))
+
+(defclass completion-test-widget ()
+  ((colour :initarg :colour) (size :initarg :size-in-pixels)))
+
+(deftest lisp-form-at-point-reads-like-sly ()
+  (check-equal (lisp-form-at-point "(foo (bar 1) \"s\" :ke" 20)
+               (list "foo" (list "bar" "1") "\"s\"" ":ke" slynk::+cursor-marker+))
+  (check-equal (lisp-form-at-point "(a (b c " 8) (list "a" (list "b" "c" "" slynk::+cursor-marker+))
+               "an empty argument at point, inside the nested list")
+  (check-equal (nth-value 1 (lisp-form-at-point "(load \"src/u" 12)) 7 "inside a string: where its text starts")
+  (check (null (lisp-form-at-point "(a) b" 5)) "at toplevel")
+  (check (null (lisp-form-at-point "(a ; (b :c" 10)) "in a comment")
+  (check (null (lisp-form-at-point "'(make-hash-table :t" 20)) "inside a quoted list"))
+
+(deftest lisp-completion-offers-the-calls-keyword-arguments ()
+  (let ((result (lisp-completion "(make-hash-table :te")))
+    (check-equal (getf result :source) "lisp-keywords")
+    (check-equal (lisp-completion-values "(make-hash-table :te") '(":test")
+                 "only MAKE-HASH-TABLE's, not every keyword starting :te"))
+  (let ((values (lisp-completion-values "(make-hash-table :test 'equal :")))
+    (check (member ":size" values :test #'string=))
+    (check (not (member ":test" values :test #'string=)) "a keyword already given is not offered again"))
+  (check-equal (sort (lisp-completion-values "(make-instance 'completion-test-widget :") #'string<)
+               '(":colour" ":size-in-pixels") "MAKE-INSTANCE: the class's initargs")
+  (check-equal (lisp-completion-values "(with-open-file (s \"x\" :dir") '(":direction")
+               "a macro's nested lambda list")
+  (check-equal (getf (lisp-completion "'(make-hash-table :tes") :source) "lisp" "data, not a call: every keyword"))
+
+(deftest lisp-completion-falls-back-to-sly-flex-matching ()
+  (let ((result (lisp-completion "(dstrbind")))
+    (check-equal (getf result :source) "lisp-flex")
+    (let ((candidate (first (getf result :candidates))))
+      (check-equal (getf candidate :value) "destructuring-bind")
+      (check-equal (getf candidate :match) '((0 1) (2 5) (14 18)) "the letters matched, for the menu")))
+  (check (member "uiop:split-string" (lisp-completion-values "(spl-str") :test #'string=)
+         "other packages' external symbols, qualified")
+  (check-equal (getf (lisp-completion "(multiple-value-b") :source) "lisp" "a prefix match wins over flex")
+  (check (null (lisp-completion-values "(zzqqxxjj"))))
+
+(deftest lisp-completion-completes-file-names-in-strings ()
+  (let ((directory (merge-pathnames "completion-files/" *config-directory*)))
+    (ensure-directories-exist directory)
+    (with-open-file (s (merge-pathnames "alpha-notes.lisp" directory) :direction :output :if-exists :supersede)
+      (write-string "1" s))
+    (let* ((text (format nil "(load \"~aalp" (namestring directory)))
+           (result (lisp-completion text)))
+      (check-equal (getf result :source) "lisp-files")
+      (check-equal (getf result :start) 7)
+      (check-equal (lisp-completion-values text)
+                   (list (format nil "~aalpha-notes.lisp" (namestring directory)))))))
+
 (deftest lisp-repl-autodoc-marks-the-current-argument ()
   (let ((positional (lisp-repl-autodoc "subseq" 1 nil (find-package :cl-agent)))
         (keyword (lisp-repl-autodoc "make-completion" 3 ":kind" (find-package :cl-agent)))
@@ -272,9 +327,11 @@
 
 (deftest lisp-routes-introspection-over-http ()
   (with-test-web-frontend (frontend)
-    (check (find "multiple-value-bind"
-                 (gethash "candidates" (web-get-json frontend "/api/lisp/complete?text=(multiple-value-b&cursor=17"))
-                 :key (lambda (c) (gethash "value" c)) :test #'equal))
+    (let ((candidate (find "multiple-value-bind"
+                           (gethash "candidates" (web-get-json frontend "/api/lisp/complete?text=(multiple-value-b&cursor=17"))
+                           :key (lambda (c) (gethash "value" c)) :test #'equal)))
+      (check candidate)
+      (check-equal (gethash "match" candidate) '((0 16)) "the matched letters reach the page"))
     (check-equal (gethash "operator" (web-get-json frontend "/api/lisp/autodoc?operator=subseq&index=1")) "subseq")
     (check (search "lisp-repl-start" (gethash "text" (web-get-json frontend "/api/lisp/describe?symbol=lisp-repl-start"))
                   :test #'char-equal))

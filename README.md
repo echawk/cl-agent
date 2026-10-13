@@ -613,8 +613,19 @@ A Common Lisp REPL in the browser, on the running agent's image, with what
 you would expect from SLY or SLIME:
 
 - **Editing**: syntax highlighting with rainbow parentheses, paren matching,
-  Lisp indentation (`RET`, `Tab` in the indentation), and `Tab` completion of
-  symbols, `pkg:` names, keywords and abbreviations (`m-v-b`).
+  and Lisp indentation (`RET`, `Tab` in the indentation).
+- **Completion**: `Tab` (or `C-M-i`) completes the way SLY does, using slynk
+  itself. It tries each of these in turn:
+  - file names inside a string;
+  - the keyword arguments of the call at point, from slynk's arglists, so
+    `(make-instance 'foo :` offers `foo`'s initargs;
+  - symbols and `pkg:` names by prefix;
+  - abbreviations such as `m-v-b`;
+  - SLY's flex matching, which also searches other packages' exports, so
+    `mvbind` and `spl-str` work.
+
+  An open menu narrows as you type, and `M-/` expands a word from the
+  buffers, as Emacs's dabbrev does.
 - **Echo area**: the argument list of the call at the cursor, with the
   current argument highlighted.
 - **REPL**: `RET` evaluates once the input is complete. Output streams in as it

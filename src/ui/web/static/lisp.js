@@ -13,6 +13,7 @@
 //
 // Keys, SLY's as far as a browser allows (both editors unless marked):
 //   Tab  indent or complete     RET  (REPL) evaluate a complete input
+//   C-M-i  complete             M-/  expand a word from the buffers (dabbrev)
 //   M-p M-n  (REPL) history     C-c C-c  compile form (scratch) / interrupt (REPL)
 //   C-x C-e  eval form before   C-M-x  (scratch) eval toplevel form
 //   C-c C-k  compile & load the scratch buffer      C-c C-z  scratch <-> REPL
@@ -471,7 +472,9 @@ function updateChrome() {
 
 function keyHelp() {
   const rows = [
-    ['Tab', 'indent the line, or complete the symbol'], ['RET', 'REPL: evaluate a complete input (Shift-RET: newline)'],
+    ['Tab', 'indent the line, or complete: file names in strings, the call\'s keyword arguments, symbols (prefix, m-v-b, flex)'],
+    ['C-M-i', 'complete at point'], ['M-/', 'expand the word from the buffers, REPL history and transcript; again for the next'],
+    ['RET', 'REPL: evaluate a complete input (Shift-RET: newline)'],
     ['M-p / M-n, ↑ ↓', 'REPL: previous / next input'], ['C-c C-c', 'scratch: compile the toplevel form · REPL: interrupt'],
     ['C-x C-e', 'evaluate the form before the cursor'], ['C-M-x', 'scratch: evaluate the toplevel form'],
     ['C-c C-k', 'compile and load the scratch buffer'], ['C-c C-z', 'switch between scratch and REPL'],
@@ -536,6 +539,7 @@ function mount(container) {
       'C-x C-s': () => saveScratch(true).then(() => message('Saved.')),
     },
     complete: (text, cursor) => lispComplete(ui.scratch, text, cursor),
+    dabbrevText: () => [ui.repl.value, ...[...history].reverse(), ui.transcript.textContent].join('\n'),
     onChange: () => { ui.dirty = true; updateChrome(); saveScratch(); },
     onContext: call => updateAutodoc(ui.scratch, call),
     onMessage: text => (text ? message(text, 2500) : null),
@@ -553,6 +557,7 @@ function mount(container) {
       'M-n': () => recall(1),
     },
     complete: (text, cursor) => lispComplete(ui.repl, text, cursor),
+    dabbrevText: () => [ui.scratch.value, ...[...history].reverse(), ui.transcript.textContent].join('\n'),
     onEnter: submitRepl,
     onKey: (editor, e) => {
       if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return false;
