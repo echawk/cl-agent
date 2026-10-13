@@ -222,17 +222,45 @@ holding TEXT, and return its pathname."
                     (member extension (getf server :extensions) :test #'string-equal))
             collect (getf server :name))))
 
-(defun scratch-buffer-diagnostics (name &key (wait-seconds 2))
-  "What the configured language servers report for scratch buffer NAME, as
-saved: a list of plists (:server :line :character :end-line :end-character
-:severity :message :source), lines and characters 0-based.  Signals an
-error when no server is configured for its extension."
-  (let ((path (require-scratch-buffer name)))
-    (unless (scratch-buffer-lsp-servers path)
+;;; The language server reads a file from disk; to show it a file's unsaved
+;;; text (a buffer being edited in the Code tab), cl-lsp's one reader is
+;;; wrapped: while *LSP-UNSAVED-TEXT* names a file, its text is what the
+;;; server is sent for that file.  Nothing else changes.
+
+(defvar *lsp-unsaved-text* nil
+  "(NAMESTRING . TEXT): the text the language server sees for that file.")
+
+(sb-int:unencapsulate 'cl-lsp::lsp--read-document 'cl-agent-unsaved-text)
+(sb-int:encapsulate 'cl-lsp::lsp--read-document 'cl-agent-unsaved-text
+                    (lambda (read path)
+                      (let ((unsaved *lsp-unsaved-text*))
+                        (if (and unsaved (string= (namestring path) (car unsaved)))
+                            (cdr unsaved)
+                            (funcall read path)))))
+
+(defmacro with-lsp-text ((path text) &body body)
+  "Run BODY with the language server seeing TEXT (when non-NIL) as PATH's."
+  `(let ((*lsp-unsaved-text* (if ,text (cons (namestring (truename ,path)) ,text) *lsp-unsaved-text*)))
+     ,@body))
+
+(defun require-lsp-servers (path)
+  (or (scratch-buffer-lsp-servers path)
       (error "No language server is configured for .~a files. Add one to ~a."
-             (pathname-type path) (uiop:native-namestring (lsp-configuration-path))))
-    (loop for row in (lsp-file-diagnostics (namestring path) :wait-seconds wait-seconds)
+             (pathname-type path) (uiop:native-namestring (lsp-configuration-path)))))
+
+(defun path-diagnostics (path &key (wait-seconds 2) text)
+  "What the configured language servers report for the file PATH (as TEXT,
+when given, else as saved): a list of plists (:server :line :character
+:end-line :end-character :severity :message :source), 0-based.  Signals an
+error when no server is configured for its extension."
+  (require-lsp-servers path)
+  (with-lsp-text (path text)
+    (loop for row in (lsp-file-diagnostics (namestring (truename path)) :wait-seconds wait-seconds)
           append (lsp-diagnostic-rows row))))
+
+(defun scratch-buffer-diagnostics (name &key (wait-seconds 2))
+  "PATH-DIAGNOSTICS for scratch buffer NAME, as saved."
+  (path-diagnostics (require-scratch-buffer name) :wait-seconds wait-seconds))
 
 (defun json-path (object &rest keys)
   (dolist (key keys object)
@@ -258,13 +286,16 @@ REPORT) or (:SERVER NAME :ERROR CONDITION), into diagnostic plists."
                         :source (json-path item "source")))))
 
 (defun scratch-buffer-hover (name line character)
-  "The language server's hover text at LINE and CHARACTER (0-based) in
-scratch buffer NAME, or NIL."
-  (let ((path (require-scratch-buffer name)))
-    (unless (scratch-buffer-lsp-servers path)
-      (error "No language server is configured for .~a files." (pathname-type path)))
+  "PATH-HOVER for scratch buffer NAME, as saved."
+  (path-hover (require-scratch-buffer name) line character))
+
+(defun path-hover (path line character &key text)
+  "The language server's hover text at LINE and CHARACTER (0-based) in the
+file PATH (as TEXT, when given), or NIL."
+  (require-lsp-servers path)
+  (with-lsp-text (path text)
     (let ((texts nil))
-      (dolist (row (lsp-query-file (namestring path) "hover" :line line :character character))
+      (dolist (row (lsp-query-file (namestring (truename path)) "hover" :line line :character character))
         (let ((contents (json-path (getf row :result) "contents")))
           (labels ((collect (value)
                      (cond ((stringp value) (when (plusp (length value)) (push value texts)))
@@ -381,10 +412,13 @@ their trigger characters; and the errors of servers that failed."
     (values items (remove-duplicates triggers :test #'equal) (nreverse errors))))
 
 (defun scratch-buffer-lsp-start (name)
-  "Start scratch buffer NAME's language servers, as Lem's lsp-mode does when
-a file opens, and return their completion trigger characters."
-  (let ((path (require-scratch-buffer name))
-        (triggers nil))
+  "PATH-LSP-START for scratch buffer NAME."
+  (path-lsp-start (require-scratch-buffer name)))
+
+(defun path-lsp-start (path)
+  "Start the file PATH's language servers, as Lem's lsp-mode does when a
+file opens, and return their completion trigger characters."
+  (let ((triggers nil))
     (when (scratch-buffer-lsp-servers path)
       (dolist (row (cl-lsp:lsp-manager-map-file
                     (ensure-lsp-initialized) (truename path) (lsp-workspace-boundary (truename path))
@@ -454,19 +488,24 @@ flex matching, each with :match ranges of its display."
         (or (matching :prefix) (matching :flex)))))
 
 (defun scratch-buffer-complete (name text cursor)
-  "Completion at UTF-16 offset CURSOR of TEXT, scratch buffer NAME's current
-(saved) text: a plist like COMPLETE-INPUT's, offsets in UTF-16, plus
-:TRIGGERS (the server's trigger characters) and :MESSAGE (why the server
-could not help, when it could not)."
-  (let* ((path (require-scratch-buffer name))
-         (index (char-index-at-utf16 text cursor))
+  "PATH-COMPLETE for scratch buffer NAME, whose saved text is TEXT."
+  (path-complete (require-scratch-buffer name) text cursor))
+
+(defun path-complete (path text cursor &key unsaved)
+  "Completion at UTF-16 offset CURSOR of TEXT, the file PATH's text (saved,
+or with UNSAVED the editor's unsaved copy, which the server is then sent):
+a plist like COMPLETE-INPUT's, offsets in UTF-16, plus :TRIGGERS (the
+server's trigger characters) and :MESSAGE (why the server could not help,
+when it could not)."
+  (let* ((index (char-index-at-utf16 text cursor))
          (word-start (word-start-before text index))
          (prefix (subseq text word-start index))
          (position (lsp-position-of text index))
          (items nil) (triggers nil) (message nil) (source "lsp"))
-    (when (scratch-buffer-lsp-servers path)
+    (when (and (probe-file path) (scratch-buffer-lsp-servers path))
       (handler-case
-          (multiple-value-bind (found trigger-strings errors) (lsp-completion-items path (car position) (cdr position))
+          (multiple-value-bind (found trigger-strings errors)
+              (with-lsp-text (path (and unsaved text)) (lsp-completion-items path (car position) (cdr position)))
             (setf items found triggers trigger-strings)
             (when (and errors (null found))
               (setf message (format nil "The language server could not complete: ~{~a~^; ~}" errors))))

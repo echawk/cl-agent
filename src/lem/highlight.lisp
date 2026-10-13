@@ -78,13 +78,18 @@ that are not named."
 (defun lem-scan-runs (text mode)
   "Scan TEXT with MODE's syntax table: ((START END CLASS) ...), 0-based
 character offsets.  Editor thread."
-  (let ((buffer (lem-highlight-buffer))
-        (runs nil))
+  (let ((buffer (lem-highlight-buffer)))
     (lem:erase-buffer buffer)
     (lem:insert-string (lem:buffer-point buffer) text)
+    (lem-buffer-runs buffer :syntax-table (lem:mode-syntax-table mode))))
+
+(defun lem-buffer-runs (buffer &key syntax-table)
+  "Scan BUFFER (with SYNTAX-TABLE, else its own) and return its attribute
+runs, ((START END CLASS) ...) in 0-based character offsets.  Editor thread."
+  (let ((runs nil))
     (lem:with-point ((start (lem:buffer-start-point buffer))
                      (end (lem:buffer-end-point buffer)))
-      (lem:syntax-scan-region start end :syntax-table (lem:mode-syntax-table mode)))
+      (lem:syntax-scan-region start end :syntax-table syntax-table))
     (lem:with-point ((point (lem:buffer-start-point buffer))
                      (end (lem:buffer-end-point buffer)))
       (loop

@@ -167,11 +167,13 @@
      (:module "lem"
       :serial t
       :components ((:file "host")
-                   (:file "highlight")))
+                   (:file "highlight")
+                   (:file "files")))
      (:file "tasks")
      (:file "repl")
      (:file "completion")
      (:file "scratch")
+     (:file "editor")
      ;; Web UI slash commands need DEFINE-SLASH-COMMAND (repl.lisp) and
      ;; DEFINE-COMMAND-COMPLETER (completion.lisp), and the Lisp tab's REPL
      ;; uses completion.lisp, clspec.lisp and apropos.lisp, so they load late.
@@ -183,7 +185,8 @@
                    (:file "lisp-introspect")
                    (:file "lisp-routes")
                    (:file "session-routes")
-                   (:file "scratch-routes")))
+                   (:file "scratch-routes")
+                   (:file "file-routes")))
      (:file "tools/lisp-scratch-tool")
      (:file "tools/scratch-tool")
      (:file "tools/source-tool")
@@ -237,7 +240,8 @@
    (:file "test-session-tools")
    (:file "test-lem")
    (:file "test-scratch")
-   (:file "test-source-archive"))
+   (:file "test-source-archive")
+   (:file "test-editor-files"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

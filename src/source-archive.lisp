@@ -24,6 +24,10 @@ directory, its OCTETS (UTF-8) and its WRITE-DATE when archived."
 (defvar *source-archive* (make-hash-table :test 'equal)
   "Absolute native namestring -> ARCHIVED-SOURCE.")
 
+(defvar *source-disk-index* nil
+  "In an image without an archive: SOURCE-INDEX's entries for the loaded
+systems' files on disk, built when first wanted.")
+
 (defun source-archive-key (pathname)
   (ignore-errors (uiop:native-namestring (translate-logical-pathname (merge-pathnames pathname)))))
 
@@ -84,8 +88,6 @@ Run while the image is dumped."
 ;;; The archive in a built image; in a development image (nothing dumped
 ;;; yet), the same entries for the loaded systems' files on disk, with no
 ;;; octets: their text is read from disk when wanted.
-
-(defvar *source-disk-index* nil)
 
 (defun source-index ()
   (if (plusp (hash-table-count *source-archive*))

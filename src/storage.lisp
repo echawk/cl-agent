@@ -23,7 +23,9 @@ temporary sibling is removed.  :SUPERSEDE replaces a destination atomically;
 :ERROR preserves WITH-OPEN-FILE's useful refusal-to-overwrite behavior."
   (unless (member if-exists '(:supersede :error))
     (error "Atomic output supports only :SUPERSEDE or :ERROR, not ~s" if-exists))
-  (let* ((target (pathname pathname))
+  ;; Absolute first: RENAME-FILE merges a relative new name with the
+  ;; temporary file's own directory, so "src/x.lisp" would land in src/src/.
+  (let* ((target (uiop:ensure-absolute-pathname (pathname pathname) #'uiop:getcwd))
          (temporary (atomic-output-temporary-pathname target))
          (published-p nil))
     (ensure-directories-exist target)

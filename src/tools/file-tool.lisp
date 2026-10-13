@@ -71,6 +71,17 @@ and end positions express insertion without a separate operation."
       (error "range start must not come after range end"))
     (values start end)))
 
+(defun note-file-written (path)
+  "Tell :FILE-WRITTEN that the agent wrote PATH (open editor buffers on it
+are read again, lem/files.lisp)."
+  (run-hook :file-written (uiop:native-namestring (merge-pathnames path)) "agent"))
+
+(defun unsaved-editor-note (path)
+  "A note for the agent when the user has PATH open with unsaved changes."
+  (and (fboundp 'editor-buffer-unsaved-text)
+       (funcall 'editor-buffer-unsaved-text (uiop:native-namestring (merge-pathnames path)))
+       (format nil "~%~%[The user has this file open in the editor with unsaved changes; editor-files action=read shows them.]")))
+
 (define-tool read-file (args)
     (:description "Read a text file directly by explicit path. Use this instead of shell commands such as cat, sed, or head when you need file contents. Optional max_chars bounds large reads; if omitted, 30000 characters are returned. This tool reads files, not directories or globs."
      :effects '(:read-workspace)
@@ -84,11 +95,12 @@ and end positions express insertion without a separate operation."
       (error "read-file requires a non-empty string path"))
     (unless (and (integerp limit) (plusp limit))
       (error "read-file max_chars must be a positive integer"))
-    (let ((contents (uiop:read-file-string path)))
+    (let ((contents (uiop:read-file-string path))
+          (note (or (unsaved-editor-note path) "")))
       (if (> (length contents) limit)
-          (format nil "~a~%~%[Read truncated at ~d of ~d characters; call read-file again with a larger max_chars if needed.]"
-                  (subseq contents 0 limit) limit (length contents))
-          contents))))
+          (format nil "~a~%~%[Read truncated at ~d of ~d characters; call read-file again with a larger max_chars if needed.]~a"
+                  (subseq contents 0 limit) limit (length contents) note)
+          (concatenate 'string contents note)))))
 
 (define-tool write-file (args)
     (:description "Write text to an explicit file path, creating parent directories when needed and replacing an existing file's contents. Use this for ordinary project files; use write-scratch-file for a disposable config scratch artifact and write-extension only for a durable cl-agent capability that must load into the agent."
@@ -103,7 +115,8 @@ and end positions express insertion without a separate operation."
     (unless (stringp contents) (error "write-file contents must be a string"))
     (let ((before (and (probe-file path) (uiop:read-file-string path))))
       (write-string-atomically path contents)
-      (record-file-edit-receipt path before contents))
+      (record-file-edit-receipt path before contents)
+      (note-file-written path))
     (format nil "Wrote ~d character~:p to ~a." (length contents) path)))
 
 (define-tool read-file-range (args)
@@ -159,6 +172,7 @@ and end positions express insertion without a separate operation."
         (record-file-edit-receipt
          resolved contents
          (concatenate 'string (subseq contents 0 start) replacement (subseq contents end)))
+        (note-file-written resolved)
         (format nil "Edited ~a at ~d:~d through ~d:~d; replaced ~d character~:p with ~d character~:p."
                 path (jget args "start_line") (jget args "start_column")
                 (jget args "end_line") (jget args "end_column")

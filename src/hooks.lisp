@@ -111,7 +111,26 @@ served. Rewrite :html to inject markup; see ui/web/static/EXTENDING.md.")
 CLAgent.state.")
     (:web-ui-asset-changed . "Notify hook, called with one argument: the
 path (e.g. \"theme.css\") of a web UI asset that was written, reset, or
-changed on disk while a web page was being served."))
+changed on disk while a web page was being served.")
+    (:working-directory-changed . "Notify hook, called with the old and the
+new directory (pathnames) when SET-WORKING-DIRECTORY (/cd, the Code tab, the
+set-working-directory tool) changes the directory the shell, file and LSP
+tools work in.")
+    (:file-opened . "Notify hook, called with the file's namestring when the
+Code tab first opens a file in the hosted Lem (lem/files.lisp). Lem's own
+*FIND-FILE-HOOK* and the mode's hooks have run by then.")
+    (:before-file-save . "Chain hook. Argument/return is a plist (:path
+NAMESTRING :text STRING) for a file about to be saved from the Code tab
+(C-x C-s). Rewrite :text (a formatter, a license header) or signal an error
+to refuse the save. Lem's own before-save-hook still runs after.")
+    (:after-file-save . "Notify hook, called with the namestring of a file the
+Code tab just saved through Lem.")
+    (:file-written . "Notify hook, called with a file's namestring and who
+wrote it (\"user\" from the Code tab, \"agent\" from write-file /
+edit-file) after it changes on disk. Open editor buffers on it are read
+again (or warned, when they have unsaved changes).")
+    (:file-closed . "Notify hook, called with the namestring of a file whose
+editor buffer was closed."))
   "Documentation table of every hook point the core agent fires.
 This is read by the `list-hooks` introspection and by /hooks in the
 REPL; it is not itself part of the dispatch mechanism (see
