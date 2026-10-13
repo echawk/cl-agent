@@ -21,7 +21,8 @@
 ;;;;   POST /api/files/complete-code       {path, text, cursor}: Tab, the unsaved text's
 ;;;;   POST /api/files/diagnostics         {path, text?}
 ;;;;   POST /api/files/hover               {path, text?, line, character}
-;;;;   GET  /api/lem/display               {url}: Lem's own view of itself (lem/display.lisp)
+;;;;   GET  /api/lem/display?font=&size=   {url}: Lem's own view of itself (lem/display.lisp)
+;;;;   POST /api/lem/theme                 {mode, colors}: Lem in the page's colours
 ;;;;   POST /api/lem/visit                 {path, line?}: show a file in Lem's window
 ;;;;   POST /api/lem/run                   {command}: run a Lem command as M-x would,
 ;;;;                                       its prompts answered in the Lem view
@@ -146,8 +147,16 @@
 
 (define-web-route lem-display (:path "/api/lem/display")
   (with-file-errors
-    (jobj "url" (lem-display-url :size (or (ignore-errors (parse-integer (web-param "size"))) 14))
+    (jobj "url" (lem-display-url :font (let ((font (web-param "font")))
+                                         (if (and font (plusp (length font))) font "Monospace"))
+                                 :size (or (ignore-errors (parse-integer (web-param "size"))) 14))
           "connected" (and (lem-display-connected-p) t))))
+
+(define-web-route lem-theme (:method :post :path "/api/lem/theme")
+  (let* ((body (web-json-body)) (colors (jget body "colors")))
+    (with-file-errors
+      (unless (hash-table-p colors) (error "Give the page's colours."))
+      (jobj "theme" (lem-apply-page-theme (jget body "mode") colors)))))
 
 (define-web-route lem-visit (:method :post :path "/api/lem/visit")
   (let ((body (web-json-body)))

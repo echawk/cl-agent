@@ -410,6 +410,12 @@ The protocol to implement is lem-server's: `make-view`/`resize-view`/`move-view`
 - **Visiting files.** `POST /api/lem/visit` shows a file in Lem's window. It's used by the Files pane, the agent's `open-in-editor`, and switching to the Lem view.
 - **Running commands.** `POST /api/lem/run` queues a command for the person at the view (the toolbar's Find file and Buffers). It is refused when no view is open, because the command's prompts would then wait forever.
 - **Fallback.** "Simple editor" switches to cl-agent's lightweight editor (§4.6's text sync), which still edits the same Lem buffers.
+- **Looking like the page.**
+  - Colours: the page reads its own theme tokens (`theme.css`, plus any customisations) and posts them to `POST /api/lem/theme`. That builds a Lem colour theme, `cl-agent`, covering the base16 slots, syntax, modeline, region, popups and isearch. It is loaded without saving it to the user's Lem config, and sent again whenever the theme changes.
+  - Tab bar: Lem's tab bar is its own HTML with fixed colours, so `lem/tabbar::generate-html` is wrapped to take the theme's colours while `cl-agent` is the theme.
+  - Font: the page's font and size are passed in the URL. The served client loads the font before measuring it and draws glyphs at their real width. Before, the cell was the width rounded down and every glyph was squeezed into it.
+  - Chrome: mode lines, borders and popups are square and ruled like the page, using colours passed as `--cl-*` variables.
+  - A new browser connection marks every window dirty, so Lem's line cache cannot skip drawing it.
 
 ## 10. Lem commands for the agent (implemented)
 

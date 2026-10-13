@@ -9,7 +9,7 @@
 
 import {
   state, on, el, api, panels, registerPanel, copyText, fmtClock, storage, store, setTheme, theme,
-  frameThrottle, boot,
+  frameThrottle, boot, emit,
 } from './core.js';
 import { insert } from './composer.js';
 
@@ -291,6 +291,7 @@ function renderUI(target) {
     onclick: () => {
       document.documentElement.style.setProperty('--font-size', size);
       try { localStorage.setItem('cl-agent.font-size', size); } catch (err) { /* ignore */ }
+      emit('font-size', size);
       renderUI(target);
     },
   }, size.replace('px', ''));

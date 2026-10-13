@@ -28,7 +28,7 @@
 //             (open-in-editor), and its writes show up here: an unchanged
 //             buffer reloads, one with unsaved changes asks which to keep
 
-import { on, el, api, state, registerView, registerUICommand, storage, store } from './core.js';
+import { on, el, api, state, registerView, registerUICommand, storage, store, theme } from './core.js';
 import { createLispEditor } from './lisp-editor.js';
 import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
 import { insert as insertInComposer } from './composer.js';
@@ -131,17 +131,61 @@ async function fileAction(path, body) {
 
 // ---------- the Lem view ----------
 
+// Lem looks like the page: its colours are a Lem theme made from the
+// page's theme tokens (lem/display.lisp), sent again whenever the theme
+// changes; its font and size are the page's; its chrome takes a few
+// colours as --cl-* variables.
+const LEM_TOKENS = ['paper', 'paper-2', 'paper-3', 'ink', 'ink-2', 'ink-3', 'rule', 'rule-soft', 'select', 'code-inline',
+  'red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet', 'pink', 'on-yellow', 'on-pink', 'title-bg', 'title-fg',
+  'shadow-color', 'syn-comment', 'syn-string', 'syn-number', 'syn-keyword', 'syn-operator', 'syn-def', 'syn-constant', 'syn-special'];
+
+function pageColors() {
+  const probe = el('span', { hidden: true });
+  document.body.append(probe);
+  const colors = {};
+  for (const name of LEM_TOKENS) {
+    probe.style.color = '';
+    probe.style.color = `var(--${name})`;
+    const rgb = getComputedStyle(probe).color.match(/[\d.]+/g);
+    if (rgb && rgb.length >= 3) colors[name] = '#' + rgb.slice(0, 3).map(v => Math.round(+v).toString(16).padStart(2, '0')).join('');
+  }
+  probe.remove();
+  return colors;
+}
+
+function lemChromeVars(colors) {
+  return { paper: colors.paper, rule: colors.rule, 'rule-soft': colors['rule-soft'], shadow: colors['shadow-color'] };
+}
+
+function lemTheme() {
+  const colors = pageColors();
+  view.lemFrame?.contentWindow?.postMessage({ type: 'cl-agent-style', vars: lemChromeVars(colors) }, '*');
+  return api('/api/lem/theme', { method: 'POST', body: { mode: theme(), colors } }).catch(err => message(`Lem theme: ${err.message}`));
+}
+
+async function lemFrameURL() {
+  const style = getComputedStyle(document.documentElement);
+  const font = style.getPropertyValue('--font').trim() || 'monospace';
+  const size = Math.round(parseFloat(style.getPropertyValue('--font-size')) || 14);
+  const { url } = await api('/api/lem/display', { params: { font, size } });
+  const chrome = Object.entries(lemChromeVars(pageColors())).filter(([, v]) => v);
+  return url + '&' + new URLSearchParams(chrome);
+}
+
 async function ensureLemFrame() {
   const box = $('.code-lem');
   if (!box || view.lemFrame) return view.lemFrame;
-  const size = Math.round(parseFloat(getComputedStyle(document.documentElement).fontSize) || 14);
   try {
-    const { url } = await api('/api/lem/display', { params: { size } });
-    view.lemFrame = el('iframe', { class: 'code-lem-frame', src: url, title: 'Lem', allow: 'clipboard-read; clipboard-write' });
+    await lemTheme();
+    view.lemFrame = el('iframe', { class: 'code-lem-frame', src: await lemFrameURL(), title: 'Lem', allow: 'clipboard-read; clipboard-write' });
     box.querySelector('.code-lem-host').replaceChildren(view.lemFrame);
   } catch (err) { message(`Lem view unavailable: ${err.message}`); }
   return view.lemFrame;
 }
+
+on('theme', () => { if (view.lemFrame) lemTheme(); });
+// A new size means new cells: the client measures its font once.
+on('font-size', async () => { if (view.lemFrame) view.lemFrame.src = await lemFrameURL(); });
 
 function focusLem() { setTimeout(() => { view.lemFrame?.focus(); view.lemFrame?.contentWindow?.focus(); }, 0); }
 

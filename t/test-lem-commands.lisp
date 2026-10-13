@@ -85,7 +85,13 @@
   (check-equal (nth-value 1 (lem-display-request "/")) 200)
   (let ((script (lem-display-request "/assets/index.js")))
     (check (search "addEventListener(\"blur\",i=>{})" script) "it no longer pulls focus back")
-    (check (search "get(\"font\")" script) "it takes the page's font"))
+    (check (search "get(\"font\")" script) "it takes the page's font")
+    (check (search "document.fonts.load(f)" script) "and loads it before measuring")
+    (check (search "return[i.width," script) "glyphs at their own width, not squeezed"))
+  (check (null (patch-lem-client)) "every patch still finds its place in Lem's client")
+  (let ((page (lem-display-request "/")))
+    (check (search "IBM+Plex+Mono" page) "the page's font")
+    (check (search "--cl-rule" page) "chrome in the page's style"))
   (check-equal (nth-value 1 (lem-display-request "/local/etc/hosts")) 404 "no file from disk")
   (check-equal (nth-value 1 (lem-display-request "/" '("Host" . "evil.example"))) 403 "no DNS rebinding")
   (check-equal (websocket-upgrade-status "http://evil.example") 403 "no other web page drives Lem")
@@ -102,3 +108,42 @@
       (unless (lem-display-connected-p)
         (check-equal (nth-value 1 (web-post frontend "/api/lem/run" :json (jobj "command" "find-file"))) 400
                      "no view open: its prompt would wait for good")))))
+
+(deftest lem-takes-the-pages-colours ()
+  (let ((colors (make-hash-table :test #'equal)))
+    (setf (gethash "paper" colors) "#14122a" (gethash "ink" colors) "#eeeaff"
+          (gethash "select" colors) "#5b1d57" (gethash "syn-keyword" colors) "#b56cff"
+          (gethash "title-bg" colors) "#2b1f63" (gethash "blue" colors) "#4f8dff"
+          (gethash "red" colors) "url(evil)")
+    (let ((specs (lem-page-theme-specs "dark" colors)))
+      (check-equal (assoc :background specs) '(:background "#14122a"))
+      (check-equal (assoc :base0d specs) '(:base0d "#4f8dff") "base16 slots, for Lem's own attributes")
+      (check-equal (assoc :base08 specs) '(:base08 nil) "only #rrggbb colours are taken")
+      (check-equal (rest (assoc 'lem:syntax-keyword-attribute specs)) '(:foreground "#b56cff")))
+    (unwind-protect
+         (progn
+           (with-test-web-frontend (frontend)
+             (check-equal (gethash "theme" (json-decode (web-post frontend "/api/lem/theme"
+                                                                  :json (jobj "mode" "dark" "colors" colors))))
+                          "cl-agent"))
+           (lem-call (lambda ()
+                       (check-equal (lem:attribute-background (lem:ensure-attribute 'lem:region)) "#5b1d57"
+                                    "the region is the page's selection")
+                       (check-equal (lem:attribute-foreground (lem:ensure-attribute 'lem:syntax-keyword-attribute))
+                                    "#b56cff")
+                       (check (null (lem:config :color-theme)) "the user's Lem config is left alone"))))
+      (lem-call (lambda () (lem:load-theme "lem-default" nil))))))
+
+(deftest lems-tab-bar-takes-the-pages-colours ()
+  (let ((colors (make-hash-table :test #'equal)))
+    (setf (gethash "paper" colors) "#fcf9f0" (gethash "paper-2" colors) "#f2ede0" (gethash "ink" colors) "#1c1a33")
+    (unwind-protect
+         (progn
+           (lem-apply-page-theme "light" colors)
+           (let ((html (lem-call (lambda () (lem/tabbar::generate-html)))))
+             (check (search "--tab-bg: #f2ede0" html) "the theme's colours")
+             (check (search "IBM Plex Mono" html) "the page's font")
+             (check (not (search "#181818" html)) "not Lem's own dark tabs")))
+      (lem-call (lambda () (lem:load-theme "lem-default" nil))))
+    (check (search "#181818" (lem-call (lambda () (lem/tabbar::generate-html))))
+           "another theme's tab bar is left as Lem made it")))
