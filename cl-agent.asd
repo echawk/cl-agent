@@ -32,7 +32,15 @@
                "clingon" "3bmd" "3bmd-ext-tables"           ; CLI parsing; Markdown web rendering
                "tuition"                                     ; TUI frontend, src/ui/tui.lisp
                "hunchentoot"                                 ; web frontend, src/ui/web.lisp
-               "slynk" "slynk/arglists")                     ; SLY's completion and arglists, lisp-introspect.lisp
+               "slynk" "slynk/arglists"                      ; SLY's completion and arglists, lisp-introspect.lisp
+               ;; Lem's editor core and language modes, hosted without a display (src/lem/)
+               "lem/core" "lem-lisp-mode" "lem-markdown-mode" "lem-c-mode" "lem-java-mode"
+               "lem-python-mode" "lem-js-mode" "lem-typescript-mode" "lem-ruby-mode" "lem-rust-mode"
+               "lem-go-mode" "lem-json-mode" "lem-yaml-mode" "lem-toml-mode" "lem-xml-mode"
+               "lem-html-mode" "lem-css-mode" "lem-sql-mode" "lem-posix-shell-mode" "lem-makefile-mode"
+               "lem-patch-mode" "lem-haskell-mode" "lem-ocaml-mode" "lem-elixir-mode" "lem-erlang-mode"
+               "lem-clojure-mode" "lem-elisp-mode" "lem-lua-mode" "lem-perl-mode" "lem-swift-mode"
+               "lem-kotlin-mode" "lem-scala-mode" "lem-dart-mode" "lem-zig-mode" "lem-nix-mode")
   :build-operation "program-op"
   :build-pathname "bin/cl-agent"
   :entry-point "cl-agent:main"
@@ -154,6 +162,10 @@
        (:file "debug-tool")
        (:file "generations-tool")
        (:file "web-ui-tool")))
+     (:module "lem"
+      :serial t
+      :components ((:file "host")
+                   (:file "highlight")))
      (:file "tasks")
      (:file "repl")
      (:file "completion")
@@ -216,7 +228,8 @@
    (:file "test-lisp-repl")
    (:file "test-web-session")
    (:file "test-context-window")
-   (:file "test-session-tools"))
+   (:file "test-session-tools")
+   (:file "test-lem"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

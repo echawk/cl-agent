@@ -720,6 +720,22 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .sx-operator { color: var(--syn-operator); font-weight: 700; }
 .sx-def { color: var(--syn-def); font-weight: 700; }
 .sx-special { color: var(--syn-special); }
+/* Classes from Lem's syntax attributes (lem/highlight.lisp): code blocks
+   and language scratch buffers. */
+.sx-builtin { color: var(--syn-operator); }
+.sx-type { color: var(--syn-constant); font-weight: 600; }
+.sx-function-name { color: var(--syn-def); font-weight: 700; }
+.sx-variable { color: var(--syn-special); }
+.sx-warning { color: var(--syn-special); text-decoration: underline wavy; }
+.sx-header1, .sx-header2, .sx-header3, .sx-header4, .sx-header5, .sx-header6 { color: var(--syn-def); font-weight: 700; }
+.sx-bold { font-weight: 700; }
+.sx-italic { font-style: italic; }
+.sx-underline { text-decoration: underline; }
+.sx-link { color: var(--syn-operator); text-decoration: underline; }
+.sx-list, .sx-task-list { color: var(--syn-keyword); font-weight: 700; }
+.sx-inline-code, .sx-code-block { color: var(--syn-string); }
+.sx-blockquote, .sx-metadata { color: var(--syn-comment); }
+.sx-table { color: var(--syn-constant); }
 .sx-paren { font-weight: 700; }
 .sx-p0 { color: var(--paren-0); }
 .sx-p1 { color: var(--paren-1); }

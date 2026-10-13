@@ -19,9 +19,10 @@ const jump = () => document.getElementById('jump');
 // ---------- sanitizing server-rendered Markdown ----------
 
 const ALLOWED_TAGS = new Set(['A', 'BLOCKQUOTE', 'BR', 'CODE', 'DEL', 'EM', 'H1', 'H2', 'H3', 'H4', 'H5',
-  'H6', 'HR', 'LI', 'OL', 'P', 'PRE', 'S', 'STRONG', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL']);
+  'H6', 'HR', 'LI', 'OL', 'P', 'PRE', 'S', 'SPAN', 'STRONG', 'TABLE', 'TBODY', 'TD', 'TH', 'THEAD', 'TR', 'UL']);
 
-/** Keep only allowlisted tags, safe link targets and code language classes. */
+/** Keep only allowlisted tags, safe link targets, code language classes and
+ *  the sx-* token classes of code Lem highlighted (lem/highlight.lisp). */
 export function sanitize(html) {
   const box = document.createElement('template');
   box.innerHTML = html;
@@ -33,7 +34,8 @@ export function sanitize(html) {
     for (const attr of [...node.attributes]) {
       const keepLink = node.tagName === 'A' && attr.name === 'href' && /^(https?:|mailto:|#)/i.test(attr.value);
       const keepLanguage = node.tagName === 'CODE' && attr.name === 'class' && /^language-[\w+#.-]+$/.test(attr.value);
-      if (!keepLink && !keepLanguage) node.removeAttribute(attr.name);
+      const keepToken = node.tagName === 'SPAN' && attr.name === 'class' && /^sx-[a-z0-9-]+$/.test(attr.value);
+      if (!keepLink && !keepLanguage && !keepToken) node.removeAttribute(attr.name);
     }
     if (node.tagName === 'A') { node.target = '_blank'; node.rel = 'noopener noreferrer'; }
   }

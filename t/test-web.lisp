@@ -469,15 +469,15 @@
     (check (search "<li>second</li>" list-html))
     (check (search "<pre" code-html))
     (check (search "language-lisp" code-html))
-    (check (search "(defun hello () 42)" code-html))
+    (check (search "(defun hello () 42)" (html-text code-html)))
     (check (search "<pre" inline-fence-html))
-    (check (search "(let ((answer 42)) answer)" inline-fence-html))))
+    (check (search "(let ((answer 42)) answer)" (html-text inline-fence-html)))))
 
 (deftest web-frontend-does-not-leak-code-block-markers-between-prose ()
   (let ((html (web-markdown-html
                (format nil "An excerpt:~%```lisp~%(defun answer () 42)~%```~%It returns the answer."))))
     (check (search "<pre" html))
-    (check (search "(defun answer () 42)" html))
+    (check (search "(defun answer () 42)" (html-text html)))
     (check (search "It returns the answer" html))
     (check (not (search "CLAGENT-CODE-BLOCK" html)))))
 

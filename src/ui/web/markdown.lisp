@@ -94,6 +94,15 @@ without attempting to reinterpret ordinary inline backticks."
                              (t (string character)))
                            out))))
 
+(defun fenced-code-html (language code)
+  "A fenced block as <pre><code>, highlighted by Lem's mode for LANGUAGE
+(lem/highlight.lisp) when Lem knows it, plain text otherwise."
+  (let ((name (first (uiop:split-string (string-trim " " language) :separator " "))))
+    (format nil "<pre><code~@[ class=\"language-~a\"~]>~a</code></pre>"
+            (and (plusp (length language)) (html-escape language))
+            (or (and (plusp (length name)) (lem-highlight-html code name))
+                (html-escape code)))))
+
 (defun render-fenced-code-blocks (text)
   "Turn valid triple-backtick blocks into safe raw HTML before 3BMD parses.
 
@@ -114,9 +123,7 @@ Markdown to 3BMD."
                           (closing-line-end (or (position #\Newline text :start (+ closing 4))
                                                 (length text))))
                      (write-string text out :start cursor :end opening)
-                     (format out "<pre><code~@[ class=\"language-~a\"~]>~a</code></pre>"
-                             (and (plusp (length language)) (html-escape language))
-                             (html-escape code))
+                     (write-string (fenced-code-html language code) out)
                      (setf cursor (if (< closing-line-end (length text))
                                       (1+ closing-line-end) closing-line-end)))
                    (progn
@@ -147,9 +154,7 @@ Markers prevent 3BMD from parsing either backticks or raw PRE markup."
                            (closing-line-end (or (position #\Newline text :start (+ closing 4))
                                                  (length text)))
                            (marker (format nil "CLAGENT-CODE-BLOCK-~d" (incf number)))
-                           (html (format nil "<pre><code~@[ class=\"language-~a\"~]>~a</code></pre>"
-                                         (and (plusp (length language)) (html-escape language))
-                                         (html-escape code))))
+                           (html (fenced-code-html language code)))
                       ;; Keep the marker in its own Markdown paragraph.  If
                       ;; prose follows the closing fence, merely replacing the
                       ;; fence with MARKER joins them into one <p>; the exact

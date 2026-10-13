@@ -60,6 +60,9 @@ DESCRIPTION only needs to say what's being checked, not what went wrong."
 thread sees, web request handlers and subagent workers included -- set to
 the run's own directory, and restore it afterwards.
 
+LEM_HOME points into it too, and the hosted Lem is stopped before and after,
+so it never reads or writes the user's own Lem directory.
+
 The directory is CL_AGENT_CONFIG_DIR (`make test` points it at a fresh
 temporary directory and removes it afterwards), else a new temporary
 directory removed here.  Never the user's ~/.config/cl-agent/: tests create
@@ -75,11 +78,22 @@ sessions, tasks and extensions by the hundred."
       (error "Refusing to run tests with CL_AGENT_CONFIG_DIR=~a: it is the user's own ~
               cl-agent directory.  Point it at a temporary directory." root))
     (ensure-directories-exist root)
-    (unwind-protect
-         (progn (setf *config-directory* root)
-                (funcall function root))
-      (setf *config-directory* saved)
-      (when own (ignore-errors (uiop:delete-directory-tree root :validate t))))))
+    ;; The hosted Lem (src/lem/) reads its init file and writes config.lisp
+    ;; and history under LEM_HOME: never the user's own Lem directory.
+    (let ((saved-lem-home (uiop:getenv "LEM_HOME"))
+          (lem-home (merge-pathnames "lem-home/" root)))
+      (ensure-directories-exist lem-home)
+      (unwind-protect
+           (progn (setf *config-directory* root)
+                  (lem-host-stop)
+                  (setf (uiop:getenv "LEM_HOME") (uiop:native-namestring lem-home))
+                  (funcall function root))
+        (lem-host-stop)
+        (if saved-lem-home
+            (setf (uiop:getenv "LEM_HOME") saved-lem-home)
+            (sb-posix:unsetenv "LEM_HOME"))
+        (setf *config-directory* saved)
+        (when own (ignore-errors (uiop:delete-directory-tree root :validate t)))))))
 
 (defmacro with-test-state ((&optional (root (gensym "ROOT"))) &body body)
   "Run BODY with every thread's cl-agent state under a temporary directory
