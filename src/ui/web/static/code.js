@@ -67,7 +67,10 @@ const view = {
   stale: true,
   lemMode: storage('code-lem', true),   // the editor is Lem itself
   lemFrame: null,
-  lemFile: null,
+  lemInstance: null,      // the server instance the frame's display belongs to
+  lemPending: null,
+  lemShown: 0,            // "lem-buffer" events seen: a visit's late answer is stale after one
+  lemFile: null,          // what Lem's window shows: {path, name, mode, modified} (path null: not a file)
 };
 
 const $ = sel => view.node?.querySelector(sel);
@@ -175,14 +178,72 @@ async function lemFrameURL() {
 
 async function ensureLemFrame() {
   const box = $('.code-lem');
-  if (!box || view.lemFrame) return view.lemFrame;
-  try {
-    await lemTheme();
-    view.lemFrame = el('iframe', { class: 'code-lem-frame', src: await lemFrameURL(), title: 'Lem', allow: 'clipboard-read; clipboard-write' });
-    box.querySelector('.code-lem-host').replaceChildren(view.lemFrame);
-  } catch (err) { message(`Lem view unavailable: ${err.message}`); }
-  return view.lemFrame;
+  if (!box) return null;
+  // A restarted server has a new Lem display (another port): a frame made
+  // for the old one would stay blank.
+  if (view.lemFrame && view.lemInstance && state.instance && view.lemInstance !== state.instance) dropLemFrame();
+  if (view.lemFrame) return view.lemFrame;
+  if (!view.lemPending) {
+    view.lemPending = (async () => {
+      try {
+        await lemTheme();
+        const frame = el('iframe', { class: 'code-lem-frame', src: await lemFrameURL(), title: 'Lem', allow: 'clipboard-read; clipboard-write' });
+        view.lemFrame = frame;
+        view.lemInstance = state.instance;
+        const host = box.querySelector('.code-lem-host');
+        // Lem's client loads its code and font before it draws: until it
+        // has logged in ("lem-display"), say so rather than show nothing.
+        host.replaceChildren(frame, el('div', { class: 'code-lem-starting' }, 'Starting Lem…'));
+        host.classList.add('starting');
+        clearTimeout(view.lemStartTimer);
+        view.lemStartTimer = setTimeout(() => host.classList.remove('starting'), 30000);
+        watchLemSize(host);
+      } catch (err) {
+        message(`Lem view unavailable: ${err.message}`);
+        // Lem may still be starting: try again while its view is wanted.
+        clearTimeout(view.lemRetry);
+        view.lemRetry = setTimeout(() => { if (view.lemMode && view.node && !view.lemFrame) ensureLemFrame(); }, 3000);
+      }
+      view.lemPending = null;
+      return view.lemFrame;
+    })();
+  }
+  return view.lemPending;
 }
+
+function dropLemFrame() {
+  view.lemFrame?.remove();
+  view.lemFrame = null;
+  view.lemInstance = null;
+}
+
+// Lem's client measures itself on its window's resize event, which an
+// iframe does not always get when only the page's layout changes (the side
+// panes, the Code tab shown again): tell it, once the size settles.  A
+// hidden frame (0x0) is not measured at all.
+let lemResizeTimer = 0;
+function lemRemeasure() {
+  clearTimeout(lemResizeTimer);
+  lemResizeTimer = setTimeout(() => {
+    const frame = view.lemFrame;
+    if (!frame || !frame.offsetWidth || !frame.offsetHeight) return;
+    frame.contentWindow?.postMessage({ type: 'cl-agent-resize' }, '*');
+  }, 120);
+}
+
+let lemObserver = null;
+function watchLemSize(host) {
+  lemObserver?.disconnect();
+  if (typeof ResizeObserver === 'undefined') return;
+  lemObserver = new ResizeObserver(lemRemeasure);
+  lemObserver.observe(host);
+}
+
+on('state', () => {
+  if (!view.lemFrame) return;
+  if (!view.lemInstance) { view.lemInstance = state.instance; return; }   // made before the first state
+  if (state.instance && view.lemInstance !== state.instance) { dropLemFrame(); if (view.node && view.lemMode) ensureLemFrame(); }
+});
 
 on('theme', () => { if (view.lemFrame) lemTheme(); });
 // A new size means new cells: the client measures its font once.
@@ -193,16 +254,27 @@ function focusLem() { setTimeout(() => { view.lemFrame?.focus(); view.lemFrame?.
 async function lemVisit(path, line) {
   await ensureLemFrame();
   try {
+    const shown = view.lemShown;
     const json = await api('/api/lem/visit', { method: 'POST', body: { path, line: line || undefined } });
-    view.lemFile = json;
-    view.doc = { ...json, kind: 'file', key: json.path };
-    view.current = { kind: 'file', key: json.path };
-    store('code-current', view.current);
-    renderLemHead();
-    renderSide();
+    // Lem may have moved on meanwhile (C-x b, another visit): it says so.
+    if (view.lemShown === shown) noteLemShown(json);
     loadOpenFiles();
     focusLem();
   } catch (err) { message(err.message); }
+}
+
+/** Lem's window shows JSON's buffer: it is the current one here. */
+function noteLemShown(json) {
+  view.lemFile = json;
+  if (json.path) {
+    // A scratch buffer is a file too: it stays a scratch buffer here.
+    const scratch = view.buffers.find(b => b.path === json.path);
+    view.doc = scratch ? { ...json, kind: 'scratch', key: scratch.name } : { ...json, kind: 'file', key: json.path };
+    view.current = { kind: view.doc.kind, key: view.doc.key };
+    store('code-current', view.current);
+  }
+  renderLemHead();
+  renderSide();
 }
 
 async function lemRun(command) {
@@ -210,11 +282,29 @@ async function lemRun(command) {
   try { await api('/api/lem/run', { method: 'POST', body: { command } }); focusLem(); } catch (err) { message(err.message); }
 }
 
-function setLemMode(on) {
+async function setLemMode(on) {
+  if (on === view.lemMode) return;
+  // Into Lem, what the simple editor holds goes too: a file's text is in its
+  // Lem buffer already (synced as you type) once the last edit is; a
+  // scratch buffer is saved, so Lem reads it as it is.  Out of Lem, its
+  // current file (view.current, kept by "lem-buffer") opens here.
+  if (on && view.doc?.kind === 'scratch' && view.dirty) await saveScratch(true);
+  else if (on && isFile()) await syncFile();
+  if (on) view.editor = null;
   view.lemMode = on;
   store('code-lem', on);
   renderEditor();
-  if (on) { ensureLemFrame(); focusLem(); } else if (view.current) openDoc(view.current.kind, view.current.key);
+  renderToolbar();
+  if (view.current) await openDoc(view.current.kind, view.current.key);
+  else if (on) { await ensureLemFrame(); focusLem(); }
+}
+
+function renderToolbar() {
+  for (const button of view.node?.querySelectorAll('.code-editor-switch button') || []) {
+    const active = (button.dataset.mode === 'lem') === view.lemMode;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
 }
 
 function renderLemHead() {
@@ -223,7 +313,10 @@ function renderLemHead() {
   const f = view.lemFile;
   head.replaceChildren(
     el('span', { class: 'chip code-lang' }, 'Lem'),
-    el('span', { class: 'code-lem-file', title: f?.path || '' }, f ? short(f.path) : 'C-x C-f visits a file · M-x runs a command'),
+    el('span', { class: 'code-lem-file', title: f?.path || '' },
+      // Its direction is rtl, so a long path loses its start, not its name;
+      // the marks keep the path itself left to right.
+      f ? `\u200e${f.path ? short(f.path) : f.name}\u200e${f.modified ? ' ●' : ''}` : 'C-x C-f visits a file · M-x runs a command'),
     el('span', { class: 'spacer' }),
     el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Find a file in Lem (C-x C-f)', onclick: () => lemRun('find-file') }, 'C-x C-f'),
     el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Run a Lem command (M-x)', onclick: () => lemRun('execute-command') }, 'M-x'),
@@ -231,8 +324,7 @@ function renderLemHead() {
       class: 'btn btn-small btn-primary', type: 'button', 'data-doc': 'Ask the agent about this file',
       onclick: () => insertInComposer(f ? `Help me with ${short(f.path)} (open in the Lem editor).` : 'Help me with the file open in the Lem editor.'),
     }, 'Ask the agent'),
-    copilotBox(focusEditor),
-    el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Use the lightweight editor instead of Lem', onclick: () => setLemMode(false) }, 'Simple editor'));
+    copilotBox(focusEditor));
 }
 
 function focusEditor() { if (view.lemMode) focusLem(); else view.editor?.focus(); }
@@ -280,6 +372,7 @@ async function saveScratch(now = false) {
   clearTimeout(view.saveTimer);
   if (!view.doc || isFile()) return;
   if (!now) { view.saveTimer = setTimeout(() => saveScratch(true), 700); return; }
+  if (!editorOwnsDoc()) return;
   const { name } = view.doc;
   const text = view.editor.value;
   if (text === view.saved) { view.dirty = false; renderChrome(); return; }
@@ -301,8 +394,14 @@ async function saveScratch(now = false) {
 
 // A file's text goes into its Lem buffer (not to disk); the reply is its
 // highlighting by the buffer's own mode.
-async function syncFile(text = view.editor?.value) {
-  if (!isFile() || text === undefined) return null;
+/** The simple editor holds the current document (it was made for it): only
+then may its text go anywhere.  Lem moves on by itself (C-x b), and an
+editor made for one file must never write another. */
+const editorOwnsDoc = () => !!(view.editor && view.doc && view.editor.docKey === view.doc.key && view.editor.docKind === view.doc.kind);
+
+async function syncFile(text) {
+  if (!isFile() || !editorOwnsDoc()) return null;
+  if (text === undefined) text = view.editor.value;
   const { path } = view.doc;
   try {
     const result = await api('/api/files/update', { method: 'POST', body: { path, text, base: view.doc.version, client } });
@@ -879,6 +978,13 @@ function renderEditor() {
   if (!pane) return;
   pane.hidden = view.lemMode;
   if (view.lemMode) { renderLemHead(); return; }
+  // A document known only by name (what Lem showed) has no text here yet:
+  // an editor made now would hold "" -- and sync it.  OPENDOC reads it.
+  if (view.doc && typeof view.doc.text !== 'string') {
+    view.editor = null;
+    pane.replaceChildren(el('div', { class: 'session-preview-empty code-welcome' }, `Opening ${view.doc.name || ''}…`));
+    return;
+  }
   if (!view.doc) {
     view.editor = null;
     pane.replaceChildren(el('div', { class: 'session-preview-empty code-welcome' },
@@ -919,19 +1025,18 @@ function renderEditor() {
         }, 'btn-primary'),
         el('span', { class: 'spacer' }),
         copilotBox(focusEditor),
-        el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Edit in Lem itself', onclick: () => setLemMode(true) }, 'Lem'),
         file
           ? el('button', { class: 'btn btn-small code-close', type: 'button', 'data-doc': 'Close this buffer (C-x k)', onclick: closeDoc }, 'Close')
           : el('button', { class: 'btn btn-small btn-danger code-delete', type: 'button', 'data-doc': 'Delete this buffer (press twice)', onclick: removeScratch }, 'Delete'))),
     el('div', { class: 'scratch-conflict code-conflict', hidden: true }),
     host,
     el('div', { class: 'code-diagnostics', hidden: true }));
-  view.editor = createLispEditor(host, {
+  const editor = view.editor = createLispEditor(host, {
     className: 'code-editor',
     value: d.text,
     doc: `${language} · Tab complete · C-c Tab copilot · C-x C-s save · C-x C-f find file · C-x b switch · C-c C-c check · C-c C-d d hover · M-/ expand`,
     highlight: file
-      ? async text => (await syncFile(text))?.runs
+      ? async text => (editor.docKey === view.doc?.key ? (await syncFile(text))?.runs : null)
       : async text => (await api('/api/highlight', { method: 'POST', body: { text, pathname: `x.${d.extension}` } })).runs,
     indentUnit: INDENT[language] || 2,
     wordPattern: /[\w$]/,
@@ -957,6 +1062,8 @@ function renderEditor() {
     },
     onMessage: text => (text ? message(text, 2500) : null),
   });
+  editor.docKey = d.key;
+  editor.docKind = d.kind;
   renderChrome();
   renderDiagnostics();
 }
@@ -998,6 +1105,11 @@ function mount(node) {
       el('span', { class: 'subpane-name' }, 'Code'),
       el('span', { class: 'subpane-info code-count', 'data-doc': 'The working directory (M-x cd changes it)' }, ''),
       el('span', { class: 'spacer' }),
+      el('span', { class: 'code-editor-switch', role: 'group', 'aria-label': 'Editor' },
+        el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'lem', 'data-doc': 'Edit in Lem itself: its keys, modes, M-x, windows and your init file',
+                       onclick: () => setLemMode(true) }, 'Lem'),
+        el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'simple', 'data-doc': 'Edit in the lightweight editor instead',
+                       onclick: () => setLemMode(false) }, 'Simple')),
       el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Visit a file (C-x C-f)', onclick: () => (view.lemMode ? lemRun('find-file') : prompt('find-file')) }, 'Find file'),
       el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Switch to an open buffer (C-x b)', onclick: () => (view.lemMode ? lemRun('select-buffer') : prompt('switch-buffer')) }, 'Buffers'),
       el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Change the working directory (M-x cd)', onclick: () => prompt('cd') }, 'cd')),
@@ -1034,6 +1146,7 @@ function mount(node) {
   });
   renderSide();
   renderEditor();
+  renderToolbar();
   showPane(view.pane);
   loadScratch();
   loadOpenFiles();
@@ -1047,8 +1160,25 @@ registerView({
   mount,
   show: () => {
     if (view.stale) loadScratch();
-    if (view.lemMode) focusLem(); else setTimeout(() => (view.editor?.input || $('.code-files'))?.focus(), 0);
+    if (view.lemMode) { ensureLemFrame().then(() => { lemRemeasure(); focusLem(); }); }
+    else setTimeout(() => (view.editor?.input || $('.code-files'))?.focus(), 0);
   },
+});
+
+on('lem-display', () => {
+  clearTimeout(view.lemStartTimer);
+  view.node?.querySelector('.code-lem-host')?.classList.remove('starting');
+  lemRemeasure();
+});
+
+// What Lem's window shows -- visited here, with C-x C-f or C-x b in Lem,
+// by the agent -- is the current file; its modified state the Open dot.
+on('lem-buffer', ev => {
+  const open = ev.path && view.openFiles.find(f => f.path === ev.path);
+  if (open && open.modified !== ev.modified) open.modified = ev.modified;
+  else if (ev.path && !open) loadOpenFiles();
+  view.lemShown += 1;
+  if (view.lemMode && view.node) noteLemShown(ev);
 });
 
 // ---------- what other pages and the agent change ----------
@@ -1056,7 +1186,7 @@ registerView({
 on('scratch-buffer', ev => {
   const b = view.buffers.find(x => x.name === ev.name);
   if (b) b.size = ev.text.length;
-  if (ev.client === client || view.doc?.kind !== 'scratch' || view.doc.name !== ev.name) return;
+  if (ev.client === client || view.doc?.kind !== 'scratch' || view.doc.name !== ev.name || !editorOwnsDoc()) return;
   if (view.dirty && view.editor.value !== ev.text) { showConflict(ev.text, ev.version, ev.by); return; }
   setText(ev.text, ev.version);
   if (ev.by === 'agent') message('The agent updated this buffer.');
@@ -1071,7 +1201,8 @@ on('scratch-buffers', ev => {
 on('file-buffer', ev => {
   const open = view.openFiles.find(f => f.path === ev.path);
   if (open && ev.modified != null) { open.modified = ev.modified; if (view.pane === 'open') renderSide(); }
-  if (ev.client === client || !isFile() || view.doc.path !== ev.path) return;
+  // In Lem the buffer is on screen itself: only the simple editor follows.
+  if (ev.client === client || !isFile() || view.doc.path !== ev.path || !editorOwnsDoc()) return;
   if (ev.changedOnDisk) { showDiskChanged(`${ev.by === 'agent' ? 'The agent' : 'Someone'} changed this file on disk; you have unsaved changes.`); return; }
   if (ev.text == null) { if (ev.saved) { view.saved = view.editor.value; view.dirty = false; renderChrome(); } return; }
   if (view.dirty && view.editor.value !== ev.text) { showConflict(ev.text, ev.version, ev.by); return; }

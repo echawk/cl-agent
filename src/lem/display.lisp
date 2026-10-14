@@ -80,7 +80,15 @@ html, body { background: var(--cl-paper, transparent); }
   ['paper', 'rule', 'rule-soft', 'shadow'].forEach(function (name) { if (query.get(name)) vars[name] = query.get(name); });
   set(vars);
   window.addEventListener('message', function (event) {
-    if (event.source === window.parent && event.data && event.data.type === 'cl-agent-style') set(event.data.vars || {});
+    if (event.source !== window.parent || !event.data) return;
+    if (event.data.type === 'cl-agent-style') set(event.data.vars || {});
+    // The page's layout changed this frame's size: measure again, as a
+    // resize of this window would -- and once more when the views have
+    // their new sizes, or a mode line keeps the width it was drawn at.
+    if (event.data.type === 'cl-agent-resize') {
+      window.dispatchEvent(new Event('resize'));
+      setTimeout(function () { window.dispatchEvent(new Event('resize')); }, 350);
+    }
   });
 })();
 </script>
@@ -173,7 +181,40 @@ header).  NIL lets a websocket upgrade through to Lem."
                                             (lem-core::frame-header-windows (lem:current-frame))
                                             (lem-core::frame-floating-windows (lem:current-frame))))
                       (lem-core::need-to-redraw window))
+                    ;; The tab bar sends its HTML only when marked for it: a
+                    ;; page that has just connected would show an empty bar.
+                    (when (fboundp 'lem/tabbar::update) (funcall 'lem/tabbar::update))
                     (lem:redraw-display :force t))))
+
+(defparameter *lem-display-minimum-size* '(10 . 3)
+  "Columns and rows below which a size from the page is ignored: an iframe
+that is hidden measures 0x0, and Lem shrunk to nothing redraws badly.")
+
+(defun lem-display-size-usable-p (size)
+  (let ((width (and (hash-table-p size) (gethash "width" size)))
+        (height (and (hash-table-p size) (gethash "height" size))))
+    (and (integerp width) (integerp height)
+         (>= width (car *lem-display-minimum-size*))
+         (>= height (cdr *lem-display-minimum-size*)))))
+
+(defun lem-display-sane-login (params display)
+  "PARAMS of a page's login, its size Lem's current one when the page
+measured none (a hidden frame: 0x0, and Lem's windows would be 0 wide, its
+every redraw an error -- nothing shown)."
+  (when (and (hash-table-p params) (not (lem-display-size-usable-p (gethash "size" params))))
+    (setf (gethash "size" params)
+          (jobj "width" (lem-server::jsonrpc-display-width display)
+                "height" (lem-server::jsonrpc-display-height display))))
+  params)
+
+(defun lem-display-redraw (args)
+  "The page's \"redraw\": lem-server's, with a size only when it is real,
+and every window redrawn in full (Lem's line cache would skip lines
+already sent at the old size)."
+  (let ((size (and (hash-table-p args) (gethash "size" args))))
+    (when (or (null size) (lem-display-size-usable-p size))
+      (lem-server::redraw args))
+    (lem-display-redraw-all)))
 
 (defun lem-display-start ()
   "Start the display's websocket server (once) and return its port."
@@ -186,17 +227,23 @@ header).  NIL lets a websocket upgrade through to Lem."
                (port (free-local-port)))
           (unless (typep display 'lem-host-display)
             (error "Lem is not running with cl-agent's display."))
-          (jsonrpc:expose server "login" (lem-server::login display #'lem-display-redraw-all))
+          (let ((login (lem-server::login display #'lem-display-redraw-all)))
+            (jsonrpc:expose server "login"
+                            (lambda (params)
+                              (prog1 (funcall login (lem-display-sane-login params display))
+                                ;; The page shows "Starting Lem..." until now.
+                                (lem-publish-async "lem-display" (jobj "connected" t))))))
           (jsonrpc:expose server "input" (lambda (args) (lem-server::input-callback display args)))
-          (jsonrpc:expose server "redraw" 'lem-server::redraw)
+          (jsonrpc:expose server "redraw" 'lem-display-redraw)
           (jsonrpc:expose server "got-clipboard-text" 'lem-server::got-clipboard-text)
           (jsonrpc:expose server "invoke" 'lem-server::invoke)
-          (bt:make-thread
-           (lambda ()
-             (let ((*error-output* (make-broadcast-stream)) (*trace-output* (make-broadcast-stream)))
-               (jsonrpc:server-listen server :mode :websocket :port port :host "127.0.0.1"
-                                             :debug nil :silent t :clack-handler 'lem-display-clack-handler)))
-           :name "lem-display-server")
+          (as-agent-itself
+            (bt:make-thread
+             (lambda ()
+               (let ((*error-output* (make-broadcast-stream)) (*trace-output* (make-broadcast-stream)))
+                 (jsonrpc:server-listen server :mode :websocket :port port :host "127.0.0.1"
+                                               :debug nil :silent t :clack-handler 'lem-display-clack-handler)))
+             :name "lem-display-server"))
           ;; Answering yet?
           (loop repeat 100
                 until (ignore-errors (usocket:socket-close (usocket:socket-connect "127.0.0.1" port)) t)
@@ -207,6 +254,57 @@ header).  NIL lets a websocket upgrade through to Lem."
   "The URL of the Lem display page, starting its server if need be."
   (format nil "http://127.0.0.1:~d/?font=~a&size=~d" (lem-display-start)
           (quri:url-encode font) size))
+
+;;; --- what Lem shows, told to the page ---
+;;;
+;;; The page follows Lem: whatever buffer its window shows -- visited from
+;;; the page, with C-x C-f or C-x b in Lem itself, by the agent -- is the
+;;; Code tab's current file, and its modified state the Open list's dot.
+
+(defvar *lem-shown* nil
+  "(buffer . modified-p) last told to the page.")
+
+;;; The editor thread never publishes itself: a page's state lock may be
+;;; held by a thread waiting on Lem (a reply's code highlighted by it), and
+;;; the two would wait on each other.  Its events go through a channel to a
+;;; thread of their own, in order.
+
+(defvar *lem-publish-channel* nil)
+(defvar *lem-publish-lock* (bt:make-lock "lem-publish"))
+
+(defun lem-publish-async (type payload)
+  (let ((channel (bt:with-lock-held (*lem-publish-lock*)
+                   (or *lem-publish-channel*
+                       (let ((channel (trivial-channels:make-channel)))
+                         (as-agent-itself
+                           (bt:make-thread (lambda ()
+                                             (loop (let ((message (trivial-channels:recvmsg channel)))
+                                                     (ignore-errors (editor-publish (car message) (cdr message))))))
+                                           :name "lem-publish"))
+                         (setf *lem-publish-channel* channel))))))
+    (trivial-channels:sendmsg channel (cons type payload))))
+
+(defun lem-shown-buffer-json (buffer)
+  (if (lem:buffer-filename buffer)
+      (editor-buffer-json buffer)
+      (jobj "path" :null "name" (lem:buffer-name buffer)
+            "mode" (json-or-null (ignore-errors (lem:mode-name (lem:buffer-major-mode buffer)))))))
+
+(defun lem-note-shown-buffer (&rest arguments)
+  "Tell the page when the buffer Lem's window shows, or whether it is
+modified, has changed (from Lem's post-command hook; editor thread)."
+  (declare (ignore arguments))
+  (ignore-errors
+   (let* ((window (lem:current-window))
+          ;; Not the minibuffer or a pop-up: the window the person edits in.
+          (buffer (and (member window (lem:window-list)) (lem:window-buffer window))))
+     (when buffer
+       (let ((shown (cons buffer (and (lem:buffer-modified-p buffer) t))))
+         (unless (and (eq (car shown) (car *lem-shown*)) (eq (cdr shown) (cdr *lem-shown*)))
+           (setf *lem-shown* shown)
+           (lem-publish-async "lem-buffer" (lem-shown-buffer-json buffer))))))))
+
+(lem:add-hook lem:*post-command-hook* 'lem-note-shown-buffer)
 
 (defun lem-visit (path &key line)
   "Show PATH in the Lem display's current window (as C-x C-f), at LINE."
@@ -221,6 +319,7 @@ header).  NIL lets a websocket upgrade through to Lem."
                     (lem:move-to-line (lem:buffer-point buffer) line)
                     (lem:line-start (lem:buffer-point buffer)))
                   (lem:redraw-display :force t)
+                  (lem-note-shown-buffer)
                   (editor-buffer-json buffer)))))
       (when opened
         (run-hook :file-opened opened)

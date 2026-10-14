@@ -398,11 +398,12 @@ file.  It never writes to stdout, which carries the worker protocol."))
        (refresh-subagent-ui task)))))
 
 (defun start-subagent-progress-poller (task)
-  (bordeaux-threads:make-thread
-   (lambda ()
-     (loop until (subagent-task-poller-stop task)
-           do (sleep 0.5) (poll-subagent-progress task)))
-   :name (format nil "~a progress" (subagent-task-id task))))
+  (as-agent-itself
+    (bordeaux-threads:make-thread
+     (lambda ()
+       (loop until (subagent-task-poller-stop task)
+             do (sleep 0.5) (poll-subagent-progress task)))
+     :name (format nil "~a progress" (subagent-task-id task)))))
 
 ;;; ------------------------------------------------------------------
 ;;; Contract construction

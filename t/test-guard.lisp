@@ -159,3 +159,9 @@
            (check (search "2" (call-tool "eval-lisp" (jobj "form" "(+ 1 1)"))) "the next call runs"))
       (setf *agent-memory-limit* limit)
       (sb-ext:gc :full t))))
+
+(deftest threads-agent-code-starts-are-agent-code-but-the-agents-own-are-not ()
+  (flet ((depth-in-new-thread () (bt:join-thread (bt:make-thread (lambda () *agent-code-depth*)))))
+    (check-equal (with-agent-code () (depth-in-new-thread)) 1 "a thread the model's code starts is agent code")
+    (check-equal (with-agent-code () (as-agent-itself (depth-in-new-thread))) 0
+                 "a service thread the agent starts from there is not (Lem's editor, its display server)")))

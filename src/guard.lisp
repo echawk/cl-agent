@@ -56,6 +56,14 @@
           (sb-thread:with-mutex (*agent-threads-lock*)
             (setf *agent-threads* (delete entry *agent-threads* :test #'eq)))))))
 
+(defmacro as-agent-itself (&body body)
+  "Run BODY as the agent's own code, though agent code called it: for the
+agent's long-lived service threads (Lem's editor, its display server, the
+asset watcher...), which a tool or a route may be the first to need and
+start.  A thread started in BODY is not counted as agent code."
+  `(let ((*agent-code-depth* 0))
+     ,@body))
+
 (define-condition agent-exit-refused (error)
   ()
   (:report (lambda (condition stream)

@@ -409,13 +409,15 @@ The protocol to implement is lem-server's: `make-view`/`resize-view`/`move-view`
 - **Starting.** `GET /api/lem/display` starts the server and returns the page URL.
 - **Visiting files.** `POST /api/lem/visit` shows a file in Lem's window. It's used by the Files pane, the agent's `open-in-editor`, and switching to the Lem view.
 - **Running commands.** `POST /api/lem/run` queues a command for the person at the view (the toolbar's Find file and Buffers). It is refused when no view is open, because the command's prompts would then wait forever.
-- **Fallback.** "Simple editor" switches to cl-agent's lightweight editor (§4.6's text sync), which still edits the same Lem buffers.
+- **Fallback.** The toolbar's Lem | Simple switch changes to cl-agent's lightweight editor (§4.6's text sync), which still edits the same Lem buffers, and back. The current file goes along both ways. The simple editor only ever writes the document it was made for. Before, switching after `C-x b` in Lem could write one file's text, or an empty text, into another's buffer.
+- **Following Lem.** After each command (`*post-command-hook*`) and each visit, Lem tells the page (`lem-buffer` event) when the buffer its window shows, or that buffer's modified state, has changed. The editor thread never publishes itself: a page's lock may be held by a thread waiting on Lem. Its events go through a channel to a publisher thread.
+- **Sizes.** A hidden iframe measures 0x0. A login or redraw at that size is ignored or given Lem's current size; Lem's windows at width 0 failed every redraw, and the view stayed blank. The page re-measures the frame when its layout changes (a `ResizeObserver`, then a message to the client, then again once views have resized), and on showing the Code tab. A restarted server's display is on a new port, so the frame is rebuilt. Until the client has logged in, the view says "Starting Lem…".
 - **Looking like the page.**
   - Colours: the page reads its own theme tokens (`theme.css`, plus any customisations) and posts them to `POST /api/lem/theme`. That builds a Lem colour theme, `cl-agent`, covering the base16 slots, syntax, modeline, region, popups and isearch. It is loaded without saving it to the user's Lem config, and sent again whenever the theme changes.
   - Tab bar: Lem's tab bar is its own HTML with fixed colours, so `lem/tabbar::generate-html` is wrapped to take the theme's colours while `cl-agent` is the theme.
   - Font: the page's font and size are passed in the URL. The served client loads the font before measuring it and draws glyphs at their real width. Before, the cell was the width rounded down and every glyph was squeezed into it.
   - Chrome: mode lines, borders and popups are square and ruled like the page, using colours passed as `--cl-*` variables.
-  - A new browser connection marks every window dirty, so Lem's line cache cannot skip drawing it.
+  - A new browser connection marks every window dirty, so Lem's line cache cannot skip drawing it. The tab bar is marked for an update too: it sends its HTML only when marked, so a page that has just connected would show an empty bar.
 
 ## 10. Lem commands for the agent (implemented)
 

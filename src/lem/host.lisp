@@ -106,8 +106,10 @@ keeping this process's PATH (Lem's macOS init hook rewrites it)."
             (lem-core::invoke-frontend
              (lambda (&optional initialize finalize)
                (declare (ignore initialize finalize))
+               ;; Lem's editor thread is the agent's own, whoever needed it first.
                (setf *lem-host-thread*
-                     (bordeaux-threads:make-thread #'lem-host-thread-body :name "editor")))
+                     (as-agent-itself
+                       (bordeaux-threads:make-thread #'lem-host-thread-body :name "editor"))))
              :implementation (make-instance 'lem-host-display)))
         (error (condition)
           (setf *lem-host-state* :failed

@@ -147,3 +147,55 @@
       (lem-call (lambda () (lem:load-theme "lem-default" nil))))
     (check (search "#181818" (lem-call (lambda () (lem/tabbar::generate-html))))
            "another theme's tab bar is left as Lem made it")))
+
+(deftest a-hidden-lem-view-cannot-shrink-lem-to-nothing ()
+  ;; An iframe that is hidden measures 0x0; Lem's windows at width 0 make
+  ;; every redraw an error, and the view stays blank.
+  (lem-display-start)
+  (let* ((display (lem-call (lambda () (lem:implementation))))
+         (width (lem-server::jsonrpc-display-width display))
+         (height (lem-server::jsonrpc-display-height display)))
+    (unwind-protect
+         (let ((login (lem-display-sane-login (jobj "size" (jobj "width" 0 "height" 0)) display)))
+           (check-equal (gethash "width" (gethash "size" login)) width "a login with no size gets Lem's own")
+           (check-equal (gethash "width" (gethash "size" (lem-display-sane-login (jobj "size" (jobj "width" 100 "height" 30)) display)))
+                        100 "a real size is kept")
+           (lem-display-redraw (jobj "size" (jobj "width" 0 "height" 0)))
+           (lem-call (lambda () nil))           ; the redraw has run
+           (check-equal (lem-server::jsonrpc-display-width display) width "a redraw at 0x0 is ignored")
+           (check (null (lem-call (lambda () (lem:get-buffer "*EDITOR ERROR*")))) "and nothing failed")
+           (lem-display-redraw (jobj "size" (jobj "width" 100 "height" 30)))
+           (lem-call (lambda () nil))
+           (check-equal (lem-server::jsonrpc-display-width display) 100 "a real one resizes"))
+      (lem-display-redraw (jobj "size" (jobj "width" width "height" height)))
+      (lem-call (lambda () nil)))))
+
+(deftest lem-tells-the-page-what-it-shows ()
+  (let ((events '()) (lock (bt:make-lock)))
+    (sb-int:encapsulate 'editor-publish 'test-capture
+                        (lambda (function type payload)
+                          (when (equal type "lem-buffer")
+                            (bt:with-lock-held (lock) (push payload events)))
+                          (funcall function type payload)))
+    (flet ((seen (pred)
+             (loop repeat 200
+                   when (bt:with-lock-held (lock) (find-if pred events)) return it
+                   do (sleep 0.01))))
+      (unwind-protect
+           (with-lem-test-file (one "one")
+             (with-lem-test-file (two "two")
+               (lem-visit one)
+               (check (seen (lambda (e) (equal (gethash "path" e) (namestring (truename one)))))
+                      "a visit is told")
+               ;; C-x b in Lem itself: a command, then the post-command hook.
+               (lem-call (lambda ()
+                           (lem:switch-to-buffer (lem:find-file-buffer two))
+                           (lem:run-hooks lem:*post-command-hook*)))
+               (check (seen (lambda (e) (equal (gethash "path" e) (namestring (truename two)))))
+                      "so is a buffer chosen in Lem")
+               (lem-call (lambda ()
+                           (lem:insert-string (lem:buffer-end-point (lem:current-buffer)) "!")
+                           (lem:run-hooks lem:*post-command-hook*)))
+               (check (seen (lambda (e) (and (equal (gethash "path" e) (namestring (truename two))) (gethash "modified" e))))
+                      "and its becoming modified")))
+        (sb-int:unencapsulate 'editor-publish 'test-capture)))))

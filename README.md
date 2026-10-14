@@ -809,8 +809,12 @@ buffers in any language.
 frontend in the editor pane: its windows, mode line, minibuffer, `M-x`,
 dired (`C-x d`), `find-file`, your init file and keys, `vi-mode` if you
 enable it. Picking a file in the Files pane, or the agent's
-`open-in-editor`, shows it in Lem's window. **Simple editor** switches to a
-lightweight editor that edits the same Lem buffers, described below.
+`open-in-editor`, shows it in Lem's window. The **Lem | Simple** switch in
+the Code toolbar changes to a lightweight editor that edits the same Lem
+buffers (described below), and back. The file you are on goes with you,
+and so does one you chose in Lem itself (`C-x C-f`, `C-x b`). The page
+follows what Lem shows: the header names the file and marks unsaved
+changes, and so does the Open list.
 
 The agent runs Lem's editing commands too, with the `lem-command` tool:
 - **Any command, as `M-x` would run it:** `query-replace`, `indent-region`,
