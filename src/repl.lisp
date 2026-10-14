@@ -1909,7 +1909,8 @@ entirely."
          (tool-intent (and (or (null authorization) (getf authorization :allowed-p))
                            (record-session-event session :tool-call-started :component (getf tool-call :name)
                                                  :payload (list :tool-call-id (getf tool-call :id)
-                                                                :tool-name (getf tool-call :name))))))
+                                                                :tool-name (getf tool-call :name)))))
+         (started (get-internal-real-time)))
     (multiple-value-bind (ctx veto)
         (if (or validation-error (and authorization (not (getf authorization :allowed-p))))
             (values requested nil)
@@ -1951,11 +1952,19 @@ entirely."
           ;; Keep event records compact while replay restores the exact provider
           ;; message from its immutable blob.
           (when preview (setf (getf durable-message :content) preview))
+        ;; How long it took and how it ended, for tool-analytics.lisp.
         (record-session-event session :tool-result-recorded
                               :component (getf ctx :tool-name)
                               :parent-id (getf tool-intent :id)
                               :status "finished" :payload (list :message durable-message
-                                                                :content-blob blob)))
+                                                                :content-blob blob
+                                                                :elapsed-ms (round (* 1000 (- (get-internal-real-time) started))
+                                                                                   internal-time-units-per-second)
+                                                                :outcome (cond (validation-error :invalid)
+                                                                               (denied-p :denied)
+                                                                               (veto :vetoed)
+                                                                               ((and (stringp result) (uiop:string-prefix-p "Error running " result)) :error)
+                                                                               (t :ok)))))
         message)))))
 
 (defun run-agent-turn (session)
