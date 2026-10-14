@@ -1915,7 +1915,7 @@ entirely."
         (if (or validation-error (and authorization (not (getf authorization :allowed-p))))
             (values requested nil)
             (handler-case (values (run-hook-chain :before-tool-call requested) nil)
-              (error (c) (values requested c))))
+              (serious-condition (c) (values requested c))))
       (ui-tool-started frontend (getf ctx :tool-name) (getf ctx :arguments))
       (let* ((denied-p (and authorization (not (getf authorization :allowed-p))))
              (result (cond (validation-error (invalid-tool-call-result tool-call validation-error))
@@ -2803,9 +2803,13 @@ can still call SESSION-COMPLETE."
            (sync-session-tools session)
            (unwind-protect
                 (progn
+                  ;; Whatever goes wrong in a turn or a command -- a
+                  ;; provider's broken stream, an extension's bug -- is
+                  ;; reported and the session goes on (guard.lisp).
                   (when (and initial-task (plusp (length initial-task)))
-                    (session-submit-user-text session initial-task)
-                    (run-agent-turn session))
+                    (with-turn-guard (:frontend frontend :where "The turn")
+                      (session-submit-user-text session initial-task)
+                      (run-agent-turn session)))
                   (loop
                     (let ((line (or (pop (session-deferred-input session))
                                     ;; Messages queued during the last turn run before we prompt.
@@ -2817,11 +2821,15 @@ can still call SESSION-COMPLETE."
                                     (ui-prompt-input frontend))))
                       (unless line (return))
                       (when (plusp (length (string-trim " " line)))
-                        (let ((result (dispatch-slash-command session line)))
+                        (let ((result (first (or (with-turn-guard (:frontend frontend
+                                                                   :where (format nil "The command ~a" (first-line line 60)))
+                                                   (list (dispatch-slash-command session line)))
+                                                 (list :failed)))))
                           (cond
                             ((eq result :not-a-command)
-                             (session-submit-user-text session line)
-                             (run-agent-turn session))
+                             (with-turn-guard (:frontend frontend :where "The turn")
+                               (session-submit-user-text session line)
+                               (run-agent-turn session)))
                             ((null result) (return))))))))
              (stop-all-subagent-tasks)
              (run-hook :on-shutdown)))

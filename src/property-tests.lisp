@@ -237,23 +237,26 @@ Returns a plist (:passed :trials :failure :arguments :original :steps
         (list :passed t :trials trials :seed seed :argument-types types :return-types return-types :declared declared)))))
 
 (defun format-property-call (name arguments)
-  (let ((*print-length* 20) (*print-level* 4) (*print-pretty* nil) (*print-case* :downcase))
+  ;; Names as they read in their own package, whatever *PACKAGE* is.
+  (let ((*print-length* 20) (*print-level* 4) (*print-pretty* nil) (*print-case* :downcase)
+        (*package* (or (symbol-package name) *package*)))
     (format nil "(~s~{ ~s~})" name arguments)))
 
 (defun format-property-test (name result)
   (destructuring-bind (&key passed trials failure arguments original steps seed argument-types return-types declared
                        &allow-other-keys) result
-    (with-output-to-string (out)
-      (if declared
-          (format out "~(~s~): ~(~s~) -> ~(~{~s~^ ~}~)~%" name argument-types return-types)
-          (format out "~(~s~): no declared types; arguments ~(~s~)~%" name argument-types))
-      (if passed
-          (format out "Passed ~d trial~:p (seed ~d)." trials seed)
-          (progn
-            (format out "FAILED on trial ~d: ~a~%  ~a~%" trials failure (format-property-call name arguments))
-            (when (plusp steps)
-              (format out "  (shrunk in ~d step~:p from ~a)~%" steps (format-property-call name original)))
-            (format out "Seed ~d reproduces it." seed))))))
+    (let ((*package* (or (symbol-package name) *package*)))
+      (with-output-to-string (out)
+        (if declared
+            (format out "~(~s~): ~(~s~) -> ~(~{~s~^ ~}~)~%" name argument-types return-types)
+            (format out "~(~s~): no declared types; arguments ~(~s~)~%" name argument-types))
+        (if passed
+            (format out "Passed ~d trial~:p (seed ~d)." trials seed)
+            (progn
+              (format out "FAILED on trial ~d: ~a~%  ~a~%" trials failure (format-property-call name arguments))
+              (when (plusp steps)
+                (format out "  (shrunk in ~d step~:p from ~a)~%" steps (format-property-call name original)))
+              (format out "Seed ~d reproduces it." seed)))))))
 
 (defun read-property (text package)
   "A property from TEXT, a lambda expression, compiled in PACKAGE."

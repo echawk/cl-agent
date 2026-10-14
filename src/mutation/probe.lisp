@@ -44,5 +44,5 @@ prevents a partially loaded proposal from becoming the parent image's state."
             (list :status (if passed :passed :failed)
                   :command command :exit-code exit-code
                   :output output :error-output error-output)))
-      (error (condition)
+      (serious-condition (condition)
         (list :status :failed :command command :detail (princ-to-string condition))))))

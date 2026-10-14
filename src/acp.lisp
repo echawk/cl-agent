@@ -109,8 +109,10 @@
       ;; CWD (which would race other live ACP sessions).
       (let ((*default-pathname-defaults*
               (uiop:ensure-directory-pathname (acp-record-cwd record))))
-        (session-submit-user-text (acp-record-session record) (acp-prompt-text prompt))
-        (run-agent-turn (acp-record-session record)))
+        ;; A failing turn is reported to the client; the agent goes on.
+        (with-turn-guard (:frontend frontend :where "The turn")
+          (session-submit-user-text (acp-record-session record) (acp-prompt-text prompt))
+          (run-agent-turn (acp-record-session record))))
       (agentcomms:agent-check-cancelled agent session-id)
       :end-turn)))
 

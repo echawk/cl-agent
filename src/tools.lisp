@@ -142,13 +142,20 @@ turn."
     (if (null tool)
         (format nil "Tool ~s does not exist or is no longer available. Use one of the tools supplied in this conversation (or /tools) and try again."
                 name)
-        (handler-case (if *debugger-enabled*
-                          (call-tool-handler-with-debugger tool arguments)
-                          (funcall (tool-handler tool) arguments))
+        (handler-case (with-agent-code ()
+                        (if *debugger-enabled*
+                            (call-tool-handler-with-debugger tool arguments)
+                            (funcall (tool-handler tool) arguments)))
           ;; Backstop: an error in the debugger machinery itself must never
           ;; escape into the agent loop.
           (error (c)
-            (format nil "Error running ~a: ~a" name c))))))
+            (format nil "Error running ~a: ~a" name c))
+          ;; Not errors, but they would end the turn (and, unhandled, the
+          ;; process): runaway recursion, an exhausted heap, a timeout.
+          (storage-condition (c)
+            (format nil "Error running ~a: ~a (runaway recursion or allocation?)" name c))
+          (sb-ext:timeout (c)
+            (format nil "Error running ~a: it timed out (~a)" name c))))))
 
 (defun tool-json-schema (tool)
   "OpenAI/REALLMS/xAI/Ollama-shaped {\"type\":\"function\",\"function\":{...}}

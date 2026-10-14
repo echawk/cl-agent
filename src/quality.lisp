@@ -207,16 +207,21 @@ is retained, and the definitions compiling installs in this image are undone
                         ;; Its own compilation unit: undefined functions are
                         ;; reported when a unit ends, and an enclosing one
                         ;; (a load in progress) would keep them from this review.
-                        (with-compilation-unit (:override t)
-                          (compile-file source-path :output-file output-path
-                                                    :verbose nil :print nil))
+                        ;; The source is the model's: no read-time evaluation,
+                        ;; no exiting, and a limit on runaway macros (guard.lisp).
+                        (with-agent-code ()
+                          (let ((*read-eval* nil))
+                            (sb-ext:with-timeout 120
+                              (with-compilation-unit (:override t)
+                                (compile-file source-path :output-file output-path
+                                                          :verbose nil :print nil)))))
                       (declare (ignore result))
                       (let ((captured (string-trim '(#\Space #\Tab #\Newline #\Return)
                                                    (get-output-stream-string compiler-output))))
                         (when (plusp (length captured))
                           (pushnew captured diagnostics :test #'string=)))
                       (values (nreverse diagnostics) warnings-p failure-p))
-                  (error (condition)
+                  (serious-condition (condition)
                     (pushnew (condition-summary condition) diagnostics :test #'string=)
                     (values (nreverse diagnostics) nil t)))))
          (when (probe-file output-path)

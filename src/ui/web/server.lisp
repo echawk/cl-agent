@@ -175,9 +175,13 @@ a closed tab, an event stream going away): routine, so not logged."
            ((and (not (member method '(:get :head))) (not (web-request-trusted-p)))
             (web-error-response 403 "Mutating requests need the X-CL-Agent header (same-origin scripts only)."))
            (t
-            (handler-case (web-route-response (funcall (web-route-handler route)))
-              (error (condition)
-                (web-error-response 500 (princ-to-string condition)))))))))))
+            ;; A route can be an extension's: it runs as agent code (no
+            ;; exiting), and anything serious it signals is a 500, never a
+            ;; dead process.
+            (handler-case (with-agent-code () (web-route-response (funcall (web-route-handler route))))
+              (serious-condition (condition)
+                (web-error-response 500 (or (ignore-errors (princ-to-string condition))
+                                            (string (type-of condition)))))))))))))
 
 (defun web-port-in-use-p (condition)
   "True when CONDITION is the platform's report of an occupied listen port."

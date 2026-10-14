@@ -231,3 +231,27 @@ table, retried after *CONTEXT-WINDOW-RETRY-SECONDS*."
   "Drop every cached advertised window (e.g. after a server's models change)."
   (bt:with-lock-held (*context-window-cache-lock*)
     (clrhash *context-window-cache*)))
+
+;;; --- failures, as provider errors ---
+;;;
+;;; A refused connection, a timeout, a reset mid-stream, a reply that is
+;;; not the JSON it should be -- in any provider, an extension's too --
+;;; reaches the agent loop as a PROVIDER-ERROR, which a turn reports and
+;;; survives, never as a raw condition from the network stack.  (A turn's
+;;; interrupt is a THROW, which passes through.)
+
+(defun call-as-provider-request (provider function)
+  (handler-case (funcall function)
+    (provider-error (condition) (error condition))
+    (error (condition)
+      (error 'provider-error
+             :provider (ignore-errors (provider-display-name provider))
+             :message (format nil "the request or its reply failed: ~a" condition)))))
+
+(defmethod chat :around ((provider llm-provider) messages tools)
+  (declare (ignore messages tools))
+  (call-as-provider-request provider #'call-next-method))
+
+(defmethod chat-stream :around ((provider llm-provider) messages tools on-delta)
+  (declare (ignore messages tools on-delta))
+  (call-as-provider-request provider #'call-next-method))

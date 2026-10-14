@@ -50,12 +50,50 @@
   (check-equal (run-hook-chain :test-chain 5) 11 "(5*2)+1")
   (clear-hooks :test-chain))
 
-(deftest chain-hook-error-propagates ()
+(deftest a-failing-chain-hook-is-skipped-not-fatal ()
   (clear-hooks :test-chain)
-  (add-hook :test-chain 'boom (lambda (n) (declare (ignore n)) (error "nope")))
-  (check-condition error (run-hook-chain :test-chain 1))
+  (let ((*error-output* (make-broadcast-stream)))
+    (add-hook :test-chain 'boom (lambda (n) (declare (ignore n)) (error "nope")))
+    (add-hook :test-chain 'add-one (lambda (n) (1+ n)))
+    (check-equal (run-hook-chain :test-chain 1) 2 "the value goes on; the next hook still runs")
+    (add-hook :test-chain 'deep (labels ((down (n) (1+ (down n)))) #'down))
+    (check-equal (run-hook-chain :test-chain 1) 2 "stack exhaustion in a hook is survived too"))
   (clear-hooks :test-chain))
+
+(deftest a-veto-hook-still-vetoes ()
+  (let ((*error-output* (make-broadcast-stream)))
+    (add-hook :before-tool-call 'test-veto (lambda (ctx) (declare (ignore ctx)) (error "not this one")))
+    (unwind-protect (check-condition error (run-hook-chain :before-tool-call (list :tool-name "x" :arguments (jobj))))
+      (remove-hook :before-tool-call 'test-veto))))
+
+(deftest a-chain-hook-returning-the-wrong-kind-is-ignored ()
+  (clear-hooks :test-chain)
+  (let ((*error-output* (make-broadcast-stream)))
+    (add-hook :test-chain 'forgot-to-return (lambda (ctx) (setf (getf ctx :a) 2) nil))
+    (check-equal (run-hook-chain :test-chain (list :a 1)) '(:a 1) "NIL instead of the plist: skipped"))
+  (clear-hooks :test-chain))
+
+(deftest a-hook-failing-again-and-again-is-switched-off ()
+  (clear-hooks :test-point)
+  (let ((*error-output* (make-broadcast-stream)) (calls 0))
+    (add-hook :test-point 'flaky (lambda () (incf calls) (error "again")))
+    (dotimes (i 5) (run-hook :test-point))
+    (check-equal calls *hook-failure-limit* "switched off after the limit")
+    (check (null (list-hooks :test-point))))
+  (clear-hooks :test-point))
 
 (deftest chain-hook-with-no-registrations-is-identity ()
   (clear-hooks :test-chain)
   (check-equal (run-hook-chain :test-chain '(:a 1)) '(:a 1)))
+
+(deftest an-extensions-broken-after-tool-call-hook-cannot-end-the-turn ()
+  ;; The crash this guards against: an extension's hook treated a tool's
+  ;; arguments (a hash table) as a plist, on every tool call.
+  (let ((*error-output* (make-broadcast-stream)))
+    (add-hook :after-tool-call 'broken-paths
+              (lambda (ctx) (getf (getf ctx :arguments) "path") ctx))
+    (unwind-protect
+         (let* ((session (make-session (make-instance 'ollama-provider)))
+                (message (run-tool-call session (list :id "c1" :name "recall" :arguments (make-hash-table :test 'equal)))))
+           (check (search "Nothing remembered" (getf message :content)) "the tool's own result still comes back"))
+      (remove-hook :after-tool-call 'broken-paths))))

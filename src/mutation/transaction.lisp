@@ -125,7 +125,7 @@ top-level effects."
         (setf (mutation-state transaction) :preflighted)
         (mutation-receipt transaction :preflighted :forms (length forms) :review review)
         transaction)
-    (error (condition)
+    (serious-condition (condition)
       (setf (mutation-state transaction) :failed)
       (mutation-receipt transaction :failed :phase :preflight :detail (princ-to-string condition))
       (error condition))))
@@ -144,7 +144,7 @@ top-level effects."
           (emit-event :mutation-installed :component (mutation-owner transaction)
                       :payload (mutation->plist transaction))
           transaction)
-      (error (condition)
+      (serious-condition (condition)
         (rollback-mutation-live-state transaction)
         (setf (mutation-state transaction) :failed)
         (mutation-receipt transaction :rolled-back :phase :install
@@ -170,7 +170,7 @@ boundary."
         (emit-event :mutation-exercised :component (mutation-owner transaction)
                     :payload (mutation->plist transaction))
         transaction)
-    (error (condition)
+    (serious-condition (condition)
       (rollback-mutation-live-state transaction)
       (setf (mutation-state transaction) :failed)
       (mutation-receipt transaction :rolled-back :phase :exercise

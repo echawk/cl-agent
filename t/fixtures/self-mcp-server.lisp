@@ -20,6 +20,7 @@
                     "src/events.lisp"
                     "src/components.lisp"
                     "src/json-util.lisp"
+                    "src/guard.lisp"
                     "src/tools.lisp"
                     "src/mcp/server.lisp"))
     (load (merge-pathnames source project-root))))

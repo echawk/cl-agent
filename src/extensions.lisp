@@ -174,10 +174,12 @@ without taking down the whole process."
       (let* ((resolved (or (probe-file path) path))
              (*registration-origin* (or origin (list :extension (namestring resolved))))
              (*registration-owner* (or owner (format nil "extension:~a" (file-namestring resolved)))))
-        (load resolved)
+        ;; Code the model may have written: loaded as agent code (no
+        ;; exiting), anything serious it signals an EXTENSION-ERROR.
+        (with-agent-code () (load resolved))
         (run-hook :after-extension-load resolved)
         t)
-    (error (c)
+    (serious-condition (c)
       (error 'extension-error :path path :original-condition c))))
 
 (defun load-enabled-extensions (&key (report-stream *error-output*))
@@ -191,12 +193,13 @@ at all."
   (ensure-config-directory)
   (let ((loaded nil) (failed nil))
     (dolist (path (list-extension-files))
-      (if (extension-enabled-p (file-namestring path))
-          (handler-case (progn (load-extension-file path) (push path loaded))
-            (extension-error (c)
-              (push (cons path c) failed)
-              (format report-stream "~&[extensions] ~a~%" c)))
-          nil))
+      ;; A broken enabled.lisp or extension is reported; startup goes on.
+      (handler-case (when (extension-enabled-p (file-namestring path))
+                      (load-extension-file path)
+                      (push path loaded))
+        (serious-condition (c)
+          (push (cons path c) failed)
+          (ignore-errors (format report-stream "~&[extensions] ~a: ~a~%" (file-namestring path) c)))))
     (values (nreverse loaded) (nreverse failed))))
 
 (defun write-extension-file (filename source &key (if-exists :supersede))

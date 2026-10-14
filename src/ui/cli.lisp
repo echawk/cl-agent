@@ -20,15 +20,23 @@ behavior. See tui.lisp/web.lisp for frontends that override more."))
 (defun cli-read-loop (frontend stream)
   "Feed lines from STREAM to FRONTEND until end of input."
   (loop
-    (let ((line (read-line stream nil nil)))
+    ;; A line it cannot decode (bytes that are not UTF-8) is skipped, not
+    ;; the end of the agent: this thread failing would leave no input.
+    (let ((line (handler-case (read-line stream nil nil)
+                  (stream-decoding-error ()
+                    (ignore-errors (format t "~&[skipped a line that is not valid text]~%") (force-output))
+                    ""))))
       (unless line
         (trivial-channels:sendmsg (cli-frontend-lines frontend) nil)
         (return))
-      (multiple-value-bind (status text) (frontend-accept-input frontend line)
-        (case status
-          (:immediate (trivial-channels:sendmsg (cli-frontend-lines frontend) text))
-          (:queued (format t "~&[queued] ~a~%" text) (force-output))
-          (:interrupted (format t "~&[interrupting]~%") (force-output)))))))
+      (handler-case
+          (multiple-value-bind (status text) (frontend-accept-input frontend line)
+            (case status
+              (:immediate (trivial-channels:sendmsg (cli-frontend-lines frontend) text))
+              (:queued (format t "~&[queued] ~a~%" text) (force-output))
+              (:interrupted (format t "~&[interrupting]~%") (force-output))))
+        (serious-condition (condition)
+          (ignore-errors (format *error-output* "~&[input] ~a~%" condition)))))))
 
 (defmethod ui-start ((frontend cli-frontend))
   (when (interactive-stream-p *standard-input*)

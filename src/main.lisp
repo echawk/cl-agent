@@ -204,4 +204,6 @@ unreachable MCP server shouldn't prevent the agent from starting."
       (mcp-error (c) (format *error-output* "~&[mcp] ~a~%" c)))))
 
 (defun main ()
+  ;; No thread's failure ends the process (guard.lisp).
+  (install-survival-hook)
   (clingon:run (cli-command) (uiop:command-line-arguments)))

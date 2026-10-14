@@ -80,10 +80,15 @@ error-output status), status 124 when it ran out of time."
   (let* ((process (uiop:launch-program argv :output :stream :error-output :stream
                                             :input (if input :stream nil)))
          (out "") (err "") (timed-out nil)
-         (readers (list (bt:make-thread (lambda () (setf out (uiop:slurp-stream-string (uiop:process-info-output process))))
-                                        :name "run-with-deadline output")
-                        (bt:make-thread (lambda () (setf err (uiop:slurp-stream-string (uiop:process-info-error-output process))))
-                                        :name "run-with-deadline errors"))))
+         ;; Unreadable output (not UTF-8) is noted, not the reader thread's end.
+         (readers (flet ((reader (stream setter name)
+                           (bt:make-thread (lambda ()
+                                             (funcall setter
+                                                      (handler-case (uiop:slurp-stream-string stream)
+                                                        (serious-condition (c) (format nil "[unreadable output: ~a]" c)))))
+                                           :name name)))
+                    (list (reader (uiop:process-info-output process) (lambda (text) (setf out text)) "run-with-deadline output")
+                          (reader (uiop:process-info-error-output process) (lambda (text) (setf err text)) "run-with-deadline errors")))))
     (when input
       (let ((stream (uiop:process-info-input process)))
         (write-string input stream)

@@ -43,6 +43,9 @@
       (error (c)
         (format nil "Scratch artifact was not saved: ~a" c)))))
 
+(defparameter *eval-lisp-seconds* 120
+  "The longest an eval-lisp form may run.")
+
 (define-tool eval-lisp (args)
     (:description "Evaluate a Common Lisp form in the running agent's own image and return its printed result. Before evaluation, the form is automatically reviewed with Mallet, checked for DEFSTAR/DECLAIM type claims on definitions, and compiled; compilation failures prevent evaluation while advisory smells are returned with the value so you can improve the code. Ephemeral: has full read/write access to the agent's own state but is not saved. The form is read with *package* bound to :cl-agent."
      :parameters (jobj "type" "object"
@@ -68,7 +71,9 @@
                            (value-text
                              (format nil "~{~a~^~%~}"
                                      (mapcar #'prin1-to-string
-                                             (multiple-value-list (eval form))))))
+                                             ;; A form that never returns would hold the
+                                          ;; turn (and the agent) for good.
+                                          (multiple-value-list (sb-ext:with-timeout *eval-lisp-seconds* (eval form)))))))
                       (format nil "~@[Parentheses fixed from the indentation first.~%~]~a~%~%~a"
                               (and problem t) value-text (format-lisp-review review)))
                   (error (c) (format nil "Error: ~a~%~%~a" c (format-lisp-review review))))))))))

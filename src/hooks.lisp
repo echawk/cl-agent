@@ -210,42 +210,113 @@ protocol data needed for replay."
                           :payload (list :hook-point hook-point :hook-name (string name)
                                          :detail (and condition (princ-to-string condition))))))
 
+;;; A hook is an extension's code -- often the agent's own, written
+;;; minutes ago -- run in the middle of a turn.  So no hook can take the
+;;; agent down: a failing one (any SERIOUS-CONDITION, stack exhaustion too)
+;;; is recorded, reported and skipped, the value going on unchanged; a
+;;; chain hook returning the wrong kind of value (not the plist it was
+;;; given, say) counts as failing; and a hook that fails
+;;; *HOOK-FAILURE-LIMIT* times in a row is switched off until its extension
+;;; is loaded again.  Only the veto points -- :before-tool-call,
+;;; :before-subagent-start (and :tool-failure, whose caller records it) --
+;;; let an error through, to their callers, who turn it into a refusal.
+;;; A plist is handed to each hook as a copy, so one that changes it and
+;;; then fails leaves nothing behind.
+
+(defparameter *hook-failure-limit* 3
+  "Failures in a row after which a hook is switched off.")
+
+(defparameter *hook-seconds* 120
+  "The longest one hook may run before it counts as failing.")
+
+(defvar *hook-failures* (make-hash-table :test 'equal)
+  "(hook-point . name) -> failures in a row.")
+
+(defun plist-shaped-p (value)
+  (and (listp value)
+       (handler-case (and (evenp (list-length value))
+                          (loop for (key) on value by #'cddr always (keywordp key)))
+         (error () nil))))
+
+(defun hook-value-kind (value)
+  (cond ((hash-table-p value) :hash-table)
+        ((stringp value) :string)
+        ((and value (plist-shaped-p value)) :plist)
+        (t :other)))
+
+(defun note-hook-success (hook-point name)
+  (remhash (cons hook-point name) *hook-failures*))
+
+(defun note-hook-failure (hook-point name problem)
+  "Report that hook NAME on HOOK-POINT failed with PROBLEM (a condition or
+text), and switch it off after too many failures in a row."
+  (let* ((key (cons hook-point name))
+         (count (setf (gethash key *hook-failures*) (1+ (gethash key *hook-failures* 0))))
+         (disable (>= count *hook-failure-limit*))
+         (text (format nil "[hook ~(~a~)/~(~a~)] failed: ~a~:[~;~%  Switched off after ~d failures in a row; fix the extension that adds it and load it again.~]"
+                       hook-point name (first-line (princ-to-string problem) 300) disable count)))
+    (when disable
+      (remhash key *hook-failures*)
+      (remove-hook hook-point name))
+    (ignore-errors (format *error-output* "~&~a~%" text))
+    ;; The person (and, in the transcript, the model) sees it too.
+    (ignore-errors
+     (when (and (boundp '*current-session*) (symbol-value '*current-session*))
+       (ui-system (session-frontend (symbol-value '*current-session*)) text)))))
+
 (defun run-hook (hook-point &rest args)
   "Call every NOTIFY hook function registered on HOOK-POINT with ARGS,
-in registration order. Return values are ignored. A function that
-signals an error is reported to *ERROR-OUTPUT* and skipped; it does
-not stop the remaining hook functions or propagate to the caller, so a
-buggy extension cannot take down the agent from a notify hook."
+in registration order.  Return values are ignored.  A function that
+fails is reported and skipped (see above); it never reaches the caller."
   (dolist (entry (gethash hook-point *hooks*))
-    (let ((intent (record-hook-execution :hook-started hook-point (car entry))))
+    (let ((intent (ignore-errors (record-hook-execution :hook-started hook-point (car entry)))))
       (handler-case
           (progn
-            (apply (cdr entry) args)
-            (record-hook-execution :hook-finished hook-point (car entry)
-                                   :parent-id (and intent (getf intent :id))))
-      (error (c)
-        (record-hook-execution :hook-failed hook-point (car entry)
-                               :parent-id (and intent (getf intent :id)) :condition c)
-        (format *error-output* "~&[hook ~a/~a] error: ~a~%"
-                hook-point (car entry) c))))
-  (values)))
+            (with-agent-code () (sb-ext:with-timeout *hook-seconds* (apply (cdr entry) args)))
+            (note-hook-success hook-point (car entry))
+            (ignore-errors (record-hook-execution :hook-finished hook-point (car entry)
+                                                  :parent-id (and intent (getf intent :id)))))
+        (serious-condition (c)
+          (ignore-errors (record-hook-execution :hook-failed hook-point (car entry)
+                                                :parent-id (and intent (getf intent :id)) :condition c))
+          (note-hook-failure hook-point (car entry) c)))))
+  (values))
+
+(defparameter *veto-hook-points* '(:before-tool-call :before-subagent-start :tool-failure)
+  "Chain hook points whose callers take a hook's error themselves: a veto
+for the first two, a decision not made for :tool-failure.")
 
 (defun run-hook-chain (hook-point value)
   "Thread VALUE through every CHAIN hook function registered on
 HOOK-POINT, in registration order: each function receives the previous
 function's return value and must return the (possibly new) value for
-the next one. Returns the final value. Unlike RUN-HOOK, an error here
-propagates to the caller -- a chain hook is in the critical path of a
-request, so silently swallowing its failure could hide a real bug in
-an extension that the agent (or its author) needs to see."
+the next one.  Returns the final value.  A hook that fails, or returns a
+different kind of value than it was given, is reported and skipped (see
+above), the value going on as it was -- except at the veto points
+(*VETO-HOOK-POINTS*), where an error goes to the caller as a refusal."
   (dolist (entry (gethash hook-point *hooks*) value)
-    (let ((intent (record-hook-execution :hook-started hook-point (car entry))))
+    (let ((intent (ignore-errors (record-hook-execution :hook-started hook-point (car entry))))
+          (veto-p (member hook-point *veto-hook-points*)))
       (handler-case
-          (progn
-            (setf value (funcall (cdr entry) value))
-            (record-hook-execution :hook-finished hook-point (car entry)
-                                   :parent-id (and intent (getf intent :id))))
-        (error (condition)
-          (record-hook-execution :hook-failed hook-point (car entry)
-                                 :parent-id (and intent (getf intent :id)) :condition condition)
-          (error condition))))))
+          (let* ((kind (hook-value-kind value))
+                 (new (with-agent-code ()
+                        (sb-ext:with-timeout *hook-seconds*
+                          (funcall (cdr entry) (if (eq kind :plist) (copy-list value) value))))))
+            (if (and (not (eq kind :other)) (not (eq (hook-value-kind new) kind)))
+                (progn
+                  (ignore-errors (record-hook-execution :hook-failed hook-point (car entry)
+                                                        :parent-id (and intent (getf intent :id))))
+                  (note-hook-failure hook-point (car entry)
+                                     (format nil "it returned ~a instead of the ~(~a~) it was given (a chain hook returns its argument, changed or not)"
+                                             (let ((*print-length* 4) (*print-level* 2)) (prin1-to-string new)) kind)))
+                (progn
+                  (setf value new)
+                  (note-hook-success hook-point (car entry))
+                  (ignore-errors (record-hook-execution :hook-finished hook-point (car entry)
+                                                        :parent-id (and intent (getf intent :id)))))))
+        (serious-condition (condition)
+          (ignore-errors (record-hook-execution :hook-failed hook-point (car entry)
+                                                :parent-id (and intent (getf intent :id)) :condition condition))
+          (if veto-p
+              (error condition)
+              (note-hook-failure hook-point (car entry) condition)))))))

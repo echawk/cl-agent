@@ -61,6 +61,7 @@
      (:file "conditions")
      (:file "events")
      (:file "components")
+     (:file "guard")
      (:file "hooks")
      (:file "json-util")
      (:file "parens")
@@ -266,7 +267,8 @@
    (:file "test-logic")
    (:file "test-environments")
    (:file "test-tool-analytics")
-   (:file "test-property-tests"))
+   (:file "test-property-tests")
+   (:file "test-guard"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 
