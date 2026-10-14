@@ -2001,7 +2001,9 @@ during this turn can call SESSION-COMPLETE."
              (sync-session-tools session)
              (auto-compact-if-needed session)
              (let* ((ctx (run-hook-chain :before-request
-                                          (list :messages (session-provider-messages session)
+                                          ;; What the agent remembers rides in every
+                                          ;; request, never in the durable history.
+                                          (list :messages (with-memory-note session (session-provider-messages session))
                                                 ;; A denied budget becomes a no-tool final-answer pass.
                                                 :tools (unless tool-budget-finalization-p
                                                          (session-tools session)))))

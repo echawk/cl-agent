@@ -98,6 +98,7 @@
      (:file "apropos")
      (:file "quality")
      (:file "structural")
+     (:file "memory")
      (:file "extensions")
      (:module "mutation"
       :serial t
@@ -237,6 +238,7 @@
    (:file "test-events")
    (:file "test-tasks")
    (:file "test-input")
+   (:file "test-memory")
    (:file "test-debugger")
    (:file "test-acp")
    (:file "test-mcp")
