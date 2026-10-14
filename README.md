@@ -703,6 +703,25 @@ The agent runs Lem's editing commands too, with the `lem-command` tool:
 - **You see the edits live** in the Lem view, and they stay unsaved unless
   the agent saves.
 
+**Structural edits in any language.** The agent's `syntax-tree` tool edits
+code by its tree-sitter syntax tree. It covers C, C++, Python,
+JavaScript, TypeScript/TSX, Rust, Go, Ruby, Java, JSON, Bash, CSS and HTML.
+- **Looking:** `outline` lists a file's functions, classes, methods and keys
+  with their lines. `show` prints one node and its parts. `query` runs a
+  tree-sitter query.
+- **Editing:** `replace`, `delete`, `insert_before` and `insert_after` act
+  on a node picked by name (`Circle.area`), by line (plus a kind, such as
+  "the function around line 40"), or by query.
+- **Refusing breakage:** an edit that would leave the file with more syntax
+  errors than before is refused, with the line it would break.
+- **Through Lem:** like `lem-command`, edits go through the file's Lem
+  buffer, so you see them live, and they stay unsaved unless the agent
+  saves.
+- **Setup:** it needs tree-sitter's library (`brew install tree-sitter`)
+  and a C compiler. Each language's grammar is fetched from its upstream
+  repository at a pinned commit and built on first use, into the config
+  directory's `tree-sitter/`.
+
 **The copilot.** As you type, a model suggests the code that comes next. It
 works in the Lem view and in the simple editor.
 - **How it looks:** the suggestion shows faint at the cursor. `Tab` takes

@@ -438,6 +438,20 @@ The protocol to implement is lem-server's: `make-view`/`resize-view`/`move-view`
 - **When it asks.** With `copilot-auto` on, a change to the buffer's text starts a timer for `copilot-delay-ms`. A request runs on its own thread. Its answer is shown only if the generation, buffer tick, point and current buffer are all unchanged.
 - **The simple editor.** `lisp-editor.js` takes `suggest` and `suggestAuto` options. The suggestion is drawn after the caret in the highlighted copy of the text, and the textarea is untouched until Tab. `POST /api/copilot/suggest` asks the same copilot about the unsaved text.
 
+## 12. Structural edits by syntax tree (implemented)
+
+`src/syntax-tree.lisp`, the `syntax-tree` tool. It uses tree-sitter-cl, the same bindings as Lem's `lem-tree-sitter`. It doesn't use `lem-tree-sitter` itself, because the agent edits by tree rather than highlights.
+- **The native side** is built under `config/tree-sitter/` with `cc`:
+  - Our own build of tree-sitter-cl's C wrapper. The prebuilt one names a single library version.
+  - One added function for field names. tree-sitter-cl's tree-cursor binding passes pointers to the by-value C API, and crashes.
+  - Grammars, cloned from upstream at a pinned tag, checked against the pinned commit, and compiled from their generated `parser.c` (`*syntax-grammars*`).
+  - libtree-sitter itself comes from the system.
+- **Edits** go through the file's Lem buffer, like `lem-command`'s, and are refused if they add syntax errors.
+  - New text is dedented, then indented to the node's column.
+  - `delete` and `insert_after` take a following `,` or `;` with the node.
+- **Tests** build the JSON grammar offline from `t/fixtures/tree-sitter-json` (upstream source, unchanged). They are skipped where libtree-sitter is missing.
+- **Not yet:** using the grammars' `highlights.scm` for Lem's own highlighting via `lem-tree-sitter`.
+
 ## 8. Risks and open questions
 
 - **Lem internals.** The plan calls internal functions: `run-editor-thread`'s body, `load-init-file`, `invoke-frontend` and `with-editor-stream`. Pin the commit, and keep each internal call in one file (`src/ui/lem/host.lisp`) so moving to a newer Lem is a single review.

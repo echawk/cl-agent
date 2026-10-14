@@ -1,0 +1,3 @@
+tree-sitter/tree-sitter-json v0.24.8 (commit ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24):
+src/parser.c, src/tree_sitter/*.h and LICENSE, unchanged.  The test suite builds
+this grammar offline (t/test-syntax-tree.lisp).
