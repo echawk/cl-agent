@@ -4,7 +4,8 @@
 (defclass shell-job ()
   ((id :initarg :id :reader shell-job-id) (process :initarg :process :reader shell-job-process)
    (output :initarg :output :reader shell-job-output) (error-output :initarg :error-output :reader shell-job-error-output)
-   (started-at :initarg :started-at :reader shell-job-started-at) (expected :initarg :expected :reader shell-job-expected)
+   (started-at :initarg :started-at :reader shell-job-started-at)
+   (environment :initarg :environment :initform nil :reader shell-job-environment) (expected :initarg :expected :reader shell-job-expected)
    ;; The operating-system process remains the authority for output and exit
    ;; status.  Jobpond owns admission, waiting, cancellation delivery, and the
    ;; bounded worker pool around that process.
@@ -66,30 +67,37 @@ agent loop's JSON-Schema validation."
   (unless (and (stringp command) (plusp (length (string-trim " " command))))
     (error "shell command must be a non-empty string"))
   (unless (and (integerp expected) (plusp expected)) (error "expected_seconds must be a positive integer"))
-  (bordeaux-threads:with-lock-held (*shell-job-lock*)
-    (let* ((id (format nil "shell-~d" (incf *shell-job-counter*)))
-           ;; Pass an argv rather than asking UIOP for an additional wrapper
-           ;; shell. This makes the tracked process the command shell itself,
-           ;; so normal simple commands (including `sleep`) are reaped when a
-           ;; managed timeout terminates it.
-           (process (uiop:launch-program (list "/bin/sh" "-c" command) :output :stream :error-output :stream))
-           (job (make-instance 'shell-job :id id :process process :output (uiop:process-info-output process)
-                               :error-output (uiop:process-info-error-output process) :started-at (shell-now) :expected expected)))
-      (setf (gethash id *shell-jobs*) job)
-      (setf (shell-job-supervisor job)
-            (cl-jobpond:job-pool-submit
-             (shell-job-pool)
-             (lambda (supervisor)
-               ;; A Jobpond cancellation interrupts this worker.  Always reap
-               ;; the child in that path, preserving STOP-SHELL-JOB's promise
-               ;; that managed work can be killed without ps/kill.
-               (declare (ignore supervisor))
-               (unwind-protect
-                    (uiop:wait-process process)
-                 (when (uiop:process-alive-p process)
-                   (ignore-errors (uiop:terminate-process process :urgent t)))))
-             :name id :maximum-runtime-milliseconds 0))
-      job)))
+  ;; A project using an environment (environments.lisp) runs its commands
+  ;; in it: podman exec (or run --rm), in the same directory.  Starting
+  ;; its container can take a moment, so outside the lock.
+  (let ((wrapped (environment-wrap-command command))
+        (environment (project-environment)))
+    (bordeaux-threads:with-lock-held (*shell-job-lock*)
+      (let* ((id (format nil "shell-~d" (incf *shell-job-counter*)))
+             ;; Pass an argv rather than asking UIOP for an additional wrapper
+             ;; shell. This makes the tracked process the command shell itself,
+             ;; so normal simple commands (including `sleep`) are reaped when a
+             ;; managed timeout terminates it.
+             (process (uiop:launch-program (or wrapped (list "/bin/sh" "-c" command))
+                                           :output :stream :error-output :stream))
+             (job (make-instance 'shell-job :id id :process process :output (uiop:process-info-output process)
+                                 :error-output (uiop:process-info-error-output process) :started-at (shell-now) :expected expected
+                                 :environment (and wrapped (format nil "~a (~(~a~))" (getf environment :name) (getf environment :mode))))))
+        (setf (gethash id *shell-jobs*) job)
+        (setf (shell-job-supervisor job)
+              (cl-jobpond:job-pool-submit
+               (shell-job-pool)
+               (lambda (supervisor)
+                 ;; A Jobpond cancellation interrupts this worker.  Always reap
+                 ;; the child in that path, preserving STOP-SHELL-JOB's promise
+                 ;; that managed work can be killed without ps/kill.
+                 (declare (ignore supervisor))
+                 (unwind-protect
+                      (uiop:wait-process process)
+                   (when (uiop:process-alive-p process)
+                     (ignore-errors (uiop:terminate-process process :urgent t)))))
+               :name id :maximum-runtime-milliseconds 0))
+        job))))
 (defun find-shell-job (id) (or (gethash id *shell-jobs*) (error "No managed shell job named ~s" id)))
 
 (defun finish-shell-job (job &key interrupted)
@@ -102,8 +110,8 @@ agent loop's JSON-Schema validation."
       (shell-learn (shell-job-expected job) elapsed)
       (setf (shell-job-finished-p job) t
             (shell-job-result job)
-            (format nil "~:[~;INTERRUPTED: command exceeded its deadline and was terminated. Check for an infinite loop; use start-shell-job for intentional long work.~%~]Job: ~a~%Elapsed: ~,2fs (estimate ~ds; learned deviation ~,2fs)~%Exit code: ~d~%~a"
-                    interrupted (shell-job-id job) elapsed (shell-job-expected job) *shell-duration-deviation* code
+            (format nil "~:[~;INTERRUPTED: command exceeded its deadline and was terminated. Check for an infinite loop; use start-shell-job for intentional long work.~%~]Job: ~a~@[~%Environment: ~a~]~%Elapsed: ~,2fs (estimate ~ds; learned deviation ~,2fs)~%Exit code: ~d~%~a"
+                    interrupted (shell-job-id job) (shell-job-environment job) elapsed (shell-job-expected job) *shell-duration-deviation* code
                     (concatenate 'string out err)))))
   (shell-job-result job))
 (defun stop-shell-job (id &key urgent)
