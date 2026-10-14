@@ -188,6 +188,7 @@
      (:file "logic")
      (:file "environments")
      (:file "tool-analytics")
+     (:file "property-tests")
      ;; Web UI slash commands need DEFINE-SLASH-COMMAND (repl.lisp) and
      ;; DEFINE-COMMAND-COMPLETER (completion.lisp), and the Lisp tab's REPL
      ;; uses completion.lisp, clspec.lisp and apropos.lisp, so they load late.
@@ -264,7 +265,8 @@
    (:file "test-syntax-tree")
    (:file "test-logic")
    (:file "test-environments")
-   (:file "test-tool-analytics"))
+   (:file "test-tool-analytics")
+   (:file "test-property-tests"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

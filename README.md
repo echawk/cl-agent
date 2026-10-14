@@ -479,6 +479,20 @@ When `check-parens`, `eval-lisp` or `write-extension` finds an imbalance, it
 says exactly where, by line and column, and shows the fix. Passing
 `fix_parens: true` applies it.
 
+**Property-based tests from declared types.** `property-test` checks a
+Lisp function by calling it many times, with arguments generated from its
+declared types (`defun*` or `declaim ftype`, the claims the quality gate
+asks for). The arguments grow from small to large.
+- **What each call must do:** signal no error (except allowed condition
+  types), return within a time limit, return values of its declared return
+  type, and satisfy the properties you give as lambdas.
+- **Failures:** a failure is shrunk to a smallest example and reported with
+  the seed that reproduces it.
+- **Other types:** `types` overrides the generated types, for a function
+  with no declared types or with class arguments.
+- **Real calls:** it calls the function for real, so point it at functions
+  without side effects.
+
 ### Memory
 
 The agent keeps what it learns across sessions with `remember`, `recall` and
