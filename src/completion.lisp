@@ -236,7 +236,7 @@ evaluated (with CONTEXT bound) to a list of strings or (name . doc) conses."
                           (getf (subagent-task-snapshot task) :description)))))
 
 (define-word-completer "session"
-  '("save" "restore" "list" "durable-list" "resume" "replay" "rename" "delete" "timeline" "branch" "export" "rewind")
+  '("new" "save" "restore" "list" "durable-list" "resume" "replay" "rename" "delete" "timeline" "branch" "export" "rewind")
   (let ((action (first (getf context :args))))
     (cond ((string-equal action "restore")
            (remove nil (mapcar (lambda (s) (getf s :name)) (list-saved-sessions))))

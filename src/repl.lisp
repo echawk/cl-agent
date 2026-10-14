@@ -768,6 +768,36 @@ facts so the branch is independently resumable."
                                          :through-sequence through-sequence))
     session))
 
+(defun start-new-session (session &key name)
+  "Carry on in a fresh durable session, as starting cl-agent again would,
+without leaving it: SESSION's conversation stays as it was, resumable from
+the Sessions tab, and SESSION goes on under a new identity with only its
+system prompt.  The provider, tools, MCP connections and settings stay.
+NAME names the new session.  Returns SESSION and the old identity."
+  (let* ((old-id (session-id session))
+         (system (let ((first (first (session-messages session))))
+                   (and (equal (getf first :role) "system") first))))
+    (setf (session-id session) (allocate-session-id)
+          (session-created-at session) (get-universal-time)
+          (session-start-time session) (get-internal-real-time)
+          (session-event-sequence session) 0
+          (session-current-turn-id session) nil
+          (session-display-name session) nil
+          (session-messages session) (and system (list system))
+          (session-active-plan session) nil
+          (session-task-record session) nil
+          (session-deferred-input session) nil
+          (session-raw-stats session) (list :requests 0 :tool-calls 0 :prompt-tokens 0
+                                            :completion-tokens 0 :total-tokens 0))
+    (remhash old-id *live-sessions*)
+    (setf (gethash (session-id session) *live-sessions*) session)
+    ;; The same first fact as a session made at startup.
+    (record-session-event session :session-created :component "session"
+                          :payload (list :message system :previous-session-id old-id))
+    (when (and (stringp name) (plusp (length (string-trim " " name))))
+      (rename-session session name))
+    (values session old-id)))
+
 (defun find-subagent-model-profile (session name)
   "Find a session-local subagent model profile by NAME."
   (let ((name-string (subagent-profile-name-string name)))
@@ -2540,8 +2570,10 @@ with a tool-free continuity summary. It is never invoked automatically."
       "No saved sessions. Use /session save NAME to create one."))
 
 (define-slash-command session (session arg)
-  "Usage: /session save [NAME], /session restore NAME, /session list,
+  "Usage: /session new [NAME], /session save [NAME], /session restore NAME, /session list,
 or /session durable-list|resume ID|replay ID|rename NAME|delete ID|timeline [LIMIT]|branch [SEQUENCE]|export PATH|rewind SEQUENCE [files].
+
+NEW starts a fresh conversation; the current one stays in the Sessions tab.
 
 SAVE writes a named local JSON snapshot (or a generated timestamped name when
 NAME is omitted). RESTORE replaces the current conversation and compatible
@@ -2549,6 +2581,15 @@ session settings; LIST displays every saved snapshot."
   (multiple-value-bind (action name) (split-session-command-argument arg)
     (handler-case
         (cond
+          ((string= action "new")
+           (let ((had (count-if (lambda (message) (member (getf message :role) '("user" "assistant") :test #'equal))
+                                (session-messages session))))
+             (multiple-value-bind (new old-id) (start-new-session session :name name)
+               (ui-conversation-replaced (session-frontend session) new)
+               (ui-stats-updated (session-frontend session) (session-stats-snapshot new))
+               (ui-system (session-frontend session)
+                          (format nil "New session~@[ ~a~]. The last one (~d message~:p) is ~a in the Sessions tab; /session resume ~a returns to it."
+                                  (session-display-name new) had old-id old-id)))))
           ((string= action "save")
            (let ((record (save-session-snapshot session
                                                 (and (plusp (length name)) name))))
