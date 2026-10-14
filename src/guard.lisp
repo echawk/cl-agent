@@ -240,23 +240,63 @@ value is then NIL."
   (when (plusp *agent-code-depth*)
     (error 'agent-memory-exhausted :used used :size size)))
 
+(defvar *memory-guard-wakeup* (sb-thread:make-semaphore :name "cl-agent memory guard"))
+(defvar *memory-guard-thread* nil)
+
+(declaim (ftype (function () (values boolean &optional)) heap-over-limit-p))
+(defun heap-over-limit-p ()
+  (> (sb-kernel:dynamic-usage) (* *agent-memory-limit* (sb-ext:dynamic-space-size))))
+
 (declaim (ftype (function () (values t &optional)) check-agent-memory))
 (defun check-agent-memory ()
-  "Stop the agent code running now when the heap is over its limit (an
-after-GC hook)."
-  (let ((used (sb-kernel:dynamic-usage)) (size (sb-ext:dynamic-space-size))
-        (now (get-internal-real-time)))
-    (when (> used (* *agent-memory-limit* size))
-      (dolist (entry (sb-thread:with-mutex (*agent-threads-lock*) (copy-list *agent-threads*)))
-        ;; Once a second each, at most: unwinding takes a moment.
-        (when (> (- now (cdr entry)) internal-time-units-per-second)
-          (setf (cdr entry) now)
-          (ignore-errors
-           (sb-thread:interrupt-thread (car entry)
-                                       (lambda () (signal-agent-memory-exhausted used size)))))))))
+  "Stop the agent code running now when the heap's live data is over its
+limit.  The heap counts garbage not yet collected, so a full collection
+decides first: only what survives it counts."
+  (when (heap-over-limit-p)
+    (sb-ext:gc :full t)
+    (when (heap-over-limit-p)
+      (let ((used (sb-kernel:dynamic-usage)) (size (sb-ext:dynamic-space-size))
+            (now (get-internal-real-time)))
+        (dolist (entry (sb-thread:with-mutex (*agent-threads-lock*) (copy-list *agent-threads*)))
+          ;; Once a second each, at most: unwinding takes a moment.
+          (when (> (- now (cdr entry)) internal-time-units-per-second)
+            (setf (cdr entry) now)
+            (ignore-errors
+             (sb-thread:interrupt-thread (car entry)
+                                         (lambda () (signal-agent-memory-exhausted used size))))))))))
+
+(defun wake-memory-guard ()
+  "The after-GC hook: cheap, and safe in whatever thread runs it -- the
+guard's own thread does the work."
+  (when (heap-over-limit-p)
+    (sb-thread:signal-semaphore *memory-guard-wakeup*)))
+
+(defun memory-guard-loop ()
+  (loop
+    (sb-thread:wait-on-semaphore *memory-guard-wakeup*)
+    (ignore-errors (check-agent-memory))
+    ;; Wakeups that came meanwhile -- the check's own collection among
+    ;; them -- are this check; and at most one check a second.
+    (loop while (sb-thread:try-semaphore *memory-guard-wakeup*))
+    (sleep 1)))
 
 (defun install-memory-guard ()
-  (pushnew 'check-agent-memory sb-ext:*after-gc-hooks*))
+  "Hook the guard to the collector, and start its thread (lazily: an image
+being saved must have no other threads -- see STOP-MEMORY-GUARD)."
+  (pushnew 'wake-memory-guard sb-ext:*after-gc-hooks*)
+  (unless (and *memory-guard-thread* (sb-thread:thread-alive-p *memory-guard-thread*))
+    (setf *memory-guard-thread*
+          (let ((*agent-code-depth* 0))
+            (sb-thread:make-thread #'memory-guard-loop :name "cl-agent memory guard")))))
+
+(defun stop-memory-guard ()
+  (let ((thread *memory-guard-thread*))
+    (setf *memory-guard-thread* nil)
+    (when (and thread (sb-thread:thread-alive-p thread))
+      (sb-thread:terminate-thread thread)
+      (ignore-errors (sb-thread:join-thread thread :default nil :timeout 5)))))
+
+(pushnew 'stop-memory-guard sb-ext:*save-hooks*)
 
 ;;; A thread started from agent code runs agent code too: it is counted
 ;;; for the memory guard, and cannot exit the image.  (The agent's own
@@ -274,7 +314,7 @@ after-GC hook)."
     (unless (sb-int:encapsulated-p 'sb-thread:make-thread 'cl-agent-guard)
       (sb-int:encapsulate 'sb-thread:make-thread 'cl-agent-guard #'mark-agent-threads))))
 
-(install-memory-guard)
+(pushnew 'wake-memory-guard sb-ext:*after-gc-hooks*)
 (install-thread-marking)
 
 (defvar *previous-debugger-hook* nil)
@@ -306,6 +346,7 @@ only that thread's work, not the process."
   (unless (eq sb-ext:*invoke-debugger-hook* 'survival-debugger-hook)
     (setf *previous-debugger-hook* sb-ext:*invoke-debugger-hook*
           sb-ext:*invoke-debugger-hook* 'survival-debugger-hook))
+  (install-memory-guard)
   (setf *survival-hook-installed* t))
 
 (declaim (ftype (function () (values t &optional)) reassert-guards))

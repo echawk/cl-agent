@@ -149,7 +149,13 @@
     ;; above what is in use now, so the test allocates tens of MB, not GBs.
     (setf *agent-memory-limit* (+ (/ (sb-kernel:dynamic-usage) (sb-ext:dynamic-space-size)) 0.05))
     (unwind-protect
-         (let ((out (call-tool "eval-lisp" (jobj "form" "(let ((a nil)) (loop repeat 2000000 do (push (make-string 1000) a)) (length a))"))))
-           (check (search "heap was" out) out))
+         (progn
+           (install-memory-guard)
+           (let ((out (call-tool "eval-lisp" (jobj "form" "(let ((a nil)) (loop repeat 2000000 do (push (make-string 1000) a)) (length a))"))))
+             (check (search "heap was" out) out))
+           ;; What it built is garbage now, though the heap still counts it
+           ;; until a full collection: ordinary code is not stopped for it.
+           (sleep 1.5)
+           (check (search "2" (call-tool "eval-lisp" (jobj "form" "(+ 1 1)"))) "the next call runs"))
       (setf *agent-memory-limit* limit)
       (sb-ext:gc :full t))))
