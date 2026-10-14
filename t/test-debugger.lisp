@@ -106,9 +106,12 @@ Each of HOOK-FORMS is a function form installed under a fresh hook name."
       (signal 'test-debug-serious) "unreached")
     (unwind-protect
          (progn
-           (check-equal (handler-case (call-tool "test-debug-serious" (jobj))
-                          (test-debug-serious () :passed-through))
-                        :passed-through)
+           ;; The debugger is for errors; a serious non-error goes past it --
+           ;; and, like anything else, ends as the tool's text (guard.lisp).
+           (check (search "Error running test-debug-serious"
+                          (handler-case (call-tool "test-debug-serious" (jobj))
+                            (test-debug-serious () "escaped the tool call")))
+                  "contained by the tool call")
            (check-equal (list-failure-receipts) nil "nothing was journaled"))
       (unregister-tool "test-debug-serious"))))
 

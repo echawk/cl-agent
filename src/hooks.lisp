@@ -148,6 +148,7 @@ front instead.")
   (publish-component :hook-point (car hook-point)
                      :metadata (list :description (cdr hook-point))))
 
+(declaim (ftype (function (symbol t (or function symbol) &key (:append t)) (values t &optional)) add-hook))
 (defun add-hook (hook-point name function &key (append t))
   "Register FUNCTION under NAME (any EQL-comparable designator, usually
 a symbol or keyword -- re-adding the same NAME replaces the previous
@@ -232,12 +233,14 @@ protocol data needed for replay."
 (defvar *hook-failures* (make-hash-table :test 'equal)
   "(hook-point . name) -> failures in a row.")
 
+(declaim (ftype (function (t) (values boolean &optional)) plist-shaped-p))
 (defun plist-shaped-p (value)
   (and (listp value)
        (handler-case (and (evenp (list-length value))
                           (loop for (key) on value by #'cddr always (keywordp key)))
          (error () nil))))
 
+(declaim (ftype (function (t) (values (member :hash-table :string :plist :other) &optional)) hook-value-kind))
 (defun hook-value-kind (value)
   (cond ((hash-table-p value) :hash-table)
         ((stringp value) :string)
@@ -247,6 +250,7 @@ protocol data needed for replay."
 (defun note-hook-success (hook-point name)
   (remhash (cons hook-point name) *hook-failures*))
 
+(declaim (ftype (function (symbol t (or condition string)) (values t &optional)) note-hook-failure))
 (defun note-hook-failure (hook-point name problem)
   "Report that hook NAME on HOOK-POINT failed with PROBLEM (a condition or
 text), and switch it off after too many failures in a row."
@@ -264,28 +268,48 @@ text), and switch it off after too many failures in a row."
      (when (and (boundp '*current-session*) (symbol-value '*current-session*))
        (ui-system (session-frontend (symbol-value '*current-session*)) text)))))
 
+(declaim (ftype (function (symbol &rest t) (values &optional)) run-hook))
 (defun run-hook (hook-point &rest args)
   "Call every NOTIFY hook function registered on HOOK-POINT with ARGS,
 in registration order.  Return values are ignored.  A function that
 fails is reported and skipped (see above); it never reaches the caller."
   (dolist (entry (gethash hook-point *hooks*))
-    (let ((intent (ignore-errors (record-hook-execution :hook-started hook-point (car entry)))))
-      (handler-case
-          (progn
-            (with-agent-code () (sb-ext:with-timeout *hook-seconds* (apply (cdr entry) args)))
-            (note-hook-success hook-point (car entry))
-            (ignore-errors (record-hook-execution :hook-finished hook-point (car entry)
-                                                  :parent-id (and intent (getf intent :id)))))
-        (serious-condition (c)
-          (ignore-errors (record-hook-execution :hook-failed hook-point (car entry)
-                                                :parent-id (and intent (getf intent :id)) :condition c))
-          (note-hook-failure hook-point (car entry) c)))))
+    (let* ((intent (ignore-errors (record-hook-execution :hook-started hook-point (car entry))))
+           (failure (call-hook-contained hook-point (car entry)
+                                         (lambda () (apply (cdr entry) args) nil))))
+      (cond ((null failure)
+             (note-hook-success hook-point (car entry))
+             (ignore-errors (record-hook-execution :hook-finished hook-point (car entry)
+                                                   :parent-id (and intent (getf intent :id)))))
+            (t
+             (ignore-errors (record-hook-execution :hook-failed hook-point (car entry)
+                                                   :parent-id (and intent (getf intent :id)) :condition failure))
+             (note-hook-failure hook-point (car entry) failure)))))
   (values))
+
+(declaim (ftype (function (symbol t function) (values (or null condition) t &optional)) call-hook-contained))
+(defun call-hook-contained (hook-point name thunk)
+  "Call THUNK, a hook's work, as agent code with a time limit.  Returns
+NIL and THUNK's value when it returned; else the condition that stopped it
+-- whatever it signalled (but a real Ctrl-C), or AGENT-ESCAPE for a
+non-local exit (guard.lisp)."
+  (let ((value nil))
+    (values
+     (with-contained-exits (:on-escape (make-condition 'agent-escape
+                                                       :where (format nil "The ~(~s~) hook ~(~a~)" hook-point name)))
+       (block call
+         (handler-bind ((serious-condition
+                          (lambda (c) (unless (interactive-interrupt-p c) (return-from call c)))))
+           (setf value (unwind-protect (with-agent-code () (sb-ext:with-timeout *hook-seconds* (funcall thunk)))
+                         (reassert-guards)))
+           nil)))
+     value)))
 
 (defparameter *veto-hook-points* '(:before-tool-call :before-subagent-start :tool-failure)
   "Chain hook points whose callers take a hook's error themselves: a veto
 for the first two, a decision not made for :tool-failure.")
 
+(declaim (ftype (function (symbol t) (values t &optional)) run-hook-chain))
 (defun run-hook-chain (hook-point value)
   "Thread VALUE through every CHAIN hook function registered on
 HOOK-POINT, in registration order: each function receives the previous
@@ -297,26 +321,27 @@ above), the value going on as it was -- except at the veto points
   (dolist (entry (gethash hook-point *hooks*) value)
     (let ((intent (ignore-errors (record-hook-execution :hook-started hook-point (car entry))))
           (veto-p (member hook-point *veto-hook-points*)))
-      (handler-case
-          (let* ((kind (hook-value-kind value))
-                 (new (with-agent-code ()
-                        (sb-ext:with-timeout *hook-seconds*
-                          (funcall (cdr entry) (if (eq kind :plist) (copy-list value) value))))))
-            (if (and (not (eq kind :other)) (not (eq (hook-value-kind new) kind)))
-                (progn
-                  (ignore-errors (record-hook-execution :hook-failed hook-point (car entry)
-                                                        :parent-id (and intent (getf intent :id))))
-                  (note-hook-failure hook-point (car entry)
-                                     (format nil "it returned ~a instead of the ~(~a~) it was given (a chain hook returns its argument, changed or not)"
-                                             (let ((*print-length* 4) (*print-level* 2)) (prin1-to-string new)) kind)))
-                (progn
-                  (setf value new)
-                  (note-hook-success hook-point (car entry))
-                  (ignore-errors (record-hook-execution :hook-finished hook-point (car entry)
-                                                        :parent-id (and intent (getf intent :id)))))))
-        (serious-condition (condition)
-          (ignore-errors (record-hook-execution :hook-failed hook-point (car entry)
-                                                :parent-id (and intent (getf intent :id)) :condition condition))
-          (if veto-p
-              (error condition)
-              (note-hook-failure hook-point (car entry) condition)))))))
+      (let ((kind (hook-value-kind value)))
+        (multiple-value-bind (condition new)
+            (call-hook-contained hook-point (car entry)
+                                 (lambda () (funcall (cdr entry) (if (eq kind :plist) (copy-list value) value))))
+          (cond
+            (condition
+             (ignore-errors (record-hook-execution :hook-failed hook-point (car entry)
+                                                   :parent-id (and intent (getf intent :id)) :condition condition))
+             (if veto-p
+                 (error condition)
+                 (note-hook-failure hook-point (car entry) condition)))
+            ((and (not (eq kind :other)) (not (eq (hook-value-kind new) kind)))
+             (ignore-errors (record-hook-execution :hook-failed hook-point (car entry)
+                                                   :parent-id (and intent (getf intent :id))))
+             (note-hook-failure hook-point (car entry)
+                                (format nil "it returned ~a instead of the ~(~a~) it was given (a chain hook returns its argument, changed or not)"
+                                        (or (ignore-errors (let ((*print-length* 4) (*print-level* 2)) (prin1-to-string new)))
+                                            "an unprintable value")
+                                        kind)))
+            (t
+             (setf value new)
+             (note-hook-success hook-point (car entry))
+             (ignore-errors (record-hook-execution :hook-finished hook-point (car entry)
+                                                   :parent-id (and intent (getf intent :id)))))))))))

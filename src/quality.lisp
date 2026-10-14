@@ -12,10 +12,17 @@
   (or *lisp-review-config*
       (setf *lisp-review-config* (mallet:load-config *lisp-review-config-path*))))
 
+(defvar *temporary-name-random-state* (make-random-state t))
+
 (defun temporary-lisp-pathname (&optional (type "lisp"))
   "Return a fresh pathname in UIOP:TEMPORARY-DIRECTORY."
   (merge-pathnames
-   (make-pathname :name (string-downcase (symbol-name (gensym "cl-agent-review-")))
+   ;; GENSYM's counter starts alike in every process: two agents (or two
+   ;; live sessions) would share files.  The process and a random part keep
+   ;; them apart.
+   (make-pathname :name (format nil "cl-agent-review-~d-~36r-~(~a~)"
+                                (sb-unix:unix-getpid) (random (expt 36 8) *temporary-name-random-state*)
+                                (symbol-name (gensym "")))
                   :type type)
    (uiop:temporary-directory)))
 
@@ -209,7 +216,7 @@ is retained, and the definitions compiling installs in this image are undone
                         ;; (a load in progress) would keep them from this review.
                         ;; The source is the model's: no read-time evaluation,
                         ;; no exiting, and a limit on runaway macros (guard.lisp).
-                        (with-agent-code ()
+                        (contained-agent-code (:where "Compiling this source")
                           (let ((*read-eval* nil))
                             (sb-ext:with-timeout 120
                               (with-compilation-unit (:override t)

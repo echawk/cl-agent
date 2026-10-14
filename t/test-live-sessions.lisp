@@ -68,3 +68,39 @@
           (check-equal status 400)
           (check (search "the agent's own" (gethash "error" json)) "the first cannot be closed"))))
       (setf *live-session-factory* nil))))
+
+(deftest a-past-session-reopens-as-a-live-tab ()
+  (with-test-web-frontend (primary)
+    (setf *live-session-factory*
+          (lambda (&key frontend model directory)
+            (declare (ignore model))
+            (make-session (make-instance 'ollama-provider :model "m") :frontend frontend :working-directory directory)))
+    (unwind-protect
+         (let* ((there (uiop:ensure-directory-pathname (merge-pathnames "live-past/" *config-directory*)))
+                (past (progn (ensure-directories-exist there)
+                             (make-session (make-instance 'ollama-provider :model "m") :working-directory there)))
+                (id (princ-to-string (session-id past))))
+           ;; A conversation from before, in its own directory, since closed.
+           (dolist (message (list (list :role "user" :content "remember the walrus")
+                                  (list :role "assistant" :content "The walrus is remembered.")))
+             (record-session-event past (if (equal (getf message :role) "user") :user-message-accepted :assistant-response-finished)
+                                   :component "session" :payload (list :message message)))
+           (persist-session-manifest past)
+           (remhash id *live-sessions*)
+           (let* ((opened (live-request primary "/api/live" nil :json (jobj "resume" id)))
+                  (live-id (gethash "id" opened)))
+             (unwind-protect
+                  (progn
+                    (check-equal (gethash "session" opened) id "the same durable session")
+                    (check (search "live-past" (gethash "directory" opened)) "in the directory it worked in")
+                    (check (search "walrus" (transcript-text (live-request primary "/api/state" live-id)))
+                           "its conversation is back, in its own tab")
+                    (check-equal (gethash "id" (live-request primary "/api/live" nil :json (jobj "resume" id))) live-id
+                                 "opening it again goes to the same tab")
+                    (check (search "another live session"
+                                   (handler-case (progn (resume-session (web-frontend-session primary) id) "resumed")
+                                     (error (c) (princ-to-string c))))
+                           "the first cannot resume a log another session is writing"))
+               (live-request primary "/api/live/close" nil :json (jobj "id" live-id)))
+             (check (not (durable-session-in-use-p id)) "closed, its log is free again")))
+      (setf *live-session-factory* nil))))

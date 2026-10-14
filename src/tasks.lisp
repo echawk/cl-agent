@@ -42,12 +42,17 @@ rebuilt there, :IN-PROCESS always uses the legacy synchronous path.")
 (defvar *subagent-default-max-seconds* 600
   "Wall-clock cap for a task unless its contract says otherwise.")
 
-(defvar *subagent-grantable-tools*
-  '("shell" "sandbox-shell" "read-file" "read-file-range" "lisp-apropos"
-    "review-lisp" "check-parens" "lookup-cl-spec" "ask-llm"
-    "list-failures" "inspect-failure")
-  "Tools a parent may grant to a child.  Deliberately read-oriented: write
-tools and task tools are absent.  An extension may push more names.")
+(defvar *subagent-ungrantable-tools* '()
+  "Tool names a parent may NOT grant to a child.  Every other registered
+tool can be granted -- write tools, logic, environments, subagents of its
+own (to the depth limit) -- for the parent asks for each one by name; what
+a child gets by default stays read-only (*SUBAGENT-DEFAULT-TOOLS*).")
+
+(defun subagent-grantable-tools ()
+  "The names of the tools a parent may grant to a child, sorted."
+  (sort (remove-if (lambda (name) (member name *subagent-ungrantable-tools* :test #'string=))
+                   (mapcar #'tool-name (list-tools)))
+        #'string<))
 
 (defvar *subagent-default-tools*
   '("shell" "read-file" "read-file-range" "lisp-apropos" "review-lisp" "check-parens")
@@ -404,14 +409,15 @@ file.  It never writes to stdout, which carries the worker protocol."))
 
 (defun resolve-subagent-tools (requested role)
   "Return the tool-name list for a child.  REQUESTED (caller) wins over ROLE,
-which wins over the defaults; names outside *SUBAGENT-GRANTABLE-TOOLS* are
-refused so a model cannot grant a child more authority than the host allows."
+which wins over the defaults; a name that is no registered tool, or one in
+*SUBAGENT-UNGRANTABLE-TOOLS*, is refused, naming those that can be granted."
   (let* ((names (or requested (getf role :tools) *subagent-default-tools*))
-         (denied (remove-if (lambda (name) (member name *subagent-grantable-tools* :test #'string=))
+         (grantable (subagent-grantable-tools))
+         (denied (remove-if (lambda (name) (member name grantable :test #'string=))
                             names)))
     (when denied
-      (error "Subagents may not be granted: ~{~a~^, ~}. Grantable tools: ~{~a~^, ~}."
-             denied *subagent-grantable-tools*))
+      (error "Subagents may not be granted: ~{~a~^, ~} (~:[no such tool~;not grantable~]). Grantable tools: ~{~a~^, ~}."
+             denied (some #'find-tool denied) grantable))
     (remove-duplicates names :test #'string= :from-end t)))
 
 (defun build-subagent-contract (parent task system &key role profile tools
@@ -473,7 +479,10 @@ of keywords, strings and integers."
          (provider (make-provider (getf spec :keyword) :model (getf spec :model)
                                   :api-key (getf spec :api-key)))
          (names (getf contract :tools))
-         (tools (remove nil (mapcar #'find-tool names)))
+         ;; A tool an extension defines exists here once the extensions load.
+         (tools (progn (unless (every #'find-tool names)
+                         (ignore-errors (load-enabled-extensions :report-stream (make-broadcast-stream))))
+                       (remove nil (mapcar #'find-tool names))))
          (missing (set-difference names (mapcar #'tool-name tools) :test #'string=)))
     (when (and (getf spec :base-url) (slot-exists-p provider 'base-url))
       (setf (slot-value provider 'base-url) (getf spec :base-url)))
@@ -670,7 +679,7 @@ of keywords, strings and integers."
     (find-subagent-task id)))
 
 (define-tool start-subagent (args)
-    (:description "Start an isolated subagent in its own process and return immediately with a task id. Several can run at once. It runs a real model with only the tools you grant (tools: names from the grantable set; default is read-only investigation). Use wait-subagent to collect its report. Prefer this over delegate-task when you can do other work, or launch several independent investigations, in parallel."
+    (:description "Start an isolated subagent in its own process and return immediately with a task id. Several can run at once. It runs a real model with only the tools you grant: tools is a list of tool names, any of yours (logic, write-file, eval-lisp, ...); without it the child gets read-only investigation tools. Use wait-subagent to collect its report. Prefer this over delegate-task when you can do other work, or launch several independent investigations, in parallel."
      :effects (list :process)
      :parameters (jobj "type" "object"
                        "properties" (jobj "task" (jobj "type" "string" "description" "What the subagent must do.")
@@ -733,4 +742,4 @@ of keywords, strings and integers."
                       (list-subagent-tasks))
               (list "none"))
           (mapcar (lambda (r) (getf r :name)) (list-subagent-roles))
-          *subagent-grantable-tools*))
+          (subagent-grantable-tools)))

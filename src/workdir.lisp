@@ -18,6 +18,7 @@
   (:documentation "SESSION's own working directory, or NIL to follow the process's.")
   (:method (session) (declare (ignore session)) nil))
 
+(declaim (ftype (function () (values pathname &optional)) current-directory))
 (defun current-directory ()
   "The working directory of the session this thread serves."
   (let ((session (and (boundp '*current-session*) *current-session*)))

@@ -731,6 +731,11 @@ response. Recovery must not silently retry or invent an assistant message."
 
 No provider request, tool call, or hook is rerun.  Recovery therefore remains
 an inspection/reuse operation, not an accidental replay of side effects."
+  ;; Two running sessions writing one log would interleave it.
+  (let ((holder (and (fboundp 'live-frontend-for-session)
+                     (funcall 'live-frontend-for-session session-id))))
+    (when (and holder (not (eq (funcall 'web-frontend-session holder) session)))
+      (error "Session ~a is open in another live session; switch to its tab instead." session-id)))
   (multiple-value-bind (events messages) (replay-session session-id)
     (unless events (error "Session ~a has no durable events" session-id))
     (setf (session-id session) session-id
@@ -2788,6 +2793,36 @@ result (NIL => caller should stop the REPL); otherwise return :NOT-A-COMMAND."
               (progn (ui-system (session-frontend session) (format nil "Unknown command /~a. Try /help." name)) t))))
       :not-a-command))
 
+(defun repl-step (session)
+  "Read one input for SESSION and act on it: :GO to read the next, :STOP
+when the input has ended or the person quit."
+  (let* ((frontend (session-frontend session))
+         (line (or (pop (session-deferred-input session))
+                   ;; Messages queued during the last turn run before we prompt.
+                   (let ((queued (ui-poll-input frontend)))
+                     (when queued
+                       (setf (session-deferred-input session)
+                             (append (rest queued) (session-deferred-input session)))
+                       (first queued)))
+                   (ui-prompt-input frontend))))
+    (cond ((null line) :stop)
+          ((zerop (length (string-trim " " line))) :go)
+          (t
+           (let ((result (first (or (with-turn-guard (:frontend frontend
+                                                      :where (format nil "The command ~a" (first-line line 60)))
+                                      (with-session-directory (session)
+                                        (list (dispatch-slash-command session line))))
+                                    (list :failed)))))
+             (cond
+               ((eq result :not-a-command)
+                (with-turn-guard (:frontend frontend :where "The turn")
+                  (with-session-directory (session)
+                    (session-submit-user-text session line)
+                    (run-agent-turn session)))
+                :go)
+               ((null result) :stop)
+               (t :go)))))))
+
 (defun run-repl (session &key initial-task (primary t))
   "The interactive loop: read a line via SESSION-FRONTEND, treat a
 /command specially, otherwise submit it as a user message (via SESSION-
@@ -2822,29 +2857,22 @@ turn runs in SESSION's own working directory (workdir.lisp)."
                       (with-session-directory (session)
                         (session-submit-user-text session initial-task)
                         (run-agent-turn session))))
-                  (loop
-                    (let ((line (or (pop (session-deferred-input session))
-                                    ;; Messages queued during the last turn run before we prompt.
-                                    (let ((queued (ui-poll-input frontend)))
-                                      (when queued
-                                        (setf (session-deferred-input session)
-                                              (append (rest queued) (session-deferred-input session)))
-                                        (first queued)))
-                                    (ui-prompt-input frontend))))
-                      (unless line (return))
-                      (when (plusp (length (string-trim " " line)))
-                        (let ((result (first (or (with-turn-guard (:frontend frontend
-                                                                   :where (format nil "The command ~a" (first-line line 60)))
-                                                   (with-session-directory (session)
-                                                     (list (dispatch-slash-command session line))))
-                                                 (list :failed)))))
-                          (cond
-                            ((eq result :not-a-command)
-                             (with-turn-guard (:frontend frontend :where "The turn")
-                               (with-session-directory (session)
-                                 (session-submit-user-text session line)
-                                 (run-agent-turn session))))
-                            ((null result) (return))))))))
+                  ;; Each step guarded as a whole too -- waiting at the
+                  ;; prompt included, where a thread the model started could
+                  ;; still interrupt this one -- and given a restart to come
+                  ;; back to, which (abort) and the survival hook find.
+                  (loop with failures = 0
+                        for step = (with-turn-guard (:frontend frontend :where "The session loop")
+                                     (restart-case (repl-step session)
+                                       (return-to-prompt () :report "Return to the cl-agent prompt." :go)
+                                       (abort () :report "Return to the cl-agent prompt." :go)))
+                        until (eq step :stop)
+                        do (reassert-guards)
+                           (if (eq step :go)
+                               (setf failures 0)
+                               ;; A frontend that fails at once, again and again,
+                               ;; must not spin.
+                               (when (> (incf failures) 3) (sleep 0.5)))))
              (when primary
                (stop-all-subagent-tasks)
                (run-hook :on-shutdown))))

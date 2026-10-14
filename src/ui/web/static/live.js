@@ -7,6 +7,8 @@
 // Alt-↓); "+" (Alt-N) starts a session in a directory, with a model and a
 // name; "×" stops one (the first is the agent's own and stays).  The list
 // is polled, so background sessions' progress shows without their streams.
+// A past session opens in a tab of its own from the Sessions view
+// (openAsLive).
 
 import { on, el, api, live, switchLive } from './core.js';
 
@@ -57,6 +59,25 @@ function render() {
   rail.replaceChildren(...tabs,
     el('button', { class: 'live-add', type: 'button', 'data-doc': 'Start another live session (Alt-N)',
                    onclick: () => openForm() }, '+'));
+}
+
+/** The live tab holding durable session SESSIONID, if one does. */
+export function liveTabFor(sessionId) { return sessions.find(s => s.session === sessionId); }
+
+/** Whether live sessions can be started here. */
+export function liveEnabled() { return enabled; }
+
+/** Open durable session SESSIONID in a live tab of its own (its
+conversation, in the directory it worked in), or switch to the tab that
+already has it. */
+export async function openAsLive(sessionId) {
+  const open = liveTabFor(sessionId);
+  if (open) { select(open); return open; }
+  const started = await api('/api/live', { method: 'POST', body: { resume: sessionId } });
+  await refresh();
+  switchLive(started.primary ? null : started.id);
+  render();
+  return started;
 }
 
 function select(s) {

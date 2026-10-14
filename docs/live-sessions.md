@@ -103,7 +103,10 @@ Truly global state stays global, guarded where it's mutated:
    session works exactly as today.
 3. The worker thread for each session.
 4. The tab rail and switching in the page.
-5. Turning resume into open-as-live.
+5. Turning resume into open-as-live: `POST /api/live {resume: id}`, and
+   **Open in a tab** in the Sessions view. The manifest records each
+   session's working directory, so a session reopens where it worked. A
+   log held by a running tab can't be resumed anywhere else.
 
 Out of scope for the first cut: separate API keys per session, and per
 session web UI customisations.

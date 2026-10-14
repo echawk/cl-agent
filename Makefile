@@ -6,6 +6,9 @@
 
 SBCL ?= sbcl
 OLLAMA_TEST_MODEL ?= qwen2.5:0.5b
+# The binary's heap (it keeps the building SBCL's): room for big buffers and
+# for the agent's memory guard to stop runaway code well before it runs out.
+HEAP_MB ?= 4096
 
 .PHONY: all check-env install-deps build run test test-ollama test-mcp-external clspec-data clean
 
@@ -24,7 +27,7 @@ install-deps: check-env
 	ocicl install
 
 build: install-deps
-	$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:make :cl-agent)'
+	$(SBCL) --dynamic-space-size $(HEAP_MB) --non-interactive --load boot.lisp --eval '(asdf:make :cl-agent)'
 
 run: install-deps
 	$(SBCL) --script run.lisp -- $(ARGS)

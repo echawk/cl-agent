@@ -14,6 +14,7 @@ import { state, on, el, api, registerView, storage, store } from './core.js';
 import { sanitize } from './render.js';
 import { showView, activeView } from './views.js';
 import { ago, resume } from './session.js';
+import { liveEnabled, liveTabFor, openAsLive } from './live.js';
 
 const toast = (text, color) => window.CLAgent?.toast(text, color);
 
@@ -135,7 +136,20 @@ function startRename(s) {
 }
 
 async function resumeSession(s, button) {
+  // Open in a tab already: go there, rather than have two sessions write one log.
+  if (liveTabFor(s.id)) { await openInTab(s, button); return; }
   if (await resume(s, button)) showView('listener');
+}
+
+async function openInTab(s, button) {
+  if (button) { button.disabled = true; button.textContent = 'Opening…'; }
+  try {
+    await openAsLive(s.id);
+    showView('listener');
+  } catch (err) {
+    toast(`Could not open it: ${err.message}`, 'orange');
+    if (button) { button.disabled = false; button.textContent = 'Open in a tab'; }
+  }
 }
 
 function select(id, { scroll = false } = {}) {
@@ -268,6 +282,12 @@ function head(s) {
         'data-doc': busy() ? 'The agent is busy' : 'Continue this conversation in the Listener (Enter)',
         onclick: e => resumeSession(s, e.currentTarget),
       }, 'Resume'),
+      s.error || !liveEnabled() || (s.id === view.current && !liveTabFor(s.id)) ? '' : el('button', {
+        class: 'btn btn-small', type: 'button',
+        'data-doc': liveTabFor(s.id) ? 'It is open in a live tab: go there'
+                                     : 'Open it as a live session of its own, beside this one, in the directory it worked in',
+        onclick: e => openInTab(s, e.currentTarget),
+      }, liveTabFor(s.id) ? 'Go to its tab' : 'Open in a tab'),
       el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Name this session (F2)', onclick: () => startRename(s) }, 'Rename'),
       el('button', {
         class: 'btn btn-small btn-danger', type: 'button', disabled: s.in_use,

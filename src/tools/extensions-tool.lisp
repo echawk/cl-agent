@@ -46,6 +46,28 @@
 (defparameter *eval-lisp-seconds* 120
   "The longest an eval-lisp form may run.")
 
+(defmacro with-captured-io ((output) &body body)
+  "Run BODY with everything it prints going to string stream OUTPUT and
+nothing to read: the form is the model's, and the process's terminal is
+not its to write to, close or wait on."
+  (let ((input (gensym "INPUT")) (io (gensym "IO")))
+    `(let* ((,input (make-string-input-stream ""))
+            (,io (make-two-way-stream ,input ,output))
+            (*standard-output* ,output) (*error-output* ,output) (*trace-output* ,output)
+            (*standard-input* ,input) (*query-io* ,io) (*debug-io* ,io) (*terminal-io* ,io))
+       ,@body)))
+
+(defparameter *captured-output-limit* 20000)
+
+(defun captured-output-text (output)
+  "What OUTPUT holds, trimmed and cut to *CAPTURED-OUTPUT-LIMIT*, or NIL."
+  (let ((text (string-right-trim '(#\Newline #\Space) (get-output-stream-string output))))
+    (cond ((zerop (length text)) nil)
+          ((> (length text) *captured-output-limit*)
+           (format nil "~a~%... (~d more characters)" (subseq text 0 *captured-output-limit*)
+                   (- (length text) *captured-output-limit*)))
+          (t text))))
+
 (define-tool eval-lisp (args)
     (:description "Evaluate a Common Lisp form in the running agent's own image and return its printed result. Before evaluation, the form is automatically reviewed with Mallet, checked for DEFSTAR/DECLAIM type claims on definitions, and compiled; compilation failures prevent evaluation while advisory smells are returned with the value so you can improve the code. Ephemeral: has full read/write access to the agent's own state but is not saved. The form is read with *package* bound to :cl-agent."
      :parameters (jobj "type" "object"
@@ -64,19 +86,27 @@
             (if (getf review :compile-failure-p)
                 (format nil "Not evaluated because compilation failed.~%~a"
                         (format-lisp-review review))
-                (handler-case
-                    (let* ((*package* (find-package :cl-agent))
-                           (*read-eval* nil)
-                           (form (read-from-string text))
-                           (value-text
-                             (format nil "~{~a~^~%~}"
-                                     (mapcar #'prin1-to-string
-                                             ;; A form that never returns would hold the
-                                          ;; turn (and the agent) for good.
-                                          (multiple-value-list (sb-ext:with-timeout *eval-lisp-seconds* (eval form)))))))
-                      (format nil "~@[Parentheses fixed from the indentation first.~%~]~a~%~%~a"
-                              (and problem t) value-text (format-lisp-review review)))
-                  (error (c) (format nil "Error: ~a~%~%~a" c (format-lisp-review review))))))))))
+                (let ((output (make-string-output-stream)))
+                  (handler-case
+                      (let* ((*package* (find-package :cl-agent))
+                             (*read-eval* nil)
+                             (form (read-from-string text))
+                             (values (with-captured-io (output)
+                                       ;; A form that never returns would hold the
+                                       ;; turn (and the agent) for good.
+                                       (multiple-value-list (sb-ext:with-timeout *eval-lisp-seconds* (eval form)))))
+                             (value-text
+                               (format nil "~{~a~^~%~}"
+                                       (mapcar (lambda (value)
+                                                 (or (ignore-errors (let ((*print-length* 500) (*print-level* 10))
+                                                                      (prin1-to-string value)))
+                                                     (format nil "#<an unprintable ~a>" (ignore-errors (type-of value)))))
+                                               values))))
+                        (format nil "~@[Parentheses fixed from the indentation first.~%~]~a~@[~%~%Output:~%~a~]~%~%~a"
+                                (and problem t) value-text (captured-output-text output) (format-lisp-review review)))
+                    (error (c) (format nil "Error: ~a~@[~%~%Output before it:~%~a~]~%~%~a"
+                                       c (captured-output-text output) (format-lisp-review review)))))))))))
+
 
 (define-tool write-extension (args)
     (:description "Write a named Common Lisp extension, load it, and optionally enable it for future starts. This is exclusively for a durable change to cl-agent itself: the source must integrate a tool, hook, method, provider, frontend, or slash command. It is NOT a scratchpad or a way to run ordinary programs/tests; use write-scratch-file for those. Source is automatically reviewed with strict Mallet, checked for a DEFSTAR or DECLAIM FTYPE claim on every function, and compiled first. Compilation failures are reported and are not written; nonzero smell scores are advisory and are returned after a successful write so you can minimize them. The file MUST start with (in-package :cl-agent). Prefer adding definitions/hooks/methods over replacing core functions."

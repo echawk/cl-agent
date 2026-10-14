@@ -123,6 +123,11 @@ search a finite seed range while manifests protect against a stale collision."
      path
      (list :schema-version 1 :id (session-id session) :created-at (session-created-at session)
            :name (session-display-name session)
+           ;; Where it worked: reopened as a live session, it works there again.
+           :working-directory (ignore-errors
+                               (uiop:native-namestring (or (session-working-directory session)
+                                                           (getf old :working-directory)
+                                                           (uiop:getcwd))))
            :parent-session-id parent :last-sequence (session-event-sequence session)))))
 
 (defun %session-event-paths (session-id)

@@ -60,6 +60,7 @@ state) to the registry."))
 (defvar *tools* (make-hash-table :test 'equal)
   "Registry of all known tools, keyed by TOOL-NAME.")
 
+(declaim (ftype (function (tool) (values tool &optional)) register-tool))
 (defun register-tool (tool)
   "Add TOOL to the registry, replacing any existing tool with the same
 name. Returns TOOL. This is how an extension (or providers.lisp,
@@ -81,12 +82,14 @@ which tools are offered."
     (when removed (unpublish-component :tool name))
     removed))
 
+(declaim (ftype (function (t) (values (or null tool) &optional)) find-tool))
 (defun find-tool (name)
   "Look up a registered tool by NAME (a string). Returns NIL, not an
 error, if not found -- use CALL-TOOL if you want TOOL-NOT-FOUND
 signalled instead."
-  (gethash name *tools*))
+  (values (gethash name *tools*)))
 
+(declaim (ftype (function () (values list &optional)) list-tools))
 (defun list-tools ()
   "Return all registered TOOL instances, in no particular order."
   (loop for tool being the hash-values of *tools* collect tool))
@@ -125,6 +128,7 @@ Example:
                                  (let ((.result. (progn ,@body)))
                                    (if (stringp .result.) .result. (princ-to-string .result.))))))))
 
+(declaim (ftype (function (t t) (values string &optional)) call-tool))
 (defun call-tool (name arguments)
   "Run the tool named NAME (a string) with ARGUMENTS (a hash table,
 typically produced by JSON-DECODE-ing the model's tool-call payload).
@@ -142,20 +146,42 @@ turn."
     (if (null tool)
         (format nil "Tool ~s does not exist or is no longer available. Use one of the tools supplied in this conversation (or /tools) and try again."
                 name)
-        (handler-case (with-agent-code ()
-                        (if *debugger-enabled*
-                            (call-tool-handler-with-debugger tool arguments)
-                            (funcall (tool-handler tool) arguments)))
-          ;; Backstop: an error in the debugger machinery itself must never
-          ;; escape into the agent loop.
-          (error (c)
-            (format nil "Error running ~a: ~a" name c))
-          ;; Not errors, but they would end the turn (and, unhandled, the
-          ;; process): runaway recursion, an exhausted heap, a timeout.
-          (storage-condition (c)
-            (format nil "Error running ~a: ~a (runaway recursion or allocation?)" name c))
-          (sb-ext:timeout (c)
-            (format nil "Error running ~a: it timed out (~a)" name c))))))
+        ;; Whatever the handler does -- signal anything at all, or leave by
+        ;; (abort), a THROW, a restart -- the caller gets a string
+        ;; (guard.lisp).  Only a real Ctrl-C goes on, to quit.
+        (with-contained-exits (:on-escape (progn (reassert-guards)
+                                                 (format nil "Error running ~a: ~a" name
+                                                         (make-condition 'agent-escape :where (format nil "The tool ~a" name)))))
+          (block call
+            (handler-bind ((serious-condition
+                             (lambda (c)
+                               (unless (interactive-interrupt-p c)
+                                 (return-from call (tool-failure-text name c))))))
+              (let ((result (unwind-protect
+                                 (with-agent-code ()
+                                   (if *debugger-enabled*
+                                       (call-tool-handler-with-debugger tool arguments)
+                                       (funcall (tool-handler tool) arguments)))
+                              (reassert-guards))))
+                (if (stringp result) result (tool-result-text name result)))))))))
+
+(declaim (ftype (function (t condition) (values string &optional)) tool-failure-text))
+(defun tool-failure-text (name condition)
+  "What the model reads when tool NAME failed with CONDITION."
+  (let ((report (describe-escaped-condition condition)))
+    (typecase condition
+      (storage-condition (format nil "Error running ~a: ~a (runaway recursion or allocation?)" name report))
+      (sb-ext:timeout (format nil "Error running ~a: it timed out (~a)" name report))
+      (error (format nil "Error running ~a: ~a" name
+                     (or (ignore-errors (princ-to-string condition)) report)))
+      (t (format nil "Error running ~a: ~a" name report)))))
+
+(declaim (ftype (function (t t) (values string &optional)) tool-result-text))
+(defun tool-result-text (name result)
+  "RESULT, a handler's value that is not a string, as one; its printing
+cannot fail the call."
+  (or (ignore-errors (let ((*print-length* 200) (*print-level* 6)) (princ-to-string result)))
+      (format nil "~a returned an unprintable ~a." name (ignore-errors (type-of result)))))
 
 (defun tool-json-schema (tool)
   "OpenAI/REALLMS/xAI/Ollama-shaped {\"type\":\"function\",\"function\":{...}}

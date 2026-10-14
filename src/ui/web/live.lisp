@@ -15,6 +15,8 @@
 ;;;;
 ;;;;   GET  /api/live                 {sessions: [...], current}
 ;;;;   POST /api/live                 {directory, model?, name?}: start one; {id}
+;;;;                                  {resume: session-id}: reopen a past session
+;;;;                                  as one (its directory, its conversation)
 ;;;;   POST /api/live/close           {id}: stop one (not the first); its log stays
 
 (in-package :cl-agent)
@@ -26,6 +28,7 @@ as the first was (main.lisp sets it), or NIL where live sessions are off.")
 (defun primary-web-frontend (&optional (frontend *web-frontend*))
   (and frontend (or (web-frontend-hub frontend) frontend)))
 
+(declaim (ftype (function (&optional t) (values list &optional)) live-frontends))
 (defun live-frontends (&optional (primary (primary-web-frontend)))
   "The live sessions' frontends: the first, then the others as started."
   (and primary
@@ -33,9 +36,11 @@ as the first was (main.lisp sets it), or NIL where live sessions are off.")
              (reverse (remove-if-not (lambda (frontend) (eq (web-frontend-hub frontend) primary))
                                      *web-frontends*)))))
 
+(declaim (ftype (function (t &optional t) (values t &optional)) find-live-frontend))
 (defun find-live-frontend (id &optional (primary (primary-web-frontend)))
   (find id (live-frontends primary) :key #'web-frontend-live-id :test #'equal))
 
+(declaim (ftype (function (t) (values hash-table &optional)) live-session-json))
 (defun live-session-json (frontend)
   (let* ((session (web-frontend-session frontend))
          (directory (and session (or (session-working-directory session) (uiop:getcwd)))))
@@ -50,32 +55,70 @@ as the first was (main.lisp sets it), or NIL where live sessions are off.")
           "busy" (and (frontend-busy-p frontend) t)
           "messages" (with-web-state (frontend) (length (web-frontend-transcript frontend))))))
 
-(defun start-live-session (&key directory model name)
+(declaim (ftype (function (t &optional t) (values t &optional)) live-frontend-for-session))
+(defun live-frontend-for-session (session-id &optional (primary (primary-web-frontend)))
+  "The live session already holding durable session SESSION-ID, if any."
+  (find-if (lambda (frontend)
+             (let ((session (web-frontend-session frontend)))
+               (and session (equal (ignore-errors (princ-to-string (session-id session))) session-id))))
+           (live-frontends primary)))
+
+(declaim (ftype (function (string) (values (or null string) &optional)) durable-session-directory))
+(defun durable-session-directory (session-id)
+  "The working directory SESSION-ID's manifest records, when it still exists."
+  (let ((recorded (ignore-errors (getf (nth-value 0 (sexp-store:snapshot-read (session-manifest-pathname session-id)))
+                                       :working-directory))))
+    (and (stringp recorded) (uiop:directory-exists-p recorded) recorded)))
+
+(declaim (ftype (function (&key (:directory (or null string pathname)) (:model (or null string)) (:name t) (:resume (or null string))) (values t &optional)) start-live-session))
+(defun start-live-session (&key directory model name resume)
   "Start a live session beside the first, working in DIRECTORY with MODEL
-(else the first's), named NAME.  Returns its frontend once it is serving."
+(else the first's), named NAME.  With RESUME, a durable session's id, it
+reopens that conversation instead (nothing in it is rerun), in DIRECTORY or
+the one it worked in -- or, when a live session already holds it, returns
+that one.  Returns its frontend once it is serving."
   (let ((primary (primary-web-frontend)))
     (unless (and primary *live-session-factory*)
       (error "Live sessions need the web UI (cl-agent --ui web)."))
-    (let* ((directory (or (uiop:directory-exists-p (expand-user-path (or directory (uiop:native-namestring (current-directory)))))
+    (when resume
+      (unless (durable-session-id-p resume)
+        (error "There is no session ~a." resume))
+      (let ((open (live-frontend-for-session resume primary)))
+        (when open (return-from start-live-session open))))
+    (let* ((directory (or directory (and resume (durable-session-directory resume))))
+           (directory (or (uiop:directory-exists-p (expand-user-path (or directory (uiop:native-namestring (current-directory)))))
                           (error "There is no directory ~a." directory)))
            (frontend (make-instance 'web-frontend :hub primary))
            (session (funcall *live-session-factory* :frontend frontend :model model :directory directory))
            (config *config-directory*))
+      (when resume
+        (resume-session session resume))
       (when (and (stringp name) (plusp (length (string-trim " " name))))
         (rename-session session name))
-      (bt:make-thread
-       (lambda ()
+      ;; The agent's own thread, though a route (agent code) starts it.
+      (let ((*agent-code-depth* 0))
+       (bt:make-thread
+        (lambda ()
          (let ((*config-directory* config))
            ;; Its whole life guarded: whatever ends it, the process goes on.
-           (with-turn-guard (:where (format nil "Live session ~a" (web-frontend-live-id frontend)))
-             (run-repl session :primary nil))))
-       :name (format nil "cl-agent live session ~a" (web-frontend-live-id frontend)))
+           (unwind-protect
+                (with-turn-guard (:where (format nil "Live session ~a" (web-frontend-live-id frontend)))
+                  (run-repl session :primary nil))
+             ;; Closed: its log is free to reopen, resume or delete.
+             (let ((id (ignore-errors (session-id session))))
+               (when (and id (eq (find-live-session id) session))
+                 (remhash id *live-sessions*))))))
+        :name (format nil "cl-agent live session ~a" (web-frontend-live-id frontend))))
       ;; Serving once UI-START has registered it.
       (loop repeat 200
             until (member frontend *web-frontends*)
             do (sleep 0.01))
+      (when resume
+        (ui-conversation-replaced frontend session)
+        (ui-stats-updated frontend (session-stats-snapshot session)))
       frontend)))
 
+(declaim (ftype (function (t) (values t &optional)) stop-live-session))
 (defun stop-live-session (frontend)
   "Stop live session FRONTEND (never the first): its turn is interrupted,
 its loop ends, its durable log stays (the Sessions tab)."
@@ -97,7 +140,11 @@ its loop ends, its durable log stays (the Sessions tab)."
 (define-web-route live-session-start (:method :post :path "/api/live")
   (let ((body (web-json-body)))
     (handler-case
-        (let ((frontend (start-live-session :directory (jget body "directory")
+        (let ((frontend (start-live-session :directory (let ((directory (jget body "directory")))
+                                                         (and (stringp directory) (plusp (length (string-trim " " directory)))
+                                                              directory))
+                                            :resume (let ((id (jget body "resume")))
+                                                      (and (stringp id) (plusp (length id)) id))
                                             :model (let ((model (jget body "model")))
                                                      (and (stringp model) (plusp (length model)) model))
                                             :name (jget body "name"))))

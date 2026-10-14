@@ -108,7 +108,7 @@ require a component: a DEFMETHOD-only extension is a supported integration."
                (let* ((kind (hook-value-kind sample))
                       (problem
                         (handler-case
-                            (let ((result (with-agent-code ()
+                            (let ((result (contained-agent-code (:where "The hook")
                                             (sb-ext:with-timeout 20
                                               (funcall function (if (eq kind :plist) (copy-list sample) sample))))))
                               (unless (eq (hook-value-kind result) kind)
@@ -148,7 +148,8 @@ published."
     (dolist (exercise exercises)
       (handler-case
           (progn
-            (funcall (mutation-exercise-runner exercise))
+            (contained-agent-code (:where "The exercise")
+              (funcall (mutation-exercise-runner exercise)))
             (mutation-receipt transaction :exercise
                                :exercise-id (mutation-exercise-id exercise)
                                :description (mutation-exercise-description exercise)

@@ -78,8 +78,15 @@
 (deftest subagent-contract-refuses-ungrantable-tools-and-honours-roles ()
   (let ((parent (make-session (make-instance 'ollama-provider))))
     (check (search "may not be granted"
-                   (handler-case (build-subagent-contract parent "t" "s" :tools '("write-file"))
+                   (handler-case (build-subagent-contract parent "t" "s" :tools '("no-such-tool"))
                      (error (c) (princ-to-string c)))))
+    (check-equal (getf (build-subagent-contract parent "t" "s" :tools '("logic" "write-file")) :tools)
+                 '("logic" "write-file")
+                 "any registered tool can be granted")
+    (let ((*subagent-ungrantable-tools* '("write-file")))
+      (check (search "not grantable"
+                     (handler-case (build-subagent-contract parent "t" "s" :tools '("write-file"))
+                       (error (c) (princ-to-string c))))))
     (register-subagent-role "test-role" :tools '("read-file") :max-seconds 7
                                         :system-prompt "Role prompt.")
     (unwind-protect

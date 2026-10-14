@@ -20,21 +20,25 @@
 vectors) because every array this project reads (tool-call lists,
 message lists, choices...) is naturally processed with MAPCAR/DOLIST.")
 
+(declaim (ftype (function (t) (values t &optional)) json-decode))
 (defun json-decode (string)
   "Parse STRING as JSON. Objects become hash tables keyed by string;
 arrays become lists; true/false/null become T/NIL/:NULL."
   (let ((shasht:*read-default-array-format* *json-array-format*))
     (shasht:read-json string)))
 
+(declaim (ftype (function (t &key (:pretty t)) (values string &optional)) json-encode))
 (defun json-encode (value &key pretty)
   "Serialize VALUE (built from JOBJ / hash tables / lists / strings /
 numbers / T / NIL / :NULL, see JOBJ's docstring) to a JSON string."
   (shasht:write-json* value :stream nil :pretty pretty))
 
+(declaim (ftype (function (t) (values boolean &optional)) json-object-p))
 (defun json-object-p (value)
   "True when VALUE is a JSON object in cl-agent's hash-table representation."
   (hash-table-p value))
 
+(declaim (ftype (function (t) (values hash-table (or null string) &optional)) decode-json-object))
 (defun decode-json-object (text)
   "Decode TEXT as a JSON object.
 
@@ -49,6 +53,7 @@ objects even though JSON itself also permits arrays and scalars."
     (error (condition)
       (values (jobj) (format nil "invalid JSON: ~a" condition)))))
 
+(declaim (ftype (function (t t &optional string) (values (or null string) &optional)) json-schema-validation-error))
 (defun json-schema-validation-error (value schema &optional (path "arguments"))
   "Return NIL when VALUE conforms to the supported JSON-Schema subset.
 
@@ -118,6 +123,7 @@ description of the first violation."
     (when (json-object-p schema)
       (validate value schema path))))
 
+(declaim (ftype (function (&rest t) (values hash-table &optional)) jobj))
 (defun jobj (&rest plist)
   "Build a JSON object (a hash table with STRING keys) from PLIST,
 whose keys may be strings or symbols (symbols are converted with
@@ -132,6 +138,7 @@ Example: (jobj \"role\" \"user\" \"content\" text) => {\"role\":\"user\",...}"
           do (setf (gethash (if (stringp k) k (string-downcase (string k))) h) v))
     h))
 
+(declaim (ftype (function (t (or string symbol) &optional t) (values t &optional)) jget))
 (defun jget (object key &optional default)
   "Look up KEY (a string, or a symbol converted via STRING-DOWNCASE)
 in OBJECT, which must be a hash table as produced by JSON-DECODE.
@@ -144,6 +151,7 @@ or the key is absent, or the key's value is the JSON null marker
           (if (and presentp (not (eq v :null))) v default)))
       default))
 
+(declaim (ftype (function (t &rest (or string symbol integer)) (values t &optional)) jpath))
 (defun jpath (object &rest keys)
   "Chained JGET: (jpath obj \"choices\" 0 \"message\" \"content\")
 walks hash-table keys with JGET and list indices with NTH, returning
@@ -151,7 +159,8 @@ NIL as soon as any step is missing instead of signalling."
   (dolist (k keys object)
     (setf object
           (cond ((null object) (return nil))
-                ((integerp k) (nth k object))
+                ;; A step that is not the list it should be ends the walk.
+                ((integerp k) (and (listp object) (>= k 0) (ignore-errors (nth k object))))
                 (t (jget object k))))))
 
 ;;; --- bridging to libraries that represent JSON as alists ---
@@ -165,6 +174,7 @@ NIL as soon as any step is missing instead of signalling."
 ;;; are the one place that translation happens, symmetric with JOBJ/
 ;;; JGET being the one place our own convention is defined.
 
+(declaim (ftype (function (t) (values boolean &optional)) jalist-p))
 (defun jalist-p (x)
   "True if X looks like an alist of (STRING . value) pairs, as
 produced by a JSON parser configured for :object-as :alist. NIL itself
@@ -173,6 +183,7 @@ therefore NOT considered an alist here -- callers that know they have
 an empty JSON object should just use (JOBJ)."
   (and (consp x) (every (lambda (pair) (and (consp pair) (stringp (car pair)))) x)))
 
+(declaim (ftype (function (t) (values t &optional)) jalist->hash))
 (defun jalist->hash (x)
   "Recursively convert X -- as returned by a JSON parser configured
 for :object-as :alist -- into the hash-table/list representation
@@ -186,6 +197,7 @@ element-wise; anything else (strings, numbers, T, NIL) passes through."
     ((consp x) (mapcar #'jalist->hash x))
     (t x)))
 
+(declaim (ftype (function (t) (values t &optional)) jhash->alist))
 (defun jhash->alist (x)
   "Inverse of JALIST->HASH: recursively convert hash tables (and the
 plain lists JSON-ENCODE already treats as arrays) in X into the

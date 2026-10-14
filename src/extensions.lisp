@@ -176,7 +176,8 @@ without taking down the whole process."
              (*registration-owner* (or owner (format nil "extension:~a" (file-namestring resolved)))))
         ;; Code the model may have written: loaded as agent code (no
         ;; exiting), anything serious it signals an EXTENSION-ERROR.
-        (with-agent-code () (load resolved))
+        (contained-agent-code (:where (format nil "Loading ~a" (file-namestring resolved)))
+          (load resolved))
         (run-hook :after-extension-load resolved)
         t)
     (serious-condition (c)

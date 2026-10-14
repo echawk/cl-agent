@@ -286,6 +286,36 @@ See `src/extensions.lisp` and `src/hooks.lisp` for the full design --
 both are written with the expectation that an LLM, not just a human,
 is the one reading them and writing new code against them.
 
+### When the model's code goes wrong
+
+Code the model writes runs inside the agent's own process, so
+`src/guard.lisp` keeps the process alive whatever that code does by
+mistake:
+
+- **Errors of every kind:** a bad argument, a hash table read with
+  `getf`, runaway recursion, or a timeout. The model gets the error back
+  as the tool's result.
+- **Non-local exits:** `(abort)`, `(continue)`, a restart, a `throw` past
+  its caller, or a thread ending another. Each is stopped where it would
+  leave the tool call, hook or turn.
+- **Exits:** a tool, extension or other thread can't exit the image, and
+  can't terminate the agent's own threads.
+- **Memory:** past half the heap, the model's code (including threads it
+  started) is stopped with a storage error, before SBCL's collector runs
+  out of room. That is the one failure no handler could catch.
+- **Broken hooks:** a hook that keeps failing is switched off.
+- **Removed guards:** anything the code takes away, such as the debugger
+  hook or the exit guard, is put back after each call.
+
+What `eval-lisp` prints comes back to the model. The terminal is not
+the model's to write to, close or wait on.
+
+These guards stop accidents, not a model set on sabotage. Code running
+in the same image can rebind the guards' own variables or call libc's
+`exit`.
+
+`make build` gives the binary a 4 GB heap (`HEAP_MB`).
+
 For an explicit one-off second opinion, the built-in `ask-llm` tool sends a
 tool-free independent request. It accepts `prompt`, optional `system_prompt`,
 and optional `model`; call `list-models` first to obtain exact model IDs. A
@@ -715,8 +745,12 @@ default; switch to dark with the ◐ button, `Alt-T`, or `/theme dark`.
   memory, LSP and environments all use it), conversation, subagents and
   thread, so sessions never wait on each other. A dot means a session is
   working, and a number counts its unread messages. `Alt-↑`/`Alt-↓` switch
-  between them, and **×** stops one (its log stays in Sessions). The first
-  session is the one cl-agent started with. See `docs/live-sessions.md`.
+  between them, and **×** stops one (its log stays in Sessions). In the
+  Sessions view, **Open in a tab** reopens a past session as a live tab, in
+  the directory it worked in, with its conversation (nothing in it is run
+  again). If the session is already open in a tab, the button goes there
+  instead. The first session is the one cl-agent started with. See
+  `docs/live-sessions.md`.
 
 ### The Lisp tab
 

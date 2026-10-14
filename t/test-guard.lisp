@@ -80,3 +80,76 @@
            (check (search "jget" out) "and says how to read tool arguments")
            (check (not (assoc 'test-bad-paths-hook (gethash :after-tool-call *hooks*))) "nothing left installed"))
       (remove-hook :after-tool-call 'test-bad-paths-hook))))
+
+(deftest no-non-local-exit-leaves-a-tool-call ()
+  (dolist (form '("(abort)" "(continue)" "(invoke-restart (car (last (compute-restarts))))"
+                  "(throw 'sb-impl::%end-of-the-world 0)"))
+    (let ((out (call-tool "eval-lisp" (jobj "form" form))))
+      (check (search "non-local exit" out) (format nil "~a: ~a" form out))))
+  (check (search "Interactive interrupt"
+                 (call-tool "eval-lisp" (jobj "form" "(error 'sb-sys:interactive-interrupt)")))
+         "a Ctrl-C the code makes up itself is an error like any other, not a quit")
+  (check (search "cannot be terminated"
+                 (call-tool "eval-lisp" (jobj "form" "(sb-thread:terminate-thread (sb-thread:main-thread))")))
+         "the agent's own threads cannot be ended from code"))
+
+(deftest no-non-local-exit-leaves-a-hook ()
+  (let ((*error-output* (make-broadcast-stream)))
+    (add-hook :test-point 'aborter (lambda () (abort)))
+    (add-hook :test-chain 'thrower (lambda (value) (declare (ignore value)) (throw 'nowhere-in-particular 1)))
+    (unwind-protect
+         (progn
+           (check-equal (multiple-value-list (run-hook :test-point)) nil "the hook is skipped, the caller goes on")
+           (check-equal (run-hook-chain :test-chain "value") "value" "the value goes on as it was"))
+      (remove-hook :test-point 'aborter)
+      (remove-hook :test-chain 'thrower))))
+
+(deftest eval-lisp-output-is-the-models-not-the-terminals ()
+  (let ((out (call-tool "eval-lisp" (jobj "form" "(progn (format t \"printed here~%\") (close *standard-output*) :done)"))))
+    (check (search "printed here" out) "what the form prints comes back to the model")
+    (check (open-stream-p *standard-output*) "and the agent's own output stream is untouched"))
+  (check (search "end of file" (call-tool "eval-lisp" (jobj "form" "(read-line)")))
+         "nothing to read: it does not wait on the terminal"))
+
+(deftest a-guard-the-model-removes-is-put-back ()
+  (with-survival-hook ()
+    (let ((*survival-hook-installed* t))
+      (call-tool "eval-lisp" (jobj "form" "(progn (setf (sb-ext:symbol-global-value 'sb-ext:*invoke-debugger-hook*) nil) (sb-int:unencapsulate 'sb-ext:exit 'cl-agent-guard) :gone)"))
+      (check (eq (sb-ext:symbol-global-value 'sb-ext:*invoke-debugger-hook*) 'survival-debugger-hook)
+             "the debugger hook is back")
+      (check (sb-int:encapsulated-p 'sb-ext:exit 'cl-agent-guard) "and so is the exit guard"))))
+
+(defclass exit-at-prompt-frontend (steer-frontend)
+  ((inputs :initarg :inputs :accessor exit-at-prompt-inputs)))
+
+(defmethod ui-prompt-input ((frontend exit-at-prompt-frontend))
+  (let ((next (pop (exit-at-prompt-inputs frontend))))
+    ;; Something unwinding the loop while it waits for input -- as a thread
+    ;; the model started could make it.
+    (case next
+      (:abort (abort))
+      (:throw (throw 'sb-impl::%end-of-the-world 0))
+      (t next))))
+
+(deftest the-session-loop-survives-an-exit-at-the-prompt ()
+  (with-noop-tool
+    (let* ((frontend (make-instance 'exit-at-prompt-frontend :inputs (list "first" :abort :throw "second")))
+           (session (steer-session frontend
+                                   (list (lambda () (list :role "assistant" :content "one" :tool-calls nil))
+                                         (lambda () (list :role "assistant" :content "two" :tool-calls nil)))))
+           (*error-output* (make-broadcast-stream)))
+      (run-repl session :primary nil)
+      (check-equal (length (steer-seen (session-provider session))) 2
+                   "after exits at the prompt, the session still answered the next message"))))
+
+(deftest runaway-allocation-is-stopped-before-the-heap-runs-out ()
+  (sb-ext:gc :full t)
+  (let ((limit *agent-memory-limit*))
+    ;; SETF: the after-GC hook may run in another thread.  A limit a little
+    ;; above what is in use now, so the test allocates tens of MB, not GBs.
+    (setf *agent-memory-limit* (+ (/ (sb-kernel:dynamic-usage) (sb-ext:dynamic-space-size)) 0.05))
+    (unwind-protect
+         (let ((out (call-tool "eval-lisp" (jobj "form" "(let ((a nil)) (loop repeat 2000000 do (push (make-string 1000) a)) (length a))"))))
+           (check (search "heap was" out) out))
+      (setf *agent-memory-limit* limit)
+      (sb-ext:gc :full t))))
