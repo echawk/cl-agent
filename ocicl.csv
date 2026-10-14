@@ -41,6 +41,8 @@ cl-exec-sandbox, git+https://github.com/lambda-symbolics/cl-exec-sandbox@76478d0
 cl-fad, ghcr.io/ocicl/cl-fad@sha256:c0aaffc859e419e0a94cedb08f48c2484da404363fb0fe4ffd6e09a80aadafe1, cl-fad-0.7.6/cl-fad.asd
 cl-interpol, ghcr.io/ocicl/cl-interpol@sha256:bf02bce744361792150a04310b24a623596b99190a9f85a1c2ebf35f12b2288c, cl-interpol-2.0.7/cl-interpol.asd
 cl-jobpond, git+https://github.com/lambda-symbolics/cl-jobpond@3f91120faedf42b370e5f4298f2dc81f18d0b531, cl-jobpond-3f91120/cl-jobpond.asd
+cl-kanren, ghcr.io/ocicl/cl-kanren@sha256:64f3fd124265aa1fdbf1c8a0cb79e7d493af14720c88cecafbe23ebde37ec314, cl-kanren-20240503-ad40ba1/cl-kanren.asd
+cl-kanren-test, ghcr.io/ocicl/cl-kanren@sha256:64f3fd124265aa1fdbf1c8a0cb79e7d493af14720c88cecafbe23ebde37ec314, cl-kanren-20240503-ad40ba1/tests/cl-kanren-test.asd
 cl-lsp, git+https://github.com/lambda-symbolics/cl-lsp@9f459b8d3d41e6eeb82cae06159879cf7258701a, cl-lsp-9f459b8/cl-lsp.asd
 cl-mcp, git+https://github.com/quasi/cl-mcp@e095dc74156095027592e320db7a56d5a0c91eba, cl-mcp-e095dc7/cl-mcp.asd
 cl-mustache, ghcr.io/ocicl/cl-mustache@sha256:d9edbcca2bebf7acbe786798d592a495595b8e8aaa8653b40d35fec2a27ae61f, cl-mustache-20240927-4d1208c/cl-mustache.asd

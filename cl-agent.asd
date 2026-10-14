@@ -42,7 +42,8 @@
                "lem-clojure-mode" "lem-elisp-mode" "lem-lua-mode" "lem-perl-mode" "lem-swift-mode"
                "lem-kotlin-mode" "lem-scala-mode" "lem-dart-mode" "lem-zig-mode" "lem-nix-mode"
                "lem-server"                                   ; Lem's web frontend: the Code tab's editor
-               "tree-sitter-cl")                              ; syntax trees for the agent's structural edits
+               "tree-sitter-cl"                               ; syntax trees for the agent's structural edits
+               "cl-kanren")                                   ; miniKanren: the logic tool (logic.lisp)
   :build-operation "program-op"
   :build-pathname "bin/cl-agent"
   :entry-point "cl-agent:main"
@@ -184,6 +185,7 @@
      (:file "editor")
      (:file "copilot")
      (:file "syntax-tree")
+     (:file "logic")
      ;; Web UI slash commands need DEFINE-SLASH-COMMAND (repl.lisp) and
      ;; DEFINE-COMMAND-COMPLETER (completion.lisp), and the Lisp tab's REPL
      ;; uses completion.lisp, clspec.lisp and apropos.lisp, so they load late.
@@ -257,7 +259,8 @@
    (:file "test-systems")
    (:file "test-lem-commands")
    (:file "test-copilot")
-   (:file "test-syntax-tree"))
+   (:file "test-syntax-tree")
+   (:file "test-logic"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

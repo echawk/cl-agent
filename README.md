@@ -465,6 +465,69 @@ macros, classes and packages that compiling would define are put back
 afterwards. Code whose packages are not loaded is linted and reported as not
 compile-checked, rather than as a failed compilation.
 
+**Parentheses are fixed, not counted.** Models indent Lisp well but count
+closing parentheses badly, and smaller ones can loop for a long time adding
+and removing them. `fix-parens` (a source text or a file) fixes them the way
+Parinfer's indent mode does:
+- It trusts the indentation: each line's trailing closers are rebuilt so a
+  form closes where the next line's indentation says it ends.
+- Stray closers in the middle of a line are dropped.
+- Only the top-level forms that are actually unbalanced are touched.
+- Strings, comments, `#\(` and `|symbols|` never count.
+
+When `check-parens`, `eval-lisp` or `write-extension` finds an imbalance, it
+says exactly where, by line and column, and shows the fix. Passing
+`fix_parens: true` applies it.
+
+### Memory
+
+The agent keeps what it learns across sessions with `remember`, `recall` and
+`forget`: a confirmed fact, a lesson, your preferences, a project's gotchas.
+- **Scopes:** each entry is global or for the project, meaning the git
+  repository the working directory is in.
+- **No duplicates:** remembering a key it already has updates that entry.
+- **In every request:** every model request carries a digest of the memories
+  in its system message. They are kept out of the conversation's history,
+  and the `memory` setting turns them off.
+- **Storage:** entries live under `~/.config/cl-agent/memory/`, written
+  atomically under a lock.
+
+### Logic: facts, rules, constraints and order
+
+The `logic` tool is a logic engine (miniKanren, via
+[cl-kanren](https://codeberg.org/cage/cl-kanren)) for reasoning the model can
+prove instead of guess. Its main uses are impact analysis, the order to do a
+refactor in, and checking that the repository stays consistent after each
+step. A knowledge base belongs to the project and is kept across sessions.
+
+```lisp
+;; index: the source as facts, by tree-sitter
+(file "repl.lisp" "commonlisp")  (defines "repl.lisp" "run-agent-turn" "defun" 1961)
+(calls "run-repl" "run-agent-turn")  (references F name line)  (imports F target)
+
+;; assert: rules (recursive ones too, even over cycles) and constraints
+(<- (affected ?a) (calls ?a "json-encode"))
+(<- (affected ?a) (calls ?a ?b) (affected ?b))
+(constraint layering "?a (?fa) calls ?b in ui/"
+  (calls ?a ?b) (defines ?fa ?a ?k ?l) (prefix ?fa "providers/")
+  (defines ?fb ?b ?k2 ?l2) (prefix ?fb "ui/"))
+
+;; query                         ;; check: every constraint's violations
+(affected ?f) (defines ?file ?f ?k ?l) (prefix ?file "ui/")
+```
+
+- **Goals:** `and`, `or`, `not` (negation as failure), `=`, comparisons, and
+  `contains`, `prefix` and `suffix`.
+- **Rules** are derived bottom-up to a fixpoint, so recursion always ends.
+  Rules that use `not` are evaluated in strata.
+- **`order`** puts a dependency relation into layers: change layer 1 first,
+  then 2, and so on. A cycle is reported as one group to change together.
+- **Your own facts:** the model, or a subagent, can add facts from reading
+  code or from `structural-query` (ast-grep) results.
+- **Speed:** cl-agent's own `src/` (114 files) indexes in under half a second
+  into about 17,000 facts, and a full transitive closure of its calls derives
+  in a few seconds.
+
 ## ACP (Agent Client Protocol)
 
 `cl-agent --acp-serve` runs an [Agent Client Protocol](https://agentclientprotocol.com/)

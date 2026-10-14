@@ -1,0 +1,87 @@
+;;;; t/test-logic.lisp -- the logic tool (logic.lisp): facts, rules,
+;;;; queries, constraints, ordering, source facts.
+
+(in-package :cl-agent)
+
+(defun logic-tool (kb action &rest more)
+  (call-tool "logic" (apply #'jobj "action" action "kb" kb more)))
+
+(defun fresh-logic-kb (name)
+  (remhash name *logic-kbs*)
+  (ignore-errors (delete-file (logic-kb-path name)))
+  name)
+
+(deftest logic-rules-reach-through-cycles ()
+  (let ((kb (fresh-logic-kb "t-reach")))
+    (check (search "4 new facts, 2 rules"
+                   (logic-tool kb "assert" "forms"
+                               "(depends-on a b) (depends-on b c) (depends-on c a) (depends-on d a)
+                                (<- (reaches ?x ?y) (depends-on ?x ?y))
+                                (<- (reaches ?x ?z) (depends-on ?x ?y) (reaches ?y ?z))")))
+    (let ((out (logic-tool kb "query" "forms" "(reaches \"d\" ?x)")))
+      (check (search "3 solutions" out) out)
+      (dolist (x '("x=\"a\"" "x=\"b\"" "x=\"c\"")) (check (search x out) x)))
+    (check (search "Yes" (logic-tool kb "query" "forms" "(reaches a a)")) "the cycle: a reaches itself")
+    (check (search "No solutions" (logic-tool kb "query" "forms" "(reaches a d)")))))
+
+(deftest logic-negation-tests-and-constraints ()
+  (let ((kb (fresh-logic-kb "t-check")))
+    (logic-tool kb "assert" "forms"
+                "(defines \"a.py\" parse) (defines \"b.py\" emit) (calls emit parse) (calls emit gone)
+                 (size parse 120) (size emit 12)
+                 (<- (defined ?n) (defines ?f ?n))
+                 (<- (dangling ?caller ?callee) (calls ?caller ?callee) (not (defined ?callee)))
+                 (constraint no-dangling \"?caller calls ?callee, which nothing defines\" (dangling ?caller ?callee))
+                 (constraint small \"?n is ?s lines\" (size ?n ?s) (> ?s 100))")
+    (let ((out (logic-tool kb "check")))
+      (check (search "no-dangling: 1 violation" out) out)
+      (check (search "emit calls gone, which nothing defines" out) "messages filled in")
+      (check (search "parse is 120 lines" out)))
+    (logic-tool kb "retract" "forms" "(calls emit gone) (size parse ?)")
+    (check (search "All 2 constraints hold" (logic-tool kb "check")) "fixed after retracting")
+    (check (search "x=\"a.py\"" (logic-tool kb "query" "forms" "(defines ?x ?n) (prefix ?n \"pa\")")))
+    (check (search "x=\"b.py\"" (logic-tool kb "query" "forms" "(defines ?x ?n) (suffix ?n \"mit\")")))
+    (check (search "n=\"parse\"" (logic-tool kb "query" "forms" "(defines \"a.py\" ?n) (contains ?n \"ars\")")) "contains")
+    (check (search "needs its variables bound" (logic-tool kb "query" "forms" "(< ?a 3)")))))
+
+(deftest logic-orders-work-and-names-cycles ()
+  (let ((kb (fresh-logic-kb "t-order")))
+    (logic-tool kb "assert" "forms"
+                "(needs api service) (needs service db) (needs cli api) (needs a b) (needs b a) (needs a db)")
+    (let ((out (logic-tool kb "order" "relation" "needs")))
+      (check (search "1. db" out) out)
+      (check (search "2. [a b], service" out) "a cycle is one group, in its layer")
+      (check (search "3. api" out))
+      (check (search "4. cli" out))
+      (check (search "Cycles (each must change together): a <-> b" out)))))
+
+(deftest logic-rules-are-checked ()
+  (let ((kb (fresh-logic-kb "t-rules")))
+    (check (search "must appear in a positive goal"
+                   (logic-tool kb "assert" "forms" "(<- (p ?x ?y) (q ?x))")))
+    (check (search "has a variable" (logic-tool kb "assert" "forms" "(q ?x)")))
+    (check (search "built-in goal" (logic-tool kb "assert" "forms" "(contains a b)")))
+    (logic-tool kb "assert" "forms" "(q 1) (<- (p ?x) (q ?x) (not (p ?x)))")
+    (check (search "no single meaning" (logic-tool kb "query" "forms" "(p ?x)")) "negation through recursion")
+    (check (search "#." (or (ignore-errors (read-logic-forms "#.(error \"x\")")) "#. refused"))
+           "no read-time evaluation")))
+
+(deftest logic-knowledge-bases-persist ()
+  (let ((kb (fresh-logic-kb "t-persist")))
+    (logic-tool kb "assert" "forms" "(owns team-a \"api.py\") (<- (owner ?f ?t) (owns ?t ?f))")
+    (remhash kb *logic-kbs*)
+    (check (search "t=\"team-a\"" (logic-tool kb "query" "forms" "(owner \"api.py\" ?t)")) "read back from disk")
+    (check (search "Dropped" (logic-tool kb "drop")))
+    (check (search "No solutions" (logic-tool kb "query" "forms" "(owns ?t ?f)")))))
+
+(deftest logic-indexes-source-files ()
+  (with-syntax-test ()
+    (let ((kb (fresh-logic-kb "t-index"))
+          (dir (merge-pathnames "logic-src/" *config-directory*)))
+      (ensure-directories-exist dir)
+      (with-open-file (out (merge-pathnames "package.json" dir) :direction :output :if-exists :supersede)
+        (write-string *syntax-json* out))
+      (let ((out (logic-tool kb "index" "path" (namestring dir))))
+        (check (search "Indexed 1 file" out) out))
+      (check (search "n=\"version\"" (logic-tool kb "query" "forms" "(defines \"package.json\" ?n ?k ?l) (= ?l 3)")))
+      (check (search "Yes" (logic-tool kb "query" "forms" "(encloses deps lem)")) "nesting"))))
