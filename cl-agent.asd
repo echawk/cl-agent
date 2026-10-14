@@ -62,6 +62,7 @@
      (:file "events")
      (:file "components")
      (:file "guard")
+     (:file "workdir")
      (:file "hooks")
      (:file "json-util")
      (:file "parens")
@@ -149,6 +150,7 @@
            (:static-file "lisp.js")
            (:static-file "code.js")
            (:static-file "copilot.js")
+           (:static-file "live.js")
            (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"
@@ -202,7 +204,8 @@
                    (:file "lisp-routes")
                    (:file "session-routes")
                    (:file "scratch-routes")
-                   (:file "file-routes")))
+                   (:file "file-routes")
+                   (:file "live")))
      (:file "tools/lisp-scratch-tool")
      (:file "tools/scratch-tool")
      (:file "tools/source-tool")
@@ -268,7 +271,8 @@
    (:file "test-environments")
    (:file "test-tool-analytics")
    (:file "test-property-tests")
-   (:file "test-guard"))
+   (:file "test-guard")
+   (:file "test-live-sessions"))
   :perform (asdf:test-op (op system)
              (uiop:symbol-call :cl-agent :run-all-tests)))
 

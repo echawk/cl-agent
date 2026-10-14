@@ -31,7 +31,7 @@
 
 ;;; --- the working directory ---
 
-(defun expand-user-path (path &optional (directory (uiop:getcwd)))
+(defun expand-user-path (path &optional (directory (current-directory)))
   "PATH (\"~/src\", \"../x\", \"/abs\") as an absolute native namestring,
 relative to DIRECTORY, the way Lem's EXPAND-FILE-NAME reads it."
   (unless (and (stringp path) (plusp (length (string-trim " " path))))
@@ -43,15 +43,23 @@ relative to DIRECTORY, the way Lem's EXPAND-FILE-NAME reads it."
 roots and project skills all follow it.  Runs :WORKING-DIRECTORY-CHANGED
 with the old and new directories, and tells open pages.  Returns the new
 directory."
-  (let* ((old (uiop:getcwd))
+  (let* ((session (and (boundp '*current-session*) *current-session*))
+         (own (and session (session-working-directory session)))
+         (old (current-directory))
          (new (uiop:directory-exists-p (expand-user-path directory))))
     (unless new (error "There is no directory ~a." directory))
     (setf new (truename new))
     (unless (uiop:pathname-equal old new)
-      (uiop:chdir new)
+      (if own
+          ;; A session with a directory of its own (workdir.lisp): just its.
+          (setf (session-working-directory session) new)
+          (uiop:chdir new))
       (setf *default-pathname-defaults* new)
       (run-hook :working-directory-changed old new)
-      (editor-publish "cwd" (jobj "cwd" (uiop:native-namestring new) "by" by)))
+      (let ((payload (jobj "cwd" (uiop:native-namestring new) "by" by)))
+        (if (and own (typep (session-frontend session) 'web-frontend))
+            (web-frontend-event (session-frontend session) "cwd" payload)   ; its pages only
+            (editor-publish "cwd" payload))))
     new))
 
 ;;; --- directories, as Lem's directory-mode lists them ---
@@ -81,7 +89,7 @@ Lem's dired lists them; dot files only with HIDDEN."
       (jobj "directory" (uiop:native-namestring path)
             "parent" (let ((parent (uiop:pathname-parent-directory-pathname path)))
                        (if (uiop:pathname-equal parent path) :null (uiop:native-namestring parent)))
-            "cwd" (uiop:native-namestring (uiop:getcwd))
+            "cwd" (uiop:native-namestring (current-directory))
             "sort" sort
             "entries" (jarray (loop for entry in entries
                                     for json = (directory-entry-json entry path)

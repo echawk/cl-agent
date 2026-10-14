@@ -39,6 +39,13 @@
 threads rebind it, since hunchentoot's workers don't inherit dynamic bindings.")
    (session :initform nil :accessor web-frontend-session
             :documentation "The AGENT-SESSION this frontend serves, captured in UI-START.")
+   (hub :initarg :hub :initform nil :reader web-frontend-hub
+        :documentation "For a live session started beside the first (ui/web/live.lisp): the
+first session's frontend, whose server serves this one too.  NIL for the first.")
+   (live-id :initform (format nil "live-~36r" (random (expt 36 8) (make-random-state t)))
+            :reader web-frontend-live-id
+            :documentation "Names this live session to pages: stable, unlike a session's id,
+which /session new changes.")
    (transcript :initform nil :accessor web-frontend-transcript
                :documentation "Entry plists (:id :role :text :html :turn :time :inline), newest first.")
    (pending :initform "" :accessor web-frontend-pending
@@ -96,6 +103,10 @@ and no configured model, so the terminal did not prompt (main.lisp).")
 
 (defmacro with-web-state ((frontend) &body body)
   `(bt:with-lock-held ((web-frontend-state-lock ,frontend)) ,@body))
+
+(defun web-frontend-event (frontend type payload)
+  "Publish event TYPE with PAYLOAD (a JOBJ) to FRONTEND's pages only."
+  (with-web-state (frontend) (web-frontend-publish frontend type payload)))
 
 (defun web-ui-broadcast (type payload)
   "Publish event TYPE (a string) with PAYLOAD (a JOBJ, copied per page) to
@@ -207,7 +218,7 @@ CLAgent.registerUICommand) with ARGS, a JOBJ."
           "model" (json-or-null (and session (ignore-errors (provider-model (session-provider session)))))
           "user" (or (uiop:getenv "USER") (uiop:getenv "USERNAME") "user")
           "host" (or (ignore-errors (machine-instance)) "localhost")
-          "cwd" (namestring (uiop:getcwd))
+          "cwd" (namestring (current-directory))
           "home" (uiop:native-namestring (user-homedir-pathname))
           "lisp" (format nil "~a ~a" (lisp-implementation-type) (lisp-implementation-version))
           "port" (web-frontend-port frontend))))
@@ -320,8 +331,12 @@ or the frontend stops.  Holds one hunchentoot worker thread per open page."
 ;;; --- Lifecycle ---
 
 (defmethod ui-start ((frontend web-frontend))
-  (setf (web-frontend-session frontend) (and (boundp '*current-session*) *current-session*)
-        (web-frontend-acceptor frontend) (start-web-acceptor frontend)
+  (setf (web-frontend-session frontend) (and (boundp '*current-session*) *current-session*))
+  ;; A live session beside the first is served by the first's server.
+  (when (web-frontend-hub frontend)
+    (push frontend *web-frontends*)
+    (return-from ui-start))
+  (setf (web-frontend-acceptor frontend) (start-web-acceptor frontend)
         *web-frontend* frontend)
   (push frontend *web-frontends*)
   (ensure-web-asset-watcher)

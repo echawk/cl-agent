@@ -25,7 +25,7 @@ temporary sibling is removed.  :SUPERSEDE replaces a destination atomically;
     (error "Atomic output supports only :SUPERSEDE or :ERROR, not ~s" if-exists))
   ;; Absolute first: RENAME-FILE merges a relative new name with the
   ;; temporary file's own directory, so "src/x.lisp" would land in src/src/.
-  (let* ((target (uiop:ensure-absolute-pathname (pathname pathname) #'uiop:getcwd))
+  (let* ((target (uiop:ensure-absolute-pathname (pathname pathname) #'current-directory))
          (temporary (atomic-output-temporary-pathname target))
          (published-p nil))
     (ensure-directories-exist target)

@@ -15,6 +15,7 @@ import * as session from './session.js';
 import './agents.js';
 import './sessions.js';
 import './code.js';
+import './live.js';
 import { lispApi } from './lisp.js';
 
 const { state, on, el, boot } = core;

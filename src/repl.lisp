@@ -166,6 +166,9 @@ or (setf *default-system-prompt* ...) from an extension.")
   ((id :initarg :id :initform (allocate-session-id) :accessor session-id
        :documentation "Stable durable session identifier.")
    (created-at :initarg :created-at :initform (get-universal-time) :accessor session-created-at)
+   (working-directory :initarg :working-directory :initform nil :accessor session-working-directory
+                      :documentation "This session's own working directory (workdir.lisp), or NIL to
+follow the process's: the first session's, for live sessions beside it.")
    (display-name :initarg :display-name :initform nil :accessor session-display-name
                  :documentation "Optional human-readable durable session name.")
    (current-turn-id :initform nil :accessor session-current-turn-id)
@@ -433,7 +436,8 @@ startup rather than silently falling back to the host model."
 
 (defun make-session (provider &key frontend system-prompt (tools (list-tools) tools-supplied-p) max-tool-iterations orchestration-mode orchestration-tool-limit
                               (subagent-depth 0) max-subagent-depth subagent-model-profiles settings
-                              context-compaction-threshold (capability-mode :full) (policy-rules nil))
+                              context-compaction-threshold (capability-mode :full) (policy-rules nil)
+                              working-directory)
   (let* ((settings (or settings (load-agent-settings)))
          (profiles (normalize-subagent-model-profiles subagent-model-profiles))
          (base-prompt (or system-prompt *default-system-prompt*))
@@ -442,6 +446,8 @@ startup rather than silently falling back to the host model."
     (let ((session
             (make-instance 'agent-session
                            :provider provider
+                           :working-directory (and working-directory
+                                                   (uiop:ensure-directory-pathname (truename working-directory)))
                            :frontend (or frontend (make-frontend :cli))
                            :tools tools
                            :tool-catalog tools
@@ -2782,7 +2788,7 @@ result (NIL => caller should stop the REPL); otherwise return :NOT-A-COMMAND."
               (progn (ui-system (session-frontend session) (format nil "Unknown command /~a. Try /help." name)) t))))
       :not-a-command))
 
-(defun run-repl (session &key initial-task)
+(defun run-repl (session &key initial-task (primary t))
   "The interactive loop: read a line via SESSION-FRONTEND, treat a
 /command specially, otherwise submit it as a user message (via SESSION-
 SUBMIT-USER-TEXT -- see its docstring on the :USER-MESSAGE hook) and
@@ -2792,13 +2798,18 @@ here as a condition), and brackets the whole session in SESSION-
 FRONTEND's UI-START/UI-STOP. Binds *CURRENT-SESSION* for the whole
 session lifetime, not just a single turn, so a :USER-MESSAGE hook
 (which runs before RUN-AGENT-TURN's own narrower binding takes effect)
-can still call SESSION-COMPLETE."
+can still call SESSION-COMPLETE.
+
+PRIMARY is false for a live session started beside the first
+(ui/web/live.lisp): the process's startup and shutdown -- :on-startup,
+:on-shutdown, stopping every subagent -- belong to the first alone.  Each
+turn runs in SESSION's own working directory (workdir.lisp)."
   (let ((frontend (session-frontend session))
         (*current-session* session))
     (ui-start frontend)
     (unwind-protect
          (progn
-           (run-hook :on-startup)
+           (when primary (run-hook :on-startup))
            ;; Startup hooks may register tools (an MCP server for this repo).
            (sync-session-tools session)
            (unwind-protect
@@ -2808,8 +2819,9 @@ can still call SESSION-COMPLETE."
                   ;; reported and the session goes on (guard.lisp).
                   (when (and initial-task (plusp (length initial-task)))
                     (with-turn-guard (:frontend frontend :where "The turn")
-                      (session-submit-user-text session initial-task)
-                      (run-agent-turn session)))
+                      (with-session-directory (session)
+                        (session-submit-user-text session initial-task)
+                        (run-agent-turn session))))
                   (loop
                     (let ((line (or (pop (session-deferred-input session))
                                     ;; Messages queued during the last turn run before we prompt.
@@ -2823,15 +2835,18 @@ can still call SESSION-COMPLETE."
                       (when (plusp (length (string-trim " " line)))
                         (let ((result (first (or (with-turn-guard (:frontend frontend
                                                                    :where (format nil "The command ~a" (first-line line 60)))
-                                                   (list (dispatch-slash-command session line)))
+                                                   (with-session-directory (session)
+                                                     (list (dispatch-slash-command session line))))
                                                  (list :failed)))))
                           (cond
                             ((eq result :not-a-command)
                              (with-turn-guard (:frontend frontend :where "The turn")
-                               (session-submit-user-text session line)
-                               (run-agent-turn session)))
+                               (with-session-directory (session)
+                                 (session-submit-user-text session line)
+                                 (run-agent-turn session))))
                             ((null result) (return))))))))
-             (stop-all-subagent-tasks)
-             (run-hook :on-shutdown)))
+             (when primary
+               (stop-all-subagent-tasks)
+               (run-hook :on-shutdown))))
       (ui-stop frontend)))
   (values))

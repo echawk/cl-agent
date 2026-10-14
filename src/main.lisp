@@ -174,18 +174,29 @@ message and a non-zero exit, not a Lisp backtrace."
               (progn
                 (format t "~&cl-agent -- ~a (~a)~%Type /help for commands, Ctrl-D to exit.~%"
                         (provider-display-name provider) (provider-model provider))
-                (run-repl (make-session provider
-                                        :frontend (make-frontend (resolve-ui-keyword (clingon:getopt cmd :ui) config))
-                                        :settings (load-agent-settings config)
-                                        :system-prompt (config-value config :system-prompt)
-                                        :orchestration-mode (config-value config :orchestration-mode)
-                                        :orchestration-tool-limit (config-value config :orchestration-tool-limit)
-                                        :max-tool-iterations (config-value config :max-tool-iterations)
-                                        :max-subagent-depth (config-value config :max-subagent-depth 1)
-                                        :subagent-model-profiles (config-value config :subagent-model-profiles)
-                                        :context-compaction-threshold
-                                        (config-value config :context-compaction-threshold 0.8))
-                          :initial-task task)))))
+                (flet ((new-session (frontend provider &optional directory)
+                         (make-session provider
+                                       :frontend frontend
+                                       :working-directory directory
+                                       :settings (load-agent-settings config)
+                                       :system-prompt (config-value config :system-prompt)
+                                       :orchestration-mode (config-value config :orchestration-mode)
+                                       :orchestration-tool-limit (config-value config :orchestration-tool-limit)
+                                       :max-tool-iterations (config-value config :max-tool-iterations)
+                                       :max-subagent-depth (config-value config :max-subagent-depth 1)
+                                       :subagent-model-profiles (config-value config :subagent-model-profiles)
+                                       :context-compaction-threshold
+                                       (config-value config :context-compaction-threshold 0.8))))
+                  ;; Live sessions beside this one (ui/web/live.lisp) are made
+                  ;; the same way, on a clone of this provider.
+                  (setf *live-session-factory*
+                        (lambda (&key frontend model directory)
+                          (new-session frontend
+                                       (provider-for-model provider (or model (provider-model provider)))
+                                       directory)))
+                  (run-repl (new-session (make-frontend (resolve-ui-keyword (clingon:getopt cmd :ui) config))
+                                         provider)
+                            :initial-task task))))))
       (provider-not-found (c)
         (format *error-output* "~&~a~%" c) (uiop:quit 1))
       (missing-api-key (c)

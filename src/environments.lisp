@@ -247,7 +247,7 @@ ROOT, started (with ROOT mounted at its own path) if need be."
                  (unless (zerop status) (error "Could not start environment ~a: ~a" name (string-trim '(#\Newline) err)))))))
     container))
 
-(defun environment-wrap-command (command &key (directory (uiop:native-namestring (uiop:getcwd)))
+(defun environment-wrap-command (command &key (directory (uiop:native-namestring (current-directory)))
                                               (root (memory-project-root)))
   "COMMAND (a shell command) as the command line that runs it in the
 project's environment, in DIRECTORY, or NIL when the project uses none."
@@ -332,7 +332,7 @@ project's environment, in DIRECTORY, or NIL when the project uses none."
        (let ((command (jget args "command")))
          (unless (stringp command) (error "Give the command."))
          (let* ((root (memory-project-root))
-                (directory (uiop:native-namestring (uiop:getcwd)))
+                (directory (uiop:native-namestring (current-directory)))
                 (environment (or (and (stringp name) (plusp (length name)) (normalize-environment-name name))
                                  (getf (project-environment root) :name)
                                  (error "Give the environment's name (this project uses none)."))))

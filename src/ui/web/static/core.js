@@ -52,12 +52,33 @@ export function emit(type, detail) {
   }
 }
 
+// ---------- live sessions ----------
+//
+// The page shows one live session at a time (live.js lists them down the
+// left edge).  Every request names it (X-CL-Agent-Session; ?session= for
+// the event stream); with none named, the server answers for its first.
+// Remembered per browser tab, so two tabs can follow two sessions.
+
+export const live = { id: (() => { try { return sessionStorage.getItem('cl-agent.live'); } catch (err) { return null; } })() };
+
+/** Show live session ID: its transcript, activity and events replace these. */
+export function switchLive(id) {
+  if (id === live.id) return;
+  live.id = id;
+  try { if (id) sessionStorage.setItem('cl-agent.live', id); else sessionStorage.removeItem('cl-agent.live'); } catch (err) { /* private mode */ }
+  Object.assign(state, { seq: 0, instance: null, messages: [], pending: '', thinking: false, planning: false,
+                         queued: [], turn: 0, activity: [], subagents: [], stats: null });
+  emit('live-switch', id);
+  loadState();
+}
+
 // ---------- server API ----------
 
 export async function api(path, { method = 'GET', body, params } = {}) {
   const url = new URL(path, location.origin);
   for (const [key, value] of Object.entries(params || {})) url.searchParams.set(key, value);
   const init = { method, headers: {}, cache: 'no-store' };
+  if (live.id) init.headers['X-CL-Agent-Session'] = live.id;
   // Mutating requests must carry this header (the server's CSRF guard).
   if (method !== 'GET') init.headers['X-CL-Agent'] = '1';
   if (body !== undefined) {
@@ -133,7 +154,7 @@ export async function loadState() {
 
 function openStream() {
   source?.close();
-  source = new EventSource(`/api/events?since=${state.seq}`);
+  source = new EventSource(`/api/events?since=${state.seq}${live.id ? `&session=${encodeURIComponent(live.id)}` : ''}`);
   source.onmessage = message => {
     try { apply(JSON.parse(message.data)); } catch (err) { console.error('[cl-agent] bad event', err); }
   };

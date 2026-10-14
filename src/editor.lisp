@@ -35,7 +35,7 @@ directory the shell, file and language-server tools use; /cd alone shows it."
     (handler-case
         (ui-system frontend
                    (if (zerop (length directory))
-                       (format nil "Working directory: ~a" (uiop:native-namestring (uiop:getcwd)))
+                       (format nil "Working directory: ~a" (uiop:native-namestring (current-directory)))
                        (format nil "Working directory: ~a"
                                (uiop:native-namestring (set-working-directory directory)))))
       (error (condition) (ui-system frontend (princ-to-string condition)))))
@@ -44,7 +44,7 @@ directory the shell, file and language-server tools use; /cd alone shows it."
 (define-slash-command pwd (session arg)
   "Show the working directory."
   (declare (ignore arg))
-  (ui-system (session-frontend session) (format nil "Working directory: ~a" (uiop:native-namestring (uiop:getcwd))))
+  (ui-system (session-frontend session) (format nil "Working directory: ~a" (uiop:native-namestring (current-directory))))
   t)
 
 (define-command-completer "cd" (context)
@@ -84,7 +84,7 @@ directory the shell, file and language-server tools use; /cd alone shows it."
                                       (gethash "modified" json) (gethash "changedOnDisk" json)))
                             buffers))
             (format nil "No files are open in the editor. Working directory: ~a"
-                    (uiop:native-namestring (uiop:getcwd)))))))
+                    (uiop:native-namestring (current-directory)))))))
 
 (define-tool open-in-editor (args)
     (:description "Open a file in the user's Code tab, optionally at a line (1-based), to show them code you are discussing or have just changed. The file is visited through the editor (Lem), as C-x C-f would."

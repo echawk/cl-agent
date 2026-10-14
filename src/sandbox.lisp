@@ -8,7 +8,7 @@
   "Whether this host can enforce cl-exec-sandbox's baseline policy."
   (cl-exec-sandbox:sandbox-supported-p :available-p))
 
-(defun make-agent-sandbox-policy (&key (workspace-roots (list (uiop:getcwd)))
+(defun make-agent-sandbox-policy (&key (workspace-roots (list (current-directory)))
                                        network)
   "Create cl-agent's conservative workspace-write policy.
 
@@ -39,6 +39,6 @@ current lifecycle until P4 routes all execution through policy/approval."
    (cl-exec-sandbox:run-sandboxed
     "/bin/sh" (list "-c" command)
     :policy (or policy (make-agent-sandbox-policy))
-    :working-directory (or working-directory (uiop:getcwd))
+    :working-directory (or working-directory (current-directory))
     :timeout timeout :output-limit *sandbox-output-limit*
     :error-output-limit *sandbox-output-limit*)))

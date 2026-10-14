@@ -101,7 +101,7 @@ a { color: var(--blue); text-underline-offset: 2px; }
   border-right: var(--border) solid var(--rule);
   font-size: 18px;
 }
-.titlebar .title { letter-spacing: .02em; }
+.titlebar .title { letter-spacing: .02em; white-space: nowrap; flex-shrink: 0; }
 .titlebar .title-info { font-weight: 400; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .titlebar .spacer { flex: 1; min-width: 40px; height: 17px; background: var(--stripes); }
 .titlebar .btn { background: transparent; color: inherit; border-color: currentColor; }
@@ -126,6 +126,40 @@ a { color: var(--blue); text-underline-offset: 2px; }
 }
 .desk.side-hidden { grid-template-columns: minmax(0, 1fr); }
 .desk.side-hidden .side-pane, .desk.side-hidden .splitter { display: none; }
+
+/* ---------- live sessions (live.js): vertical tabs down the left edge ---------- */
+
+.desk.with-rail { grid-template-columns: auto minmax(0, 1fr) 6px var(--side-width); }
+.desk.with-rail.side-hidden { grid-template-columns: auto minmax(0, 1fr); }
+.live-rail { display: flex; flex-direction: column; gap: 4px; padding: 0 4px 0 0; min-height: 0; overflow-y: auto; }
+.live-tab {
+  position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px 3px; border: var(--border) solid var(--rule); background: var(--paper-2);
+  cursor: pointer; user-select: none; color: var(--ink-2);
+}
+.live-tab:hover { background: var(--paper-3); color: var(--ink); }
+.live-tab.active { background: var(--paper); color: var(--ink); box-shadow: inset 3px 0 0 var(--pink); }
+.live-name {
+  writing-mode: vertical-rl; text-orientation: mixed; white-space: nowrap;
+  max-height: 22ch; overflow: hidden; text-overflow: ellipsis; font-weight: 600; font-size: 0.86em;
+}
+.live-dot { width: 7px; height: 7px; border: 1.5px solid currentColor; border-radius: 50%; }
+.live-tab.busy .live-dot { background: var(--green); border-color: var(--green); animation: live-pulse 1s ease-in-out infinite; }
+@keyframes live-pulse { 50% { opacity: .35; } }
+.live-unread { background: var(--pink); color: var(--on-pink); font-size: 0.72em; font-weight: 700; padding: 0 4px; line-height: 1.5; }
+.live-close {
+  position: absolute; top: -2px; right: -2px; display: none; padding: 0 4px; line-height: 1.2;
+  border: 1.5px solid var(--rule); background: var(--paper); color: var(--ink); font-size: 0.8em;
+}
+.live-tab:hover .live-close { display: block; }
+.live-add { border: var(--border) dashed var(--rule-soft); background: none; color: var(--ink-2); padding: 4px 0; font-weight: 700; }
+.live-add:hover { border-color: var(--rule); color: var(--ink); }
+.live-backdrop { position: fixed; inset: 0; z-index: 50; background: rgb(0 0 0 / .25); display: grid; place-items: center; }
+.live-form { width: min(520px, 92vw); padding: 14px; display: grid; gap: 10px; background: var(--paper); border: var(--border) solid var(--rule); box-shadow: var(--shadow); }
+.live-form h3 { margin: 0; }
+.live-form label { display: grid; gap: 4px; font-size: 0.9em; color: var(--ink-2); }
+.live-form-error { color: var(--red); min-height: 1.2em; font-size: 0.9em; }
+.live-form-buttons { display: flex; justify-content: flex-end; gap: 8px; }
 
 .pane {
   position: relative;

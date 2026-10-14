@@ -94,7 +94,7 @@ available configurations and a list of unavailable server names."
 
 For files outside it, fall back to the file's directory; this keeps a direct
 agent request useful while never allowing a root walk above that directory."
-  (let ((cwd (uiop:ensure-directory-pathname (truename (uiop:getcwd)))))
+  (let ((cwd (uiop:ensure-directory-pathname (truename (current-directory)))))
     (if (let ((root (namestring cwd)) (candidate (namestring path)))
           (and (<= (length root) (length candidate))
                (string= root candidate :end2 (length root))))

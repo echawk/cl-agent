@@ -35,10 +35,10 @@ else the directory itself."
                (multiple-value-bind (out err status)
                    (uiop:run-program '("git" "rev-parse" "--show-toplevel")
                                      :output :string :error-output nil :ignore-error-status t
-                                     :directory (uiop:getcwd))
+                                     :directory (current-directory))
                  (declare (ignore err))
                  (and (zerop status) (string-trim '(#\Newline #\Space) out))))))
-    (uiop:native-namestring (uiop:ensure-directory-pathname (if (plusp (length root)) root (uiop:getcwd))))))
+    (uiop:native-namestring (uiop:ensure-directory-pathname (if (plusp (length root)) root (current-directory))))))
 
 (defun memory-store-path (scope)
   (merge-pathnames (if (eq scope :global)

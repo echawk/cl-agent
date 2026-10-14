@@ -48,7 +48,7 @@
     (if (and (stringp path) (plusp (length path))) path (error "Give a path."))))
 
 (define-web-route cwd (:path "/api/cwd")
-  (jobj "cwd" (uiop:native-namestring (uiop:getcwd))))
+  (jobj "cwd" (uiop:native-namestring (current-directory))))
 
 (define-web-route cwd-change (:method :post :path "/api/cwd")
   (with-file-errors
@@ -56,14 +56,14 @@
 
 (define-web-route files-list (:path "/api/files/list")
   (with-file-errors
-    (list-directory-json (or (web-param "dir") (uiop:native-namestring (uiop:getcwd)))
+    (list-directory-json (or (web-param "dir") (uiop:native-namestring (current-directory)))
                          :sort (or (web-param "sort") "name")
                          :hidden (equal (web-param "hidden") "1"))))
 
 (define-web-route files-complete (:path "/api/files/complete")
   (completion-result-json
    (find-file-completions (or (web-param "input") "")
-                          (or (web-param "dir") (uiop:native-namestring (uiop:getcwd))))))
+                          (or (web-param "dir") (uiop:native-namestring (current-directory))))))
 
 (define-web-route files-buffers (:path "/api/files/buffers")
   (with-file-errors (jobj "buffers" (jarray (editor-buffers)))))

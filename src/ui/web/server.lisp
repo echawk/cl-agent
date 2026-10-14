@@ -159,8 +159,23 @@ a closed tab, an event stream going away): routine, so not logged."
         (hunchentoot:content-type*) "application/json; charset=utf-8")
   (json-encode (jobj "error" message)))
 
+(defun web-request-frontend (primary request)
+  "The live session REQUEST is for (X-CL-Agent-Session, or ?session= for
+an event stream; see ui/web/live.lisp), else PRIMARY."
+  (let ((id (or (hunchentoot:header-in :x-cl-agent-session request)
+                (hunchentoot:get-parameter "session" request))))
+    (or (and id (find-if (lambda (frontend)
+                           (and (equal (web-frontend-live-id frontend) id)
+                                (eq (or (web-frontend-hub frontend) frontend) primary)))
+                         *web-frontends*))
+        primary)))
+
 (defmethod hunchentoot:acceptor-dispatch-request ((acceptor web-ui-acceptor) request)
-  (let* ((*web-frontend* (web-ui-acceptor-frontend acceptor))
+  (let* ((*web-frontend* (web-request-frontend (web-ui-acceptor-frontend acceptor) request))
+         ;; The request acts for its session: settings, working directory.
+         (*current-session* (web-frontend-session *web-frontend*))
+         (*default-pathname-defaults* (or (and *current-session* (session-working-directory *current-session*))
+                                          *default-pathname-defaults*))
          (*config-directory* (web-frontend-config-directory *web-frontend*))
          (method (hunchentoot:request-method request))
          (path (hunchentoot:script-name request)))

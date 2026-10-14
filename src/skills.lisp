@@ -5,7 +5,7 @@
 (defvar *skill-catalog* nil "The current metadata-only cl-skills catalog.")
 
 (defun skills-directory () (merge-pathnames "skills/" *config-directory*))
-(defun project-skills-directory () (merge-pathnames ".agents/skills/" (uiop:getcwd)))
+(defun project-skills-directory () (merge-pathnames ".agents/skills/" (current-directory)))
 (defun skills-cache-directory () (merge-pathnames "skill-cache/" *config-directory*))
 
 (defun skill-discovery-roots ()

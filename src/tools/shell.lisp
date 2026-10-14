@@ -78,7 +78,9 @@ agent loop's JSON-Schema validation."
              ;; shell. This makes the tracked process the command shell itself,
              ;; so normal simple commands (including `sleep`) are reaped when a
              ;; managed timeout terminates it.
+             ;; In this session's working directory (workdir.lisp).
              (process (uiop:launch-program (or wrapped (list "/bin/sh" "-c" command))
+                                           :directory (current-directory)
                                            :output :stream :error-output :stream))
              (job (make-instance 'shell-job :id id :process process :output (uiop:process-info-output process)
                                  :error-output (uiop:process-info-error-output process) :started-at (shell-now) :expected expected

@@ -291,9 +291,9 @@ filesystem, relative to the working directory."
          (name-part (if slash (subseq raw (1+ slash)) raw))
          (directory (cond ((uiop:string-prefix-p "~/" dir-part)
                            (merge-pathnames (subseq dir-part 2) (user-homedir-pathname)))
-                          ((string= dir-part "") (uiop:getcwd))
+                          ((string= dir-part "") (current-directory))
                           (t (uiop:ensure-directory-pathname
-                              (merge-pathnames dir-part (uiop:getcwd)))))))
+                              (merge-pathnames dir-part (current-directory)))))))
     (when (probe-file directory)
       (flet ((entry (name dir-p)
                (when (and (or (plusp (length name-part)) (char/= (char name 0) #\.))

@@ -709,6 +709,14 @@ default; switch to dark with the ◐ button, `Alt-T`, or `/theme dark`.
   them. Started with `--ui web` and no `:model` configured, cl-agent asks in
   the page rather than in the terminal. **Make it my default** writes
   `:model` into `config.lisp`, keeping your comments.
+- **Live sessions**: several agents at once, as vertical tabs down the left
+  edge. **+** (`Alt-N`) starts one in a directory of your choice, with its own
+  model and name. Each has its own working directory (tools, the editor,
+  memory, LSP and environments all use it), conversation, subagents and
+  thread, so sessions never wait on each other. A dot means a session is
+  working, and a number counts its unread messages. `Alt-↑`/`Alt-↓` switch
+  between them, and **×** stops one (its log stays in Sessions). The first
+  session is the one cl-agent started with. See `docs/live-sessions.md`.
 
 ### The Lisp tab
 
