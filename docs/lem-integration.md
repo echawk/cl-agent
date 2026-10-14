@@ -444,7 +444,8 @@ The protocol to implement is lem-server's: `make-view`/`resize-view`/`move-view`
 - **The native side** is built under `config/tree-sitter/` with `cc`:
   - Our own build of tree-sitter-cl's C wrapper. The prebuilt one names a single library version.
   - One added function for field names. tree-sitter-cl's tree-cursor binding passes pointers to the by-value C API, and crashes.
-  - Grammars, cloned from upstream at a pinned tag, checked against the pinned commit, and compiled from their generated `parser.c` (`*syntax-grammars*`).
+  - Grammars, cloned from upstream at a pinned tag, checked against the pinned commit, and compiled from their generated `parser.c` (`*syntax-grammars*`). There is one build of each, in `tree-sitter/grammars/`.
+  - `tree-sitter/sgconfig.yaml` gives ast-grep the grammars it doesn't build in (Common Lisp). The `structural-*` tools run `ast-grep run --config` with it, so nothing builds a second copy.
   - libtree-sitter itself comes from the system.
 - **Edits** go through the file's Lem buffer, like `lem-command`'s, and are refused if they add syntax errors.
   - New text is dedented, then indented to the node's column.

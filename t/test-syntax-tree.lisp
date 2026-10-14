@@ -90,3 +90,23 @@
              (check (search "No tree-sitter grammar for txt files"
                             (call-tool "syntax-tree" (jobj "action" "outline" "path" "/x/notes.txt")))))
         (ignore-errors (editor-close-file path :force t))))))
+
+(deftest grammars-live-in-one-place-ast-grep-included ()
+  (check (uiop:string-suffix-p (namestring (syntax-grammar-library "c"))
+                               (format nil "tree-sitter/grammars/c.~a" (if (uiop:os-macosx-p) "dylib" "so")))
+         "one place: config/tree-sitter/grammars/")
+  (check (null (ast-grep-config-for "python")) "ast-grep builds python in: no config")
+  (check (ast-grep-custom-language-p "commonlisp") "Common Lisp it does not")
+  ;; A grammar on disk is listed for ast-grep; one not yet built is not.
+  (let ((library (syntax-grammar-library "commonlisp")))
+    (ensure-directories-exist library)
+    (with-open-file (out library :direction :output :if-exists :supersede) (write-string "stand-in" out))
+    (let ((config (uiop:read-file-string (write-ast-grep-config))))
+      (check (search "customLanguages:" config))
+      (check (search (format nil "  commonlisp:~%    libraryPath: ~a" (uiop:native-namestring library)) config)
+             "at the shared build")
+      (check (search "extensions: [\"lisp\", \"cl\", \"lsp\", \"asd\"]" config)))
+    (check-equal (ast-grep-config-for "commonlisp") (ast-grep-config-path) "built already: just the config")
+    (delete-file library))
+  (check-equal (ast-grep-command-with-config '("ast-grep" "run" "--stdin" "--lang=commonlisp") #p"/c/sgconfig.yaml")
+               '("ast-grep" "run" "--config" "/c/sgconfig.yaml" "--stdin" "--lang=commonlisp")))

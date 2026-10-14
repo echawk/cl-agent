@@ -42,20 +42,37 @@ is plainly absent."
                                (merge-pathnames name (uiop:ensure-directory-pathname directory))) )
             when candidate return candidate)))
 
-(defun ensure-ast-grep-backend ()
-  "Load Clasted's optional backend only when the external parser is present."
+;; Grammars installed meanwhile, to report with a tool's result (syntax-tree.lisp).
+(defvar *syntax-notes* '())
+
+(defun ast-grep-command-with-config (command config)
+  "COMMAND (ast-grep run ...) reading CONFIG: ast-grep run --config CONFIG ..."
+  (list* (first command) (second command) "--config" (uiop:native-namestring config) (cddr command)))
+
+(defun ensure-ast-grep-backend (&optional language)
+  "Load Clasted's optional backend only when the external parser is present.
+For a LANGUAGE ast-grep does not build in (Common Lisp), it is run with the
+sgconfig.yaml of cl-agent's own grammar builds (AST-GREP-CONFIG-FOR in
+syntax-tree.lisp): one build of each grammar, shared with syntax-tree."
   (let ((program (structural-program-on-path "ast-grep")))
     (unless program
       (error "structural-rewrite-plan requires ast-grep on PATH; install it, then retry"))
     (asdf:load-system "clasted/ast-grep")
-    (clasted:make-ast-grep-backend :program (namestring program))))
+    (let ((config (and language (ast-grep-config-for language)))
+          (run (symbol-function (find-symbol "RUN-AST-GREP" :clasted))))
+      (clasted:make-ast-grep-backend
+       :program (namestring program)
+       :runner (if config
+                   (lambda (command input &rest options)
+                     (apply run (ast-grep-command-with-config command config) input options))
+                   run)))))
 
 (defun plan-structural-rewrite (path language pattern replacement)
   "Return a non-writing Clasted edit plan for one immutable file observation."
   (unless (and (stringp language) (plusp (length (string-trim " " language)))
                (stringp pattern) (plusp (length pattern)) (stringp replacement))
     (error "language, pattern, and replacement must be strings; language and pattern cannot be empty"))
-  (clasted:rewrite (ensure-ast-grep-backend)
+  (clasted:rewrite (ensure-ast-grep-backend language)
                    (make-file-structural-snapshot path)
                    :language language :pattern pattern :replacement replacement))
 
@@ -69,7 +86,7 @@ auditable structural search without confusing it with a current-file claim."
     (error "language and pattern must be non-empty strings"))
   (let ((snapshot (make-file-structural-snapshot path)))
     (values snapshot
-            (clasted:query (ensure-ast-grep-backend) snapshot
+            (clasted:query (ensure-ast-grep-backend language) snapshot
                            :language language :pattern pattern))))
 
 (defun structural-match->plist (match)

@@ -12,8 +12,20 @@
 ;;;;   - New text is written as if at column 0 and indented to the node it
 ;;;;     replaces or sits next to.
 ;;;;
-;;;; The native side, built on first use under the config directory's
-;;;; tree-sitter/ with the C compiler (cc):
+;;;; Everything native lives in one place, the config directory's tree-sitter/
+;;;; (TREE-SITTER-DIRECTORY), built on first use with the C compiler (cc):
+;;;;
+;;;;   tree-sitter/grammars/<language>.dylib (.so)   one build of each grammar,
+;;;;                                  shared by everything that parses
+;;;;   tree-sitter/sgconfig.yaml      ast-grep's view of the same grammars: its
+;;;;                                  customLanguages, for the languages ast-grep
+;;;;                                  does not build in (AST-GREP-CONFIG-FOR), so
+;;;;                                  the structural-query tools and an ast-grep
+;;;;                                  MCP server use these builds, not their own
+;;;;   tree-sitter/lib/libts-wrapper  tree-sitter-cl's wrapper (below)
+;;;;   tree-sitter/build/             checkouts while building, then removed
+;;;;
+;;;; In detail:
 ;;;;   - libtree-sitter itself comes from the system (Homebrew's tree-sitter,
 ;;;;     or a distribution's libtree-sitter-dev), found by its header;
 ;;;;   - libts-wrapper: tree-sitter-cl's C wrapper, built here against that
@@ -56,9 +68,14 @@
     (:name "css" :repo "tree-sitter/tree-sitter-css" :tag "v0.25.0"
      :commit "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f" :extensions ("css"))
     (:name "html" :repo "tree-sitter/tree-sitter-html" :tag "v0.23.2"
-     :commit "5a5ca8551a179998360b4a4ca2c0f366a35acc03" :extensions ("html" "htm")))
+     :commit "5a5ca8551a179998360b4a4ca2c0f366a35acc03" :extensions ("html" "htm"))
+    (:name "commonlisp" :repo "tree-sitter-grammars/tree-sitter-commonlisp" :tag "v0.4.1"
+     :commit "9db594efb43574c5fe4a1f880568b1f0d0ee6057" :extensions ("lisp" "cl" "lsp" "asd")
+     :ast-grep :custom))
   "The languages the agent can edit by syntax tree: each grammar's upstream
-repository, pinned to a tag and the commit it names.")
+repository, pinned to a tag and the commit it names.  :AST-GREP :CUSTOM
+marks one ast-grep does not build in: it gets this build, through
+sgconfig.yaml.")
 
 (defun syntax-grammar (name)
   (find name *syntax-grammars* :key (lambda (grammar) (getf grammar :name)) :test #'string-equal))
@@ -81,8 +98,13 @@ repository, pinned to a tag and the commit it names.")
 (defun tree-sitter-directory ()
   (merge-pathnames "tree-sitter/" *config-directory*))
 
-(defun shared-library-path (name)
-  (merge-pathnames (format nil "~a.~a" name (if (uiop:os-macosx-p) "dylib" "so")) (tree-sitter-directory)))
+(defun shared-library-path (name &optional (subdirectory "lib/"))
+  (merge-pathnames (format nil "~a~a.~a" subdirectory name (if (uiop:os-macosx-p) "dylib" "so"))
+                   (tree-sitter-directory)))
+
+(defun syntax-grammar-library (name)
+  "Where the one build of grammar NAME lives."
+  (shared-library-path name "grammars/"))
 
 (defun tree-sitter-prefix ()
   "The installation prefix of the system's libtree-sitter (its header and
@@ -169,12 +191,13 @@ const char *cl_agent_ts_field_name_for_child(const TSNode *node, uint32_t index)
 
 (defun build-grammar (name source)
   "Compile the grammar NAME from SOURCE, a grammar's directory (with
-src/parser.c), into the tree-sitter directory.  Returns the library."
+src/parser.c), into its place in the grammars directory.  Returns the
+library."
   (let* ((src (merge-pathnames "src/" (uiop:ensure-directory-pathname source)))
          (scanner (probe-file (merge-pathnames "scanner.c" src))))
     (unless (probe-file (merge-pathnames "parser.c" src))
       (error "~a has no src/parser.c: not a tree-sitter grammar." source))
-    (compile-shared-library (shared-library-path (format nil "libtree-sitter-~a" name))
+    (compile-shared-library (syntax-grammar-library name)
                             (remove nil (list (merge-pathnames "parser.c" src) scanner))
                             :includes (list src))))
 
@@ -204,18 +227,54 @@ saying so."
                    (uiop:native-namestring (tree-sitter-directory))))
       (uiop:delete-directory-tree checkout :validate t :if-does-not-exist :ignore))))
 
-(defvar *syntax-notes* '()
-  "Lines to report with a tool's result: grammars installed meanwhile.")
+;; *SYNTAX-NOTES* (structural.lisp): lines to report with a tool's result,
+;; grammars installed meanwhile.
+
+(defun ensure-syntax-grammar (name)
+  "The library of grammar NAME, installed the first time.  Needs git and cc,
+not libtree-sitter: ast-grep loads it itself."
+  (bt:with-recursive-lock-held (*tree-sitter-lock*)
+    (let ((library (syntax-grammar-library name)))
+      (unless (probe-file library)
+        (push (install-grammar name) *syntax-notes*))
+      library)))
 
 (defun syntax-language (name)
   "The tree-sitter language NAME, loaded (and installed, the first time)."
   (ensure-tree-sitter)
   (bt:with-recursive-lock-held (*tree-sitter-lock*)
     (or (ts:get-language name)
-        (let ((library (shared-library-path (format nil "libtree-sitter-~a" name))))
-          (unless (probe-file library)
-            (push (install-grammar name) *syntax-notes*))
-          (ts:load-language name (uiop:native-namestring library))))))
+        (ts:load-language name (uiop:native-namestring (ensure-syntax-grammar name))))))
+
+;;; --- ast-grep, on the same grammars ---
+
+(defun ast-grep-config-path ()
+  (merge-pathnames "sgconfig.yaml" (tree-sitter-directory)))
+
+(defun write-ast-grep-config ()
+  "Write sgconfig.yaml: ast-grep's customLanguages, one per installed
+grammar ast-grep does not build in, each at its library here.  Returns it."
+  (let ((path (ast-grep-config-path)))
+    (ensure-directories-exist path)
+    (with-open-file (out path :direction :output :if-exists :supersede)
+      (format out "# Written by cl-agent (syntax-tree.lisp) from ~a: edits are overwritten.~%customLanguages:~%"
+              (uiop:native-namestring (merge-pathnames "grammars/" (tree-sitter-directory))))
+      (dolist (grammar *syntax-grammars*)
+        (let ((library (syntax-grammar-library (getf grammar :name))))
+          (when (and (eq (getf grammar :ast-grep) :custom) (probe-file library))
+            (format out "  ~a:~%    libraryPath: ~a~%    extensions: [~{~s~^, ~}]~%"
+                    (getf grammar :name) (uiop:native-namestring library) (getf grammar :extensions))))))
+    path))
+
+(defun ast-grep-custom-language-p (language)
+  (eq (getf (syntax-grammar language) :ast-grep) :custom))
+
+(defun ast-grep-config-for (language)
+  "The sgconfig.yaml ast-grep needs for LANGUAGE -- its grammar built and
+listed -- or NIL when ast-grep builds LANGUAGE in."
+  (when (ast-grep-custom-language-p language)
+    (ensure-syntax-grammar (getf (syntax-grammar language) :name))
+    (write-ast-grep-config)))
 
 ;;; --- trees over text ---
 
@@ -289,7 +348,7 @@ saying so."
 (defparameter *definition-words*
   '("definition" "declaration" "function" "method" "class" "struct" "enum" "union" "interface"
     "trait" "impl" "module" "namespace" "_item" "type_spec" "type_alias" "pair" "constructor"
-    "variable_declarator" "rule_set" "element")
+    "variable_declarator" "rule_set" "element" "defun")
   "A named node whose type contains one of these, and that has a name, is a
 definition for outlines and names.")
 
@@ -297,7 +356,7 @@ definition for outlines and names.")
   '("parameter" "argument" "identifier" "expression" "call" "_declarator" "specifier_list")
   "... unless its type contains one of these.")
 
-(defparameter *function-words* '("function" "method" "constructor" "lambda" "closure" "arrow")
+(defparameter *function-words* '("function" "method" "constructor" "lambda" "closure" "arrow" "defun")
   "Definitions an outline does not look inside.")
 
 (defun type-has-word-p (type words)
@@ -311,7 +370,10 @@ definition for outlines and names.")
 
 (defun node-name (tree node)
   "The name NODE defines, or NIL."
-  (let ((name (or (node-field node "name") (node-field node "key")
+  (let ((name (or (node-field node "name") (node-field node "key") (node-field node "function_name")
+                  ;; Common Lisp: (defun NAME ...) keeps it in a header.
+                  (let ((header (find "defun_header" (ts:node-children node) :key #'ts:node-type :test #'string=)))
+                    (and header (node-field header "function_name")))
                   (and (search "impl" (ts:node-type node)) (node-field node "type")))))
     (if name
         (unquote-name (node-text tree name))
@@ -630,10 +692,10 @@ when SAVE.  Returns a plist (:description :changes :errors :saved :path)."
 
 (defun syntax-languages-text ()
   (format nil "Languages (grammars build on first use into ~a):~{~%  ~a~}~@[~%~a~]"
-          (uiop:native-namestring (tree-sitter-directory))
+          (uiop:native-namestring (merge-pathnames "grammars/" (tree-sitter-directory)))
           (mapcar (lambda (grammar)
                     (format nil "~a (~{.~a~^ ~})~:[~; -- installed~]" (getf grammar :name) (getf grammar :extensions)
-                            (probe-file (shared-library-path (format nil "libtree-sitter-~a" (getf grammar :name))))))
+                            (probe-file (syntax-grammar-library (getf grammar :name)))))
                   *syntax-grammars*)
           (and (null (tree-sitter-prefix))
                "tree-sitter's library is not installed: brew install tree-sitter (or libtree-sitter-dev).")))
@@ -649,7 +711,7 @@ when SAVE.  Returns a plist (:description :changes :errors :saved :path)."
     options))
 
 (define-tool syntax-tree (args)
-    (:description "Structural code edits in C, C++, Python, JavaScript, TypeScript/TSX, Rust, Go, Ruby, Java, JSON, Bash, CSS and HTML, by tree-sitter syntax tree. action=outline lists a file's definitions (functions, classes, methods, structs, keys...) with their lines; show prints one node with its parts; query runs a tree-sitter query (e.g. \"(function_definition name: (identifier) @name)\") and lists captures. Edits: replace, delete, insert_before, insert_after a node picked by name (a definition's name or Outer.inner), by line (+ column; kind climbs to an enclosing node type, e.g. line 40 kind \"function\" = the function around line 40), or by query (+ capture). Give occurrence when several match. Write text unindented: it is indented to the node's column; blank lines at its ends are kept (start it with an empty line to separate definitions). An edit that would leave the file with more syntax errors than before is refused, saying where. Edits go through the file's Lem buffer (the user's unsaved changes included, shown live) and stay unsaved unless save is true. Lisp is better edited with the Lisp tools. A language's grammar is fetched and built on first use."
+    (:description "Structural code edits in C, C++, Python, JavaScript, TypeScript/TSX, Rust, Go, Ruby, Java, JSON, Bash, CSS, HTML and Common Lisp, by tree-sitter syntax tree. action=outline lists a file's definitions (functions, classes, methods, structs, keys...) with their lines; show prints one node with its parts; query runs a tree-sitter query (e.g. \"(function_definition name: (identifier) @name)\") and lists captures. Edits: replace, delete, insert_before, insert_after a node picked by name (a definition's name or Outer.inner), by line (+ column; kind climbs to an enclosing node type, e.g. line 40 kind \"function\" = the function around line 40), or by query (+ capture). Give occurrence when several match. Write text unindented: it is indented to the node's column; blank lines at its ends are kept (start it with an empty line to separate definitions). An edit that would leave the file with more syntax errors than before is refused, saying where. Edits go through the file's Lem buffer (the user's unsaved changes included, shown live) and stay unsaved unless save is true. For Lisp the Lisp tools know more (packages, the live image); this one is still handy for outlines and queries. A language's grammar is fetched and built on first use."
      :effects '(:write-workspace)
      :parameters
      (jobj "type" "object"
@@ -657,7 +719,7 @@ when SAVE.  Returns a plist (:description :changes :errors :saved :path)."
            (jobj "action" (jobj "type" "string"
                                 "enum" (list "outline" "show" "query" "replace" "delete" "insert_before" "insert_after" "languages"))
                  "path" (jobj "type" "string" "description" "The file.")
-                 "language" (jobj "type" "string" "description" "Grammar name, when the extension does not say (c, cpp, python, javascript, typescript, tsx, rust, go, ruby, java, json, bash, css, html).")
+                 "language" (jobj "type" "string" "description" "Grammar name, when the extension does not say (c, cpp, python, javascript, typescript, tsx, rust, go, ruby, java, json, bash, css, html, commonlisp).")
                  "name" (jobj "type" "string" "description" "A definition's name, or qualified: Class.method.")
                  "kind" (jobj "type" "string" "description" "Part of a node type: function, class, if_statement, ...")
                  "occurrence" (jobj "type" "integer" "description" "Which match, 1-based, when several do.")

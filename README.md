@@ -705,7 +705,8 @@ The agent runs Lem's editing commands too, with the `lem-command` tool:
 
 **Structural edits in any language.** The agent's `syntax-tree` tool edits
 code by its tree-sitter syntax tree. It covers C, C++, Python,
-JavaScript, TypeScript/TSX, Rust, Go, Ruby, Java, JSON, Bash, CSS and HTML.
+JavaScript, TypeScript/TSX, Rust, Go, Ruby, Java, JSON, Bash, CSS, HTML and
+Common Lisp.
 - **Looking:** `outline` lists a file's functions, classes, methods and keys
   with their lines. `show` prints one node and its parts. `query` runs a
   tree-sitter query.
@@ -719,8 +720,13 @@ JavaScript, TypeScript/TSX, Rust, Go, Ruby, Java, JSON, Bash, CSS and HTML.
   saves.
 - **Setup:** it needs tree-sitter's library (`brew install tree-sitter`)
   and a C compiler. Each language's grammar is fetched from its upstream
-  repository at a pinned commit and built on first use, into the config
-  directory's `tree-sitter/`.
+  repository at a pinned commit and built on first use.
+- **One copy of each grammar,** in the config directory's
+  `tree-sitter/grammars/`, shared by `syntax-tree` and ast-grep.
+  ast-grep's `structural-query` and `structural-rewrite-plan` get
+  `tree-sitter/sgconfig.yaml` for the languages ast-grep does not build in,
+  so they work on Common Lisp too, as does an ast-grep MCP server pointed
+  at that file.
 
 **The copilot.** As you type, a model suggests the code that comes next. It
 works in the Lem view and in the simple editor.
