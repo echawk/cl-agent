@@ -49,11 +49,11 @@
   (handler-case
       (multiple-value-bind (current version) (lisp-scratch-contents)
         (let* ((text (scratch-edited-text current args))
-               (imbalance (check-paren-balance text)))
+               (imbalance (paren-fix-message text)))
           (multiple-value-bind (status new-version) (lisp-scratch-save text :base version :by "agent")
             (if (eq status :conflict)
                 "Not written: the user changed the buffer at the same moment. Read it again and retry."
                 (format nil "Updated the scratch buffer (version ~d, ~d lines).~@[~%Warning: ~a~]"
                         new-version (1+ (count #\Newline text))
-                        (and imbalance (paren-imbalance-message imbalance)))))))
+                        imbalance)))))
     (error (condition) (format nil "Not written: ~a" condition))))

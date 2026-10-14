@@ -47,37 +47,31 @@
     (:description "Evaluate a Common Lisp form in the running agent's own image and return its printed result. Before evaluation, the form is automatically reviewed with Mallet, checked for DEFSTAR/DECLAIM type claims on definitions, and compiled; compilation failures prevent evaluation while advisory smells are returned with the value so you can improve the code. Ephemeral: has full read/write access to the agent's own state but is not saved. The form is read with *package* bound to :cl-agent."
      :parameters (jobj "type" "object"
                         "properties" (jobj "form" (jobj "type" "string"
-                                                         "description" "A single Lisp form, as text, e.g. \"(list-tools)\"."))
+                                                         "description" "A single Lisp form, as text, e.g. \"(list-tools)\".")
+                                           "fix_parens" (jobj "type" "boolean"
+                                                              "description" "If the parentheses do not balance, fix them from the indentation (as the error message shows) and evaluate that."))
                         "required" (list "form")))
-  (let* ((text (jget args "form"))
-         (imbalance (check-paren-balance text)))
-    (if imbalance
-        (paren-imbalance-message imbalance)
-        (let* ((compilable-source (format nil "(in-package :cl-agent)~%~a~%" text))
-               (review (review-lisp-source compilable-source)))
-          (if (getf review :compile-failure-p)
-              (format nil "Not evaluated because compilation failed.~%~a"
-                      (format-lisp-review review))
-              (handler-case
-                  (let* ((*package* (find-package :cl-agent))
-                         (*read-eval* nil)
-                         (form (read-from-string text))
-                         (value-text
-                           (format nil "~{~a~^~%~}"
-                                   (mapcar #'prin1-to-string
-                                           (multiple-value-list (eval form))))))
-                    (format nil "~a~%~%~a" value-text (format-lisp-review review)))
-                (error (c) (format nil "Error: ~a~%~%~a" c (format-lisp-review review)))))))))
-
-(defun paren-imbalance-message (imbalance)
-  "Turn a CHECK-PAREN-BALANCE result into a message telling the model
-specifically what to fix, rather than a bare reader end-of-file error."
-  (let ((n (getf imbalance :open-count)) (line (getf imbalance :line)))
-    (if (plusp n)
-        (format nil "Unbalanced parentheses: ~d unclosed \"(\" (last opened/closed around line ~d). Add ~:*~d more \")\" and try again."
-                n line)
-        (format nil "Unbalanced parentheses: ~d extra \")\" with no matching \"(\" (around line ~d). Remove ~:*~d \")\" and try again."
-                (- n) line))))
+  (multiple-value-bind (problem fixed) (paren-fix-message (jget args "form"))
+    (let* ((text (if (and problem (jget args "fix_parens")) fixed (jget args "form")))
+           (imbalance (and problem (not (jget args "fix_parens")))))
+      (if imbalance
+          problem
+          (let* ((compilable-source (format nil "(in-package :cl-agent)~%~a~%" text))
+                 (review (review-lisp-source compilable-source)))
+            (if (getf review :compile-failure-p)
+                (format nil "Not evaluated because compilation failed.~%~a"
+                        (format-lisp-review review))
+                (handler-case
+                    (let* ((*package* (find-package :cl-agent))
+                           (*read-eval* nil)
+                           (form (read-from-string text))
+                           (value-text
+                             (format nil "~{~a~^~%~}"
+                                     (mapcar #'prin1-to-string
+                                             (multiple-value-list (eval form))))))
+                      (format nil "~@[Parentheses fixed from the indentation first.~%~]~a~%~%~a"
+                              (and problem t) value-text (format-lisp-review review)))
+                  (error (c) (format nil "Error: ~a~%~%~a" c (format-lisp-review review))))))))))
 
 (define-tool write-extension (args)
     (:description "Write a named Common Lisp extension, load it, and optionally enable it for future starts. This is exclusively for a durable change to cl-agent itself: the source must integrate a tool, hook, method, provider, frontend, or slash command. It is NOT a scratchpad or a way to run ordinary programs/tests; use write-scratch-file for those. Source is automatically reviewed with strict Mallet, checked for a DEFSTAR or DECLAIM FTYPE claim on every function, and compiled first. Compilation failures are reported and are not written; nonzero smell scores are advisory and are returned after a successful write so you can minimize them. The file MUST start with (in-package :cl-agent). Prefer adding definitions/hooks/methods over replacing core functions."
@@ -87,20 +81,22 @@ specifically what to fix, rather than a bare reader end-of-file error."
            (jobj "filename" (jobj "type" "string" "description" "Bare filename, e.g. \"word-count-tool.lisp\" (the .lisp suffix is added if missing). Reuse an existing filename to overwrite/update that extension.")
                  "source" (jobj "type" "string" "description" "Full Lisp source of the file, starting with (in-package :cl-agent).")
                  "load" (jobj "type" "boolean" "description" "Load the file into the running image immediately. Default true.")
-                 "enable" (jobj "type" "boolean" "description" "Enable the file to auto-load on future starts (only takes effect if load succeeds). Default true."))
+                 "enable" (jobj "type" "boolean" "description" "Enable the file to auto-load on future starts (only takes effect if load succeeds). Default true.")
+                 "fix_parens" (jobj "type" "boolean" "description" "If the parentheses do not balance, fix them from the indentation (as the error message shows) and use that."))
            "required" (list "filename" "source")))
   (let* ((filename (jget args "filename"))
-         (source (jget args "source"))
+         (paren-problem (multiple-value-list (paren-fix-message (jget args "source"))))
+         (source (if (and (first paren-problem) (jget args "fix_parens")) (second paren-problem) (jget args "source")))
          (bare (if (search ".lisp" filename :from-end t) filename (concatenate 'string filename ".lisp")))
          ;; JSON false decodes to Lisp NIL (see json-util.lisp), which JGET
          ;; correctly distinguishes from "argument absent" via its
          ;; DEFAULT (T here) -- so a bare (not (null v)) is the right test.
          (do-load (not (null (jget args "load" t))))
          (do-enable (not (null (jget args "enable" t))))
-         (imbalance (check-paren-balance source)))
+         (imbalance (and (first paren-problem) (not (jget args "fix_parens")))))
     (cond
       (imbalance
-        (format nil "Not written -- ~a" (paren-imbalance-message imbalance)))
+        (format nil "Not written -- ~a" (first paren-problem)))
       ((not (extension-source-integrates-p source))
        "Not written: this source does not add a durable cl-agent integration. Use write-scratch-file for a program, experiment, test, or draft; reserve write-extension for a tool, hook, method, provider, frontend, or slash command.")
       (t

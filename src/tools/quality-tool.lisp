@@ -32,14 +32,56 @@ write or re-check the exact project file after a failed load/test."
                               (review-lisp-source source :package package))))))
 
 (define-tool check-parens (args)
-    (:description "Check balanced parentheses in Lisp-like source text or an existing file path. Correctly ignores strings, line comments, and character literals. Use path immediately after writing a Lisp/Scheme-style file or when loading it reports an EOF/reader error. This is a fast structural check only; use review-lisp for Mallet and compilation diagnostics."
+    (:description "Check balanced parentheses in Lisp-like source text or an existing file path, reading strings, comments (; and #| |#), character literals and |symbols| as the reader does. When they do not balance it says exactly where (each extra \")\" and each \"(\" never closed, by line and column) and shows the fix fix-parens would make from the indentation. Use path right after writing a Lisp file or when loading it reports an EOF/reader error. A fast structural check only; use review-lisp for Mallet and compilation diagnostics."
      :parameters
      (jobj "type" "object"
            "properties"
            (jobj "source" (jobj "type" "string" "description" "Lisp-like source text; provide source or path, not both.")
                  "path" (jobj "type" "string" "description" "Existing text file to check; provide source or path, not both."))))
   (multiple-value-bind (source path) (quality-tool-source-or-path args "check-parens")
-    (let ((imbalance (if path (check-paren-balance-file path) (check-paren-balance source))))
-      (if imbalance
-          (paren-imbalance-message imbalance)
-          "Parentheses are balanced."))))
+    (or (paren-fix-message (or source (uiop:read-file-string (paren-file-path path))))
+        "Parentheses are balanced.")))
+
+(defun paren-file-path (path)
+  (let ((resolved (probe-file (expand-user-path path))))
+    (unless (and resolved (not (uiop:directory-pathname-p resolved)))
+      (error "No such file: ~a" path))
+    resolved))
+
+(defun write-file-text-as-edited (path text)
+  "Put TEXT in the file at PATH: through its Lem buffer when it is open
+there (the user's view stays current), saved; else straight to disk."
+  (let ((open (and (lem-host-available-p)
+                   (lem-call (lambda () (and (editor-find-buffer path) t))))))
+    (if open
+        (progn
+          (editor-update-file path text)
+          (editor-save-file path :by "agent-editor"))
+        (write-string-atomically (paren-file-path path) text))))
+
+(define-tool fix-parens (args)
+    (:description "Fix the parentheses of Lisp source from its indentation, instead of counting them by hand: the closers at the ends of lines are rebuilt so each form closes where the next line's indentation says it ends, stray closers mid-line are dropped, and only the toplevel forms that are unbalanced are touched. Give source (returns the fixed text) or path (fixes the file, through its Lem buffer when open, and saves it). Reports each changed line. Use it whenever check-parens, a load, or eval-lisp reports unbalanced parentheses -- do not try to count them yourself. mode \"indent\" rebuilds every form even when balanced (to make the parens agree with the indentation)."
+     :effects '(:write-workspace)
+     :parameters
+     (jobj "type" "object"
+           "properties"
+           (jobj "source" (jobj "type" "string" "description" "Lisp source text; provide source or path, not both.")
+                 "path" (jobj "type" "string" "description" "A Lisp file to fix in place; provide source or path, not both.")
+                 "mode" (jobj "type" "string" "enum" (list "auto" "indent")
+                              "description" "auto (default): only unbalanced toplevel forms; indent: every form."))))
+  (multiple-value-bind (source path) (quality-tool-source-or-path args "fix-parens")
+    (let* ((text (or source (uiop:read-file-string (paren-file-path path))))
+           (problems (paren-problems text)))
+      (multiple-value-bind (fixed changes)
+          (fix-parens text :mode (if (equal (jget args "mode") "indent") :indent :auto))
+        (cond ((null changes)
+               (if problems
+                   (format nil "Could not fix: ~a." (describe-paren-problems problems))
+                   "Parentheses are balanced; nothing to fix."))
+              (t
+               (when path (write-file-text-as-edited path fixed))
+               (format nil "Fixed ~d line~:p~:[~*~; (~a)~]:~%~a~@[~%~%Fixed source:~%~a~]~:[~;~%~%Saved ~a.~]"
+                       (length changes) problems (and problems (describe-paren-problems problems))
+                       (describe-paren-fix changes)
+                       (and source fixed)
+                       path path)))))))
