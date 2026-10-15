@@ -42,6 +42,8 @@ export function showView(id) {
   if (!views.has(id)) return;
   const previous = views.get(active);
   active = id;
+  // The page knows which view is in front (app.css: the Lisp tab has its own prompt).
+  document.getElementById('frame')?.setAttribute('data-view', id);
   store('view', id);
   for (const view of views.values()) {
     const node = container(view);

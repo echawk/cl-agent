@@ -10,8 +10,9 @@
 // CLAgent.registerMessageDecorator(fn) adjusts every entry after rendering.
 
 import {
-  state, on, el, messageRenderers, messageDecorators, copyText, frameThrottle,
+  state, on, el, messageRenderers, messageDecorators, copyText, frameThrottle, turnExtras,
 } from './core.js';
+import { present, messageObject, toolCallObject } from './objects.js';
 
 const listener = () => document.getElementById('listener');
 const jump = () => document.getElementById('jump');
@@ -79,10 +80,13 @@ export function visible(message) {
 }
 
 function entryShell(message, extraClass = '') {
+  // The label is the message, presented: click inspects it, right-click has its menu.
+  const tag = el('div', { class: 'label' }, label(message));
+  if (message.id !== 'live' && ['user', 'assistant', 'error'].includes(message.role)) present(tag, () => messageObject(message));
   return el('article', {
     class: `entry ${message.role} ${extraClass}`.trim(),
     dataset: { id: message.id, turn: message.turn },
-  }, el('div', { class: 'label' }, label(message)), el('div', { class: 'body' }));
+  }, tag, el('div', { class: 'body' }));
 }
 
 function copyButton(text, doc = 'Copy this as text') {
@@ -130,9 +134,6 @@ export function renderMessage(message) {
 
 // ---------- turns ----------
 
-/** Functions called with TURNSECTION (turn -> its <section>) on every full
-render, to put more in the transcript: forms.js's Lisp evaluations. */
-export const turnExtras = [];
 
 function turnSection(turn) {
   const root = listener();
@@ -156,7 +157,7 @@ function summarizeTools(calls) {
 function renderCall(call, output) {
   return el('div', { class: 'call' },
     el('div', { class: 'call-head' },
-      el('span', { class: 'call-name' }, call.tool || call.label),
+      present(el('span', { class: 'call-name' }, call.tool || call.label), () => toolCallObject(call)),
       el('span', { class: 'call-args' }, call.text.replace(new RegExp(`^${(call.tool || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}:? ?`), ''))),
     output ? el('pre', { class: 'call-output' }, output.text)
       : el('div', { class: 'faint' }, '… running'));
@@ -264,6 +265,8 @@ function renderHerald() {
       ' — is evaluated here in the image instead (click its value to inspect it); ', el('code', {}, '/edit @file'),
       ' opens a file in Lem. ', el('kbd', {}, 'Tab'), ' completes /commands, @paths and (lisp-symbols; ',
       el('kbd', {}, '↑'), ' recalls history; ', el('kbd', {}, 'Esc'), ' aborts a running turn.'),
+    el('p', {}, 'Everything on the screen is an object: click one to inspect it, right-click it for its commands. ',
+      el('kbd', {}, 'Alt-H'), ' inspects the keys.'),
     el('p', {}, 'Ask the agent to change this page itself ("make the labels green", "add a panel that shows git status") — see the ',
       el('a', { href: '#', onclick: e => { e.preventDefault(); window.CLAgent?.showPanel('ui'); } }, 'UI panel'), '.')));
 }

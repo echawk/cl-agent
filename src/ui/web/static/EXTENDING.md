@@ -94,6 +94,9 @@ A.el(tag, attrs, ...children)   // DOM helper: attrs {class, dataset, style, onc
 A.esc(text); A.fmtDuration(s); A.fmtCount(n); A.fmtClock(unix); A.copyText(text)
 A.storage(key, fallback); A.store(key, value)    // per-browser preferences
 
+A.present(node, () => object, { left: 'Inspect' })   // make NODE a presentation (below)
+A.inspect(object)       // show an object in the Inspect panel
+
 A.registerPanel({ id, title, color, order, doc, badge(state), render(el, state), update(el, ev), events })
 A.registerView({ id, title, color, order, doc, badge(state), mount(el), show(el), hide(el) })  // a main-pane tab
 A.registerRenderer(role, (message, bodyEl, entryEl) => { ... })
@@ -102,6 +105,23 @@ A.registerCommand(name, async argString => { ... }, doc)   // a /name handled in
 A.registerUICommand(name, args => { ... })                 // run by WEB-UI-COMMAND / web-ui-command
 A.registerCompleter((text, cursor) => ({start, end, token, candidates: [{value, doc, kind}]}) | null)
 A.registerReducer(type, ev => { ... })                     // fold a custom server event into state
+```
+
+**Presentations** (objects.js). Everything the page draws that stands for
+something — a value, a message, a tool call, an agent, a file — is a
+presentation of an object. The mouse boxes it, the who-line says what the
+buttons do, Left runs its default command and Right opens its menu, and
+Inspect shows its parts. Draw your own things the same way:
+
+```js
+A.present(A.el('span', {}, branch), () => ({
+  kind: 'Branch', title: branch, type: 'GIT-BRANCH', text: branch,
+  about: `the git branch ${branch}`,                  // enables "Ask the agent about it"
+  parts: [['name', branch], ['ahead', '3 commits']],  // a value may be a string, a DOM
+                                                      // node, or {object: anotherObject}
+  commands: [{ label: 'Check it out', run: () => A.insert(`Check out the git branch ${branch}.`) },
+             { label: 'Delete', danger: true, run: () => {} }],   // danger: listed last
+}), { left: 'Check it out' });
 ```
 
 A message is `{id, role, text, html, turn, time, inline}`, with role `user`,

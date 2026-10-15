@@ -12,6 +12,7 @@ import {
   frameThrottle, boot, emit,
 } from './core.js';
 import { insert } from './composer.js';
+import { present, toolCallObject, toolObject, inspect, keymapObject } from './objects.js';
 
 const $ = id => document.getElementById(id);
 let active = storage('panel', 'agents');
@@ -132,7 +133,9 @@ function activityEntry(entry, outputs) {
   return el('div', { class: 'act', dataset: { id: entry.id } },
     el('div', { class: 'act-head' },
       el('span', { class: `chip fill-${KIND_COLOR[entry.kind] || 'paper'}` }, entry.kind.replace('-', ' ')),
-      el('span', { class: 'act-label' }, entry.label),
+      entry.kind === 'tool-call'
+        ? present(el('span', { class: 'act-label' }, entry.label), () => toolCallObject(entry))
+        : el('span', { class: 'act-label' }, entry.label),
       el('span', { class: 'act-time' }, fmtClock(entry.time)),
       copy),
     clampedBody(entry.text),
@@ -182,7 +185,7 @@ function renderActivity(target) {
     const outputs = outputsByCall();
     list.replaceChildren();
     for (const entry of state.activity) appendActivity(list, entry, outputs);
-    if (!list.children.length) list.append(el('div', { class: 'empty' }, 'Tool calls, plans, status and subagent changes appear here as the agent works.'));
+    if (!list.children.length) list.append(el('div', { class: 'empty' }, '; Tool calls, plans, status and subagent changes appear here as the agent works. Right-click a tool call for its menu.'));
   }
   renderList();
   target.replaceChildren(el('div', { class: 'panel' }, el('div', { class: 'panel-section' }, chips, search), list));
@@ -236,10 +239,7 @@ function renderTools(target) {
     list.replaceChildren(...tools.map(tool => {
       const card = el('div', { class: `tool-card ${tool.enabled ? '' : 'disabled'}` },
         el('div', { class: 'tool-head' },
-          el('span', {
-            class: 'tool-name mouse', 'data-doc': 'Click: start a /call of this tool in the input',
-            onclick: () => { insert(`/call ${tool.name} `); },
-          }, tool.name),
+          present(el('span', { class: 'tool-name' }, tool.name), () => toolObject(tool.name, tool)),
           tool.effects.map(e => el('span', { class: `chip fill-${EFFECT_COLOR[e] || 'paper'}` }, e)),
           tool.enabled ? '' : el('span', { class: 'chip fill-paper' }, 'not offered')),
         el('div', { class: 'tool-desc mouse', 'data-doc': 'Click: expand', onclick: () => card.classList.toggle('open') }, tool.description));
@@ -256,7 +256,7 @@ function renderTools(target) {
 
 registerPanel({
   id: 'tools', title: 'Tools', color: 'orange', order: 30,
-  doc: 'The tools the agent can call; click a name to /call it yourself',
+  doc: 'The tools the agent can call; click one to inspect it, right-click to /call it yourself',
   render: renderTools, events: ['state', 'tools'],
 });
 
@@ -335,11 +335,8 @@ function renderUI(target) {
           }, 'Revert') : '')))
         : el('div', { class: 'empty' }, 'Loading…')),
     el('div', { class: 'panel-section' }, el('h3', {}, 'Keys'),
-      el('div', { class: 'keys' },
-        [['Enter', 'send'], ['Shift-Enter', 'new line'], ['Tab', 'complete; again to cycle'],
-          ['↑ / ↓', 'history'], ['Esc', 'abort the running turn'], ['Alt-T', 'light / dark'],
-          ['Alt-1…9', 'switch panel'], ['Ctrl-\\', 'hide / show panels'], ['/', 'focus the input']]
-          .flatMap(([k, v]) => [el('span', { class: 'kbd' }, k), el('span', {}, v)]))),
+      el('p', { class: 'prose' }, 'The keys are an object like any other: ',
+        el('button', { class: 'btn btn-small', type: 'button', onclick: () => inspect(keymapObject()) }, 'Inspect the keymap'), ' (Alt-H).')),
     boot.safe ? el('div', { class: 'empty' }, 'Safe mode: overrides and patches are not loaded on this page.') : ''));
 }
 

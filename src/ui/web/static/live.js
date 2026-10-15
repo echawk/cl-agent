@@ -11,6 +11,7 @@
 // (openAsLive).
 
 import { on, el, api, live, switchLive } from './core.js';
+import { present } from './objects.js';
 
 const rail = document.getElementById('live-rail');
 let sessions = [];
@@ -51,7 +52,7 @@ function render() {
                        onclick: () => { if (s.id !== current) select(s); },
                        onkeydown: e => { if (e.key === 'Enter') select(s); } },
       el('span', { class: 'live-dot', 'aria-hidden': 'true' }),
-      el('span', { class: 'live-name' }, `${i + 1} ${s.name}`),
+      present(el('span', { class: 'live-name' }, `${i + 1} ${s.name}`), () => liveObject(s), { left: 'Switch to it' }),
       unread ? el('span', { class: 'live-unread', 'aria-label': `${unread} new` }, String(unread)) : '',
       s.primary ? '' : el('button', { class: 'live-close', type: 'button', 'data-doc': 'Stop this session (its log stays in Sessions)',
                                       onclick: e => { e.stopPropagation(); close(s); } }, '×'));
@@ -59,6 +60,23 @@ function render() {
   rail.replaceChildren(...tabs,
     el('button', { class: 'live-add', type: 'button', 'data-doc': 'Start another live session (Alt-N)',
                    onclick: () => openForm() }, '+'));
+}
+
+/** A live session as an object (objects.js): right-click a tab for it. */
+function liveObject(s) {
+  const current = activeId();
+  const commands = [];
+  if (s.id !== current) commands.push({ label: 'Switch to it', doc: 'Alt-↑ / Alt-↓', run: () => select(s) });
+  else commands.push({ label: 'Switch to it', doc: 'It is the one shown', run: () => {} });
+  if (!s.primary) commands.push({ label: 'Stop it', danger: true, doc: 'Its conversation stays in Sessions', run: () => close(s) });
+  commands.push({ label: 'Start another', doc: 'Alt-N', run: () => openForm() });
+  return {
+    kind: 'Live session', title: s.name, type: s.busy ? 'SESSION RUN' : 'SESSION', about: `the live session "${s.name}"`,
+    parts: [['name', s.name], ['directory', s.directory || '—'], ['model', s.model || '—'],
+      ['state', s.busy ? 'working' : 'waiting for input'], ['messages', String(s.messages ?? 0)],
+      ['stored as', s.session || '—'], ['first', s.primary ? 'yes: the one cl-agent started with' : 'no']],
+    commands,
+  };
 }
 
 /** The live tab holding durable session SESSIONID, if one does. */

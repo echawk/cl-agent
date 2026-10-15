@@ -93,6 +93,7 @@
                            "effects" (jarray (mapcar (lambda (e) (string-downcase (string e)))
                                                      (tool-effects tool)))
                            "owner" (json-or-null (tool-owner tool))
+                           "parameters" (or (tool-parameters tool) (jobj))
                            "enabled" (or (null session) (and (member (tool-name tool) enabled :test #'string=) t))))
                    (sort (list-tools) #'string< :key #'tool-name))))))
 

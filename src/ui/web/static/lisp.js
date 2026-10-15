@@ -26,7 +26,7 @@
 //   C-c M-o  clear the REPL
 
 import {
-  state, on, el, api, registerView, registerPanel, storage, store, fmtDuration,
+  state, on, el, api, registerView, registerPanel, storage, store, fmtDuration, send,
 } from './core.js';
 import { createLispEditor, highlight, isComplete } from './lisp-editor.js';
 import { showPanel } from './panels.js';
@@ -34,6 +34,7 @@ import { insert as insertInComposer } from './composer.js';
 import { showView, activeView } from './views.js';
 import { copilotBox, copilotOptions } from './copilot.js';
 import { createLemView } from './lem-view.js';
+import { lispPresentation, inspectLisp } from './objects.js';
 
 const toast = (text, color) => window.CLAgent?.toast(text, color);
 const client = Math.random().toString(36).slice(2);
@@ -68,15 +69,13 @@ const replContext = {
   where: 'the REPL input',
 };
 
+// A printed value is a presentation (objects.js): click inspects it, the
+// right button has its menu, and Alt-click puts a reference to it where
+// you are typing.
 function presentation(text, id, type = '', context = replContext) {
-  if (!id) return el('span', {}, text);
-  return el('span', {
-    class: 'presentation mouse',
-    'data-doc': `${type ? `${type} · ` : ''}Click: inspect · Alt-click: put ${reference(id)} in ${context.where}`,
-    onclick: e => {
-      if (e.altKey) context.insert(reference(id)); else inspect(id);
-    },
-  }, text);
+  const node = lispPresentation(text, id, type, { doc: `${type ? `${type} · ` : ''}Alt-click: use it in ${context.where}` });
+  if (id) node.addEventListener('click', e => { if (e.altKey) { e.preventDefault(); context.insert(reference(id)); } }, true);
+  return node;
 }
 
 function message(text, ms = 4000) {
@@ -373,6 +372,13 @@ function recall(direction) {
   ui.repl.setCursor(history[next].length);
 }
 
+function askFromRepl(editor) {
+  const text = editor.value.trim();
+  if (!text) return;
+  editor.value = '';
+  send(text).then(() => showView('listener'), err => { editor.value = text; message(`Not sent: ${err.message}`); });
+}
+
 function submitRepl(editor) {
   const text = editor.value;
   if (!text.trim()) return true;
@@ -588,13 +594,16 @@ function mount(container) {
   ui.repl = createLispEditor(replHost, {
     className: 'repl-editor',
     placeholder: '(+ 1 2)',
-    doc: 'REPL input: RET evaluates · M-p/M-n history · C-c C-c interrupts',
+    doc: 'The prompt here: RET evaluates · Alt-Enter asks the agent · M-p/M-n history · C-c C-c interrupts',
     keymap: {
       ...sharedKeys,
       'C-c C-c': interrupt,
       'C-c C-z': () => ui.scratch.focus(),
       'M-p': () => recall(-1),
       'M-n': () => recall(1),
+      // One prompt on the screen: this one asks the agent too (and shows
+      // the Listener, where the answer comes).
+      'M-RET': editor => askFromRepl(editor),
     },
     complete: (text, cursor) => lispComplete(ui.repl, text, cursor),
     // In the REPL only C-c Tab asks: a suggestion per pause would get in
@@ -664,48 +673,9 @@ on('lisp-clear', () => {
 });
 on('state', () => { if (ui) loadState().catch(() => {}); });
 
-// ---------- the inspector panel ----------
+// ---------- the inspector (objects.js) ----------
 
-const inspected = [];      // a stack of inspector views, newest last
-
-async function inspect(id) {
-  try {
-    const data = await api('/api/lisp/inspect', { params: { id } });
-    inspected.push(data);
-    if (inspected.length > 50) inspected.shift();
-    showPanel('inspector');
-  } catch (err) { toast(err.message, 'red'); }
-}
-
-registerPanel({
-  id: 'inspector', title: 'Inspect', color: 'cyan', order: 15,
-  doc: 'The Lisp inspector: click any printed value to look inside it',
-  events: [],
-  render(target) {
-    const top = inspected[inspected.length - 1];
-    if (!top) {
-      target.replaceChildren(el('div', { class: 'panel' }, el('div', { class: 'empty' },
-        'Nothing inspected yet. Click any printed value — in the listener or the Lisp tab — to look inside it here (C-c I in the Lisp tab).')));
-      return;
-    }
-    const part = p => el('tr', {},
-      el('th', {}, p.label),
-      el('td', {}, p.id ? presentation(p.text, p.id) : el('span', { class: 'inspector-text' }, p.text)));
-    target.replaceChildren(el('div', { class: 'panel inspector' },
-      el('div', { class: 'inspector-head' },
-        el('div', { class: 'inspector-title' }, presentation(top.title, top.id, top.type)),
-        el('span', { class: 'chip fill-cyan' }, top.type)),
-      el('div', { class: 'inspector-actions' },
-        el('button', { class: 'btn btn-small', type: 'button', disabled: inspected.length < 2, onclick: () => { inspected.pop(); showPanel('inspector'); }, 'data-doc': 'Back to the previous object' }, '◀ Back'),
-        el('button', { class: 'btn btn-small', type: 'button', onclick: () => { inspected.pop(); inspect(top.id); }, 'data-doc': 'Inspect it again (it may have changed)' }, '↻ Refresh'),
-        el('button', {
-          class: 'btn btn-small', type: 'button', 'data-doc': `Put ${reference(top.id)} in the REPL input`,
-          onclick: () => { showView('lisp'); ui?.repl.insert(reference(top.id)); ui?.repl.focus(); },
-        }, '→ REPL'),
-        el('span', { class: 'faint' }, `${inspected.length} deep`)),
-      top.parts.length ? el('table', { class: 'inspector-parts' }, top.parts.map(part)) : el('div', { class: 'empty' }, 'No parts.')));
-  },
-});
+const inspect = id => inspectLisp(id);
 
 // ---------- registration ----------
 

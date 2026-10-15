@@ -206,6 +206,12 @@ export function registerMessageDecorator(fn) {
 
 /** Slash commands handled in the browser: run(argString) -> maybe a Promise. */
 export const clientCommands = new Map();
+/** Functions called with TURNSECTION (turn -> its <section>) on every full
+render of the listener, to put more in the transcript: forms.js's Lisp
+evaluations.  (Here, not in render.js, so modules can add to it while the
+module graph is still loading.) */
+export const turnExtras = [];
+
 export function registerCommand(name, run, doc = '') {
   clientCommands.set(name.replace(/^\//, ''), { run, doc });
 }

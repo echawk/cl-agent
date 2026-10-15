@@ -424,3 +424,62 @@ this. They talk to the same session and tools, not to the page.
   - Still open: which request stalls, and why. The server's threads show
     no handler stuck at the time.
 
+### Pass 5: conforming to the brief — the presentation model
+
+The owner's review of passes 1–4: they added features, but did not make
+the system *cohere*. The brief's central questions were still unanswered
+in most of the UI: "What object is the user operating on right now?", and
+"If I see an interesting object, I can inspect it." This pass answers them
+system-wide. All features stay; what changed is how they are represented.
+
+- **One interaction model** (`objects.js`, Genera's presentations).
+  Everything drawn that stands for something is a presentation of an
+  object:
+  - Lisp values; messages, including errors; tool calls in the transcript
+    and in Activity;
+  - tools; agents, with the main agent's row standing for the session;
+  - files in the Code tab, including open buffers; compiler diagnostics;
+  - stored and live sessions; the model in the who-line;
+  - the keymap; text you selected.
+
+  The pointer boxes a presentation, and the who-line reads
+  `L: … · R: menu — KIND title`. Left runs its default command. Right
+  opens its menu: the default first, then the object's own commands, then
+  Inspect, Ask the agent about it and Copy, with destructive commands
+  last and marked. Keyboard: Tab, Enter, the Menu key or Shift-F10.
+  Shift-right keeps the browser's own menu.
+- **One inspector.** Lisp inspection moved from `lisp.js` into
+  `objects.js`, which inspects every kind of object, with ◀ Back,
+  ↻ Refresh and the object's commands as buttons.
+  - *Removed*: the Agents panel's detail card and summary chips. An agent
+    is inspected like anything else, and the process table's caption
+    tallies the states.
+  - *Removed*: the UI panel's key table. The keymap is now an object
+    (`Alt-H`, `/keys`).
+- **Less chrome, the same character.**
+  - *Removed*: the separate mouse-documentation bar, as asked. The
+    who-line shows the mouse documentation while the pointer is on
+    something, so one line does both jobs.
+  - Toolbar commands are mouse-sensitive text that is boxed only under
+    the pointer or keyboard focus, as in Genera's command menus. The
+    title bar keeps its boxed buttons, as in the critique board.
+  - Choices such as Lem | Simple are one box with the chosen part
+    inverted.
+  - Activity is a ruled transcript, not cards.
+  - "mode direct" left the tab bar. The who-line shows the mode only when
+    it is not the default.
+  - The Code tab lost its duplicate C-x C-f.
+- **One prompt on screen.** On the Lisp tab, the SLY REPL input is the
+  prompt and the main prompt hides. `Alt-Enter` in the REPL asks the agent
+  and shows the Listener. Elsewhere, the main prompt's idle label is the
+  Lisp prompt `CL-AGENT>`, as in the critique board's variants. It
+  becomes `(C n)` for a request and `Command:` for `/`.
+- **Lisp flavour**, per the critique board:
+  - section heads are `;;;` comments;
+  - empty states read as `;` comments;
+  - the Eval button is `λ Eval`.
+- *Rejected*: making every row of every list a presentation. A presentation
+  is placed on the part that stands for the object: a file's name, not the
+  whole row with its Rename and Delete controls. Rows keep their own
+  keyboard navigation.
+

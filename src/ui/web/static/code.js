@@ -35,6 +35,7 @@ import { insert as insertInComposer } from './composer.js';
 import { showView, activeView } from './views.js';
 import { copilotBox, copilotOptions } from './copilot.js';
 import { createLemView } from './lem-view.js';
+import { present, fileObject } from './objects.js';
 
 const client = `code-${Math.random().toString(36).slice(2)}`;
 const toast = (text, color) => window.CLAgent?.toast(text, color);
@@ -209,7 +210,6 @@ function renderLemHead() {
       // the marks keep the path itself left to right.
       f ? `\u200e${f.path ? short(f.path) : f.name}\u200e${f.modified ? ' ●' : ''}` : 'C-x C-f visits a file · M-x runs a command'),
     el('span', { class: 'spacer' }),
-    el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Find a file in Lem (C-x C-f)', onclick: () => lemRun('find-file') }, 'C-x C-f'),
     el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Run a Lem command (M-x)', onclick: () => lemRun('execute-command') }, 'M-x'),
     el('button', {
       class: 'btn btn-small btn-ask', type: 'button', 'data-doc': 'Ask the agent about this file', 'aria-label': 'Ask the agent about this file',
@@ -449,17 +449,25 @@ function renderDiagnostics() {
   if (!items.length) { list.replaceChildren(el('div', { class: 'code-diag-status ok' }, '✓ No problems reported')); return; }
   list.replaceChildren(
     el('div', { class: 'code-diag-status' }, `${items.length} ${items.length === 1 ? 'problem' : 'problems'}`),
-    ...items.map(d => el('button', {
-      class: `code-diag sev-${d.severity}`, type: 'button', 'data-doc': 'Go to this line',
-      onclick: () => {
+    ...items.map(d => {
+      const go = () => {
         if (d.line === null) return;
         view.editor.setCursor(view.editor.offsetOf(d.line, d.character || 0));
         view.editor.focus();
-      },
-    }, el('span', { class: 'code-diag-where' }, d.line === null ? '' : `${d.line + 1}:${(d.character || 0) + 1}`),
-       el('span', { class: 'code-diag-sev' }, d.severity),
-       el('span', { class: 'code-diag-message' }, d.message),
-       el('span', { class: 'faint' }, d.source || d.server || ''))));
+      };
+      const where = d.line === null ? '' : `${d.line + 1}:${(d.character || 0) + 1}`;
+      // A diagnostic is an object too: Left goes there, Right asks about it.
+      return present(el('div', { class: `code-diag sev-${d.severity}`, tabindex: '0', onkeydown: e => { if (e.key === 'Enter') go(); } },
+        el('span', { class: 'code-diag-where' }, where),
+        el('span', { class: 'code-diag-sev' }, d.severity),
+        el('span', { class: 'code-diag-message' }, d.message),
+        el('span', { class: 'faint' }, d.source || d.server || '')), () => ({
+        kind: 'Diagnostic', title: `${d.severity} ${where} ${d.message.slice(0, 50)}`, type: d.severity.toUpperCase(), text: d.message,
+        about: `the ${d.severity} at ${short(view.doc?.path || view.doc?.name || '')}:${where}: "${d.message}"`,
+        parts: [['severity', d.severity], ['where', where || '—'], ['from', d.source || d.server || '—'], ['message', d.message]],
+        commands: [{ label: 'Go to it', run: go }],
+      }), { left: 'Go to it' });
+    }));
 }
 
 // Tab: a scratch buffer is saved first (its server reads the file); a file's
@@ -726,7 +734,9 @@ function renderFiles(side) {
       role: 'option', title: entry.path,
       onclick: () => { view.rowIndex = i; visit(entry); },
     }, el('span', { class: 'code-file-icon' }, entry.up ? '↑' : entry.directory ? '▸' : '·'),
-       el('span', { class: 'code-file-name' }, entry.directory && !entry.up ? `${entry.name}/` : entry.name, entry.link ? ' →' : ''),
+       entry.up ? el('span', { class: 'code-file-name' }, entry.name)
+         : present(el('span', { class: 'code-file-name' }, entry.directory ? `${entry.name}/` : entry.name, entry.link ? ' →' : ''),
+           () => fileEntryObject(entry, () => { view.rowIndex = i; visit(entry); }), { left: 'Open' }),
        el('span', { class: 'code-file-size' }, entry.sizeText || ''),
        el('span', { class: 'code-file-time' }, fmtTime(entry.modified)),
        entry.up ? '' : el('span', { class: 'code-file-actions' },
@@ -798,6 +808,14 @@ function onFilesKey(e, rows) {
   else if (e.key === '+') act(() => prompt('new-folder', short(view.listing.directory)));
 }
 
+/** A listed file as an object (objects.js), with Open first. */
+function fileEntryObject(entry, open) {
+  const object = fileObject(entry.path, { mtime: entry.modified, directory: !!entry.directory });
+  if (entry.sizeText) object.parts[1] = ['size', entry.sizeText];
+  object.commands = [{ label: 'Open', doc: entry.directory ? 'List it' : 'Visit it in the editor', run: open }, ...object.commands];
+  return object;
+}
+
 function renderOpen(side) {
   if (!view.openFiles.length) {
     side.replaceChildren(el('div', { class: 'empty code-empty' }, 'No files open. ',
@@ -808,7 +826,8 @@ function renderOpen(side) {
     view.openFiles.map(f => el('div', {
       class: `code-row ${view.doc?.path === f.path ? 'selected' : ''}`, role: 'option', title: f.path,
       onclick: () => openDoc('file', f.path),
-    }, el('span', { class: 'code-row-name' }, f.modified ? '● ' : '', f.name),
+    }, present(el('span', { class: 'code-row-name' }, f.modified ? '● ' : '', f.name),
+         () => fileEntryObject({ path: f.path }, () => openDoc('file', f.path)), { left: 'Open' }),
        el('span', { class: 'chip code-lang' }, f.mode || 'text'),
        el('span', { class: 'faint code-row-file' }, short(f.directory))))));
 }

@@ -4,20 +4,21 @@
 //   * process table    Genera's Peek: one row per agent, the main one (λ)
 //                      first -- id, a state word (RUN WAIT DONE FAIL KILL),
 //                      elapsed time, and what it is doing now
-//   * summary chips    how many are queued / running / done / failed
-//   * constellation    the main agent in the middle, each subagent around it;
+//                      (its caption tallies them, with tools and tokens)
+//   * map              the main agent in the middle, each subagent around it;
 //                      node size grows with tokens, running links animate
 //   * tree + timeline  one row per subagent: its place under the main agent
 //                      on the left, a Gantt bar on the right (hatched while
 //                      queued, striped while running), on a shared time axis
-//   * detail card      everything known about the selected subagent, with
-//                      Cancel for one still running
+//   Every row and node is a presentation (objects.js): click inspects the
+//   agent in the Inspect panel (Cancel is there, and in its right-button menu).
 //
 // Data: state.subagents (server "subagents" events: every subagent this
 // session started, finished ones included) and state.thinking/planning for
-// the main agent.  Click a node or row to select it.
+// the main agent.
 
-import { state, on, el, api, registerPanel, fmtDuration, fmtCount, now, frameThrottle } from './core.js';
+import { state, on, el, registerPanel, fmtDuration, fmtCount, now, frameThrottle, storage, store } from './core.js';
+import { present, inspect, subagentObject, sessionObject } from './objects.js';
 
 const SVG = 'http://www.w3.org/2000/svg';
 const GLYPH = { queued: '○', running: '●', succeeded: '✓', failed: '✗', cancelled: '⊘' };
@@ -43,9 +44,11 @@ function counts(items) {
   return c;
 }
 
+// An agent is an object: clicking one inspects it (objects.js).
 function select(id) {
-  selected = selected === id ? null : id;
-  if (host) render(host);
+  selected = id;
+  const a = (state.subagents || []).find(x => x.id === id);
+  if (a) inspect(subagentObject(a));
 }
 
 // ---------- constellation ----------
@@ -96,18 +99,18 @@ function mainDoing() {
 function processTable(items) {
   const t = now();
   const busy = state.thinking || state.planning;
-  const row = ({ id, glyph, word, stateClass, time, doing, model, onclick, chosen }) => el('tr', {
-    class: `proc ${stateClass} ${chosen ? 'selected' : ''} ${onclick ? 'mouse' : ''}`, onclick,
-    'data-doc': `${id}: ${doing}${model ? ` · ${model}` : ''}${onclick ? ' · Click: details' : ''}`,
+  const row = ({ id, glyph, word, stateClass, time, doing, model, describe, chosen }) => present(el('tr', {
+    class: `proc ${stateClass} ${chosen ? 'selected' : ''}`,
+    'data-doc': `${doing}${model ? ` · ${model}` : ''}`,
   },
   el('td', { class: 'proc-id' }, el('span', { class: 'glyph-box' }, glyph), id),
   el('td', { class: 'proc-state' }, word),
   el('td', { class: 'proc-time' }, time),
-  el('td', { class: 'proc-doing' }, doing));
+  el('td', { class: 'proc-doing' }, doing)), describe);
   const rows = [row({
     id: 'main', glyph: 'λ', word: state.planning ? 'PLAN' : busy ? 'RUN' : 'IDLE',
     stateClass: busy ? 'state-running' : 'state-idle', time: state.stats ? fmtDuration(state.stats.elapsed_seconds || 0) : '',
-    doing: mainDoing(), model: state.stats?.model,
+    doing: mainDoing(), model: state.stats?.model, describe: sessionObject,
   })];
   for (const a of items) {
     rows.push(row({
@@ -116,10 +119,16 @@ function processTable(items) {
       doing: a.state === 'running' ? (a.activity || a.description || 'working')
         : a.state === 'queued' ? `waiting · ${a.description || ''}`
           : `${a.tool_calls || 0} tool${a.tool_calls === 1 ? '' : 's'} · ${a.description || a.note || ''}`,
-      model: a.model, onclick: () => select(a.id), chosen: selected === a.id,
+      model: a.model, describe: () => subagentObject(a), chosen: selected === a.id,
     }));
   }
+  const c = counts(items);
+  const tokens = items.reduce((s, a) => s + (a.tokens || 0), 0);
+  const tools = items.reduce((s, a) => s + (a.tool_calls || 0), 0);
+  const tally = [['RUN', c.running], ['WAIT', c.queued], ['DONE', c.succeeded], ['FAIL', c.failed], ['KILL', c.cancelled]]
+    .filter(([, n]) => n).map(([w, n]) => `${n} ${w}`).join(' · ');
   return el('table', { class: 'procs', 'aria-label': 'Agents' },
+    el('caption', {}, `;; ${items.length ? `${tally} · ${fmtCount(tools)} tools · ${fmtCount(tokens)} tok` : 'no subagents yet'}`),
     el('thead', {}, el('tr', {}, ['agent', 'state', 'time', 'doing'].map(h => el('th', {}, h)))),
     el('tbody', {}, rows));
 }
@@ -182,56 +191,26 @@ function gantt(items) {
   return el('div', { class: 'gantt' }, axis, rootRow, rows);
 }
 
-// ---------- detail ----------
-
-function detail(a) {
-  const t = now();
-  const rows = [
-    ['state', a.state], ['role', a.role], ['profile', a.profile], ['model', a.model], ['depth', a.depth],
-    ['started', a.started ? new Date(a.started * 1000).toLocaleTimeString() : 'not yet'],
-    ['elapsed', a.started ? fmtDuration((a.finished || t) - a.started) : '—'],
-    ['requests', a.requests], ['tool calls', a.tool_calls], ['tokens', fmtCount(a.tokens)],
-    ['doing', a.state === 'running' ? a.activity : null], ['note', a.note], ['task', a.description],
-  ].filter(([, v]) => v !== null && v !== undefined && v !== '');
-  const live = a.state === 'running' || a.state === 'queued';
-  const cancel = live && el('button', {
-    class: 'btn btn-small btn-danger', type: 'button', 'data-doc': 'Stop this subagent and kill its process',
-    onclick: async () => {
-      try { await api('/api/subagents/cancel', { method: 'POST', body: { id: a.id } }); window.CLAgent?.toast(`Cancelled ${a.id}`, 'orange'); } catch (err) { window.CLAgent?.toast(err.message, 'red'); }
-    },
-  }, 'Cancel');
-  return el('div', { class: `agent-detail state-${a.state}` },
-    el('div', { class: 'detail-title' }, el('span', {}, `${GLYPH[a.state] || '?'} ${a.id}`), cancel || ''),
-    el('dl', {}, rows.flatMap(([k, v]) => [el('dt', {}, k), el('dd', {}, String(v))]),
-      a.tools?.length ? [el('dt', {}, 'tools'), el('dd', {}, el('div', { class: 'tool-chips' }, a.tools.map(name => el('span', { class: 'chip fill-paper' }, name))))] : []));
-}
-
 // ---------- panel ----------
 
 function sorted(items) {
   return [...items].sort((a, b) => (ORDER.indexOf(a.state) - ORDER.indexOf(b.state)) || ((a.created || 0) - (b.created || 0)));
 }
 
+let mapOpen = storage('agents-map', true);
+
 function render(target) {
   host = target;
   const items = state.subagents || [];
-  const c = counts(items);
-  const tokens = items.reduce((s, a) => s + (a.tokens || 0), 0);
-  const tools = items.reduce((s, a) => s + (a.tool_calls || 0), 0);
-  const chosen = items.find(a => a.id === selected);
+  const map = el('details', { class: 'agents-map', open: mapOpen || undefined },
+    el('summary', { 'data-doc': 'Show or hide the map of subagents around the main agent' }, ';; Map'),
+    constellation(sorted(items)));
+  map.addEventListener('toggle', () => { mapOpen = map.open; store('agents-map', mapOpen); });
   const body = el('div', { class: 'panel' },
-    el('div', { class: 'agent-summary' },
-      el('span', { class: 'chip fill-yellow' }, `● ${c.running} running`),
-      el('span', { class: 'chip fill-paper' }, `○ ${c.queued} queued`),
-      el('span', { class: 'chip fill-green' }, `✓ ${c.succeeded} done`),
-      c.failed ? el('span', { class: 'chip fill-red' }, `✗ ${c.failed} failed`) : '',
-      c.cancelled ? el('span', { class: 'chip fill-ink' }, `⊘ ${c.cancelled} cancelled`) : '',
-      el('span', { class: 'chip fill-paper' }, `${fmtCount(tools)} tools · ${fmtCount(tokens)} tok`)),
     processTable(sorted(items)),
     items.length
-      ? [constellation(sorted(items)), el('div', { class: 'panel-section' }, el('h3', {}, 'Tree & timeline'), gantt(sorted(items)))]
-      : el('div', { class: 'faint agents-hint' }, 'No subagents yet. When the agent delegates work (start-subagent), each child gets a row here, then a map and a timeline.'),
-    chosen ? el('div', { class: 'panel-section' }, el('h3', {}, 'Selected'), detail(chosen)) : '');
+      ? [map, el('div', { class: 'panel-section' }, el('h3', {}, 'Tree & timeline'), gantt(sorted(items)))]
+      : el('div', { class: 'faint agents-hint' }, '; When the agent delegates work (start-subagent), each child gets a row here, then a map and a timeline. Click a row to inspect it; right-click for its menu.'));
   target.replaceChildren(body);
 }
 

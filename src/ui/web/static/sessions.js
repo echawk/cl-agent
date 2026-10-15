@@ -15,6 +15,7 @@ import { sanitize } from './render.js';
 import { showView, activeView } from './views.js';
 import { ago, resume } from './session.js';
 import { liveEnabled, liveTabFor, openAsLive } from './live.js';
+import { present } from './objects.js';
 
 const toast = (text, color) => window.CLAgent?.toast(text, color);
 
@@ -188,6 +189,22 @@ function nameField(s) {
   return input;
 }
 
+/** A stored conversation as an object (objects.js). */
+function storedSessionObject(s) {
+  const commands = [{ label: 'Preview', doc: 'Read it here', run: () => select(s.id) }];
+  if (!s.error && s.id !== view.current) commands.push({ label: 'Resume it here', doc: 'Continue it in this session (Enter)', run: () => resumeSession(s) });
+  if (!s.error && liveEnabled()) commands.push({ label: liveTabFor(s.id) ? 'Go to its tab' : 'Open in a tab', doc: 'As a live session of its own', run: () => openInTab(s) });
+  commands.push({ label: 'Rename', doc: 'F2', run: () => startRename(s) });
+  return {
+    kind: 'Stored session', title: title(s), type: 'SESSION', text: s.id, about: `my earlier session "${title(s)}" (${s.id})`,
+    parts: [['id', s.id], ['name', s.name || '—'], ['first message', s.title || '—'],
+      ['your messages', String(s.user_messages ?? 0)], ['events', String(s.events ?? 0)],
+      ['last active', s.last_active ? `${new Date(s.last_active * 1000).toLocaleString()} (${ago(s.last_active)})` : '—'],
+      ['in use', s.in_use ? 'yes' : 'no'], ['problem', s.error || '—']],
+    commands,
+  };
+}
+
 function row(s) {
   const box = el('input', {
     type: 'checkbox', checked: view.ticked.has(s.id), disabled: s.in_use,
@@ -203,7 +220,8 @@ function row(s) {
     box,
     el('div', { class: 'session-text' },
       view.renaming === s.id ? nameField(s)
-        : el('div', { class: 'session-name' }, el('span', { class: s.name ? 'named' : '' }, title(s)), chips(s)),
+        : el('div', { class: 'session-name' },
+          present(el('span', { class: s.name ? 'named' : '' }, title(s)), () => storedSessionObject(s), { left: 'Preview' }), chips(s)),
       el('div', { class: 'session-meta' },
         s.error ? `${s.events} events · ${ago(s.last_active)} · ${s.error}`
           : `${s.user_messages} message${s.user_messages === 1 ? '' : 's'} from you · ${ago(s.last_active)}`,

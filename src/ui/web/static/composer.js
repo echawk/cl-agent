@@ -28,28 +28,29 @@ function busy() { return state.thinking || state.planning; }
 
 const MODES = {
   command: { label: 'Command:', button: 'Run ⏎', doc: 'Run this command (Enter)', aria: 'Command' },
-  form: { button: 'Eval ⏎', doc: 'Evaluate this form in the agent\'s image (Enter) · Alt-Enter: ask the agent about it instead', aria: 'Lisp form' },
+  form: { button: 'λ Eval ⏎', doc: 'Evaluate this form in the agent\'s image (Enter) · Alt-Enter: ask the agent about it instead', aria: 'Lisp form' },
   ask: { button: 'Ask ⏎', doc: 'Ask the agent (Enter)', aria: 'Request to the agent' },
 };
 
 function inputMode() {
   const kind = classify(input.value);
-  return kind === 'open-form' ? 'form' : kind === 'empty' ? 'ask' : kind;
+  return kind === 'open-form' ? 'form' : kind;
 }
 
 function updatePrompt() {
   const prompt = $('prompt');
   const mode = inputMode();
+  // Empty, it is the environment's prompt; what you type says what it becomes.
   prompt.textContent = mode === 'command' ? MODES.command.label
-    : mode === 'form' ? `${lispState.package}>` : `(C${(state.turn || 0) + 1})`;
+    : mode === 'form' || mode === 'empty' ? `${lispState.package}>` : `(C${(state.turn || 0) + 1})`;
   prompt.classList.toggle('command', mode === 'command');
-  prompt.classList.toggle('form', mode === 'form');
-  input.setAttribute('aria-label', MODES[mode].aria);
+  prompt.classList.toggle('form', mode === 'form' || mode === 'empty');
+  input.setAttribute('aria-label', (MODES[mode] || MODES.ask).aria);
   updateButtons();
 }
 
 function updateButtons() {
-  const mode = inputMode();
+  const mode = inputMode() === 'empty' ? 'ask' : inputMode();
   $('abort').hidden = !busy();
   const queue = mode === 'ask' && busy();
   $('send').textContent = queue ? 'Queue ⏎' : MODES[mode].button;

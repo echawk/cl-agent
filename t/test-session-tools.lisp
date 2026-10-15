@@ -91,6 +91,7 @@
         (let ((entry (find "test-web-late-tool" (gethash "tools" (web-get-json frontend "/api/tools"))
                            :key (lambda (tool) (gethash "name" tool)) :test #'equal)))
           (check entry)
-          (check (gethash "enabled" entry) "not listed as unavailable"))
+          (check (gethash "enabled" entry) "not listed as unavailable")
+          (check (hash-table-p (gethash "parameters" entry)) "its parameters, for the page's inspector"))
         (check (some (lambda (event) (search "\"type\":\"tools\"" (cdr event))) (web-frontend-events frontend))
                "the page is told to refetch")))))

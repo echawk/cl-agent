@@ -14,9 +14,9 @@
 // entries are the Lisp REPL's own (one image, one history): the Lisp tab
 // shows them too, and the agent reads them with lisp-scratch.
 
-import { state, on, emit, api, el, live, storage, store } from './core.js';
+import { state, on, emit, api, el, live, storage, store, turnExtras } from './core.js';
 import { lispEntryNode } from './lisp.js';
-import { turnExtras, scrollToLatest } from './render.js';
+import { scrollToLatest } from './render.js';
 import { insert as insertInComposer } from './composer.js';
 import { classify } from './lisp-read.js';
 

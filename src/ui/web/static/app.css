@@ -830,14 +830,12 @@ a { color: var(--blue); text-underline-offset: 2px; }
   background-size: 108px 3px; animation: runbar 0.6s linear infinite;
 }
 @keyframes runbar { to { background-position: 108px 0; } }
-.mousedoc {
-  min-height: 1.6em;
-  padding: 0 8px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  color: var(--ink-2); font-size: 0.78em;
-  border: var(--rule-mid) solid var(--rule-soft);
-  background: var(--paper);
-}
+/* The mouse documentation, in the who-line: over its left part while the
+   pointer is on something documented (main.js). */
+.wholine .wl-status { display: contents; }
+.wholine .wl-doc { display: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; font-weight: 600; }
+.wholine.documenting .wl-status > * { display: none; }
+.wholine.documenting .wl-doc { display: block; flex: 1; }
 
 /* ---------- toasts ---------- */
 
@@ -865,7 +863,6 @@ a { color: var(--blue); text-underline-offset: 2px; }
   .composer { grid-template-columns: minmax(0, 1fr) auto; }
   .prompt { display: none; }
   .composer textarea { padding-left: 10px; }
-  .mousedoc { display: none; }
   .gantt-axis, .gantt-row { grid-template-columns: minmax(110px, 46%) minmax(0, 1fr); }
 }
 
@@ -1111,3 +1108,68 @@ a { color: var(--blue); text-underline-offset: 2px; }
 [data-theme="mono"] .wholine .wl-agents i.state-cancelled { border-style: dashed; }
 [data-theme="mono"] .constellation .node.state-failed { fill: var(--paper); stroke-width: 5; }
 [data-theme="mono"] .constellation .node.state-cancelled { fill: var(--paper); stroke-dasharray: 2 2; }
+
+/* ---------- the presentation model (objects.js) ---------- */
+
+/* Commands are mouse-sensitive text, as in Genera's menus: no box until the
+   pointer (or the keyboard) is on one.  Filled buttons -- what is on, the
+   primary and the dangerous -- keep theirs. */
+:not(.titlebar) > .btn-small:not(.btn-primary):not(.btn-danger):not(.on):not(.active):not(.code-copilot.on) {
+  border-color: transparent; background: transparent;
+}
+.btn-small:not(.btn-primary):not(.btn-danger):not(.on):not(.active):hover,
+.btn-small:not(.btn-primary):not(.btn-danger):not(.on):not(.active):focus-visible {
+  border-color: var(--rule); background: var(--paper);
+}
+.btn-small[disabled]:hover { border-color: transparent; }
+/* A choice (Lem | Simple, a theme) stays one box, the chosen part inverted. */
+.segmented, .code-editor-switch { border: var(--rule-mid) solid var(--rule); }
+.segmented .btn + .btn, .code-editor-switch .btn + .btn { margin-left: 0; }
+
+/* Presentations: the thing under the mouse is boxed (as everywhere). */
+.presentation { cursor: pointer; }
+.presentation:hover { background: var(--paper-3); outline: var(--rule-mid) solid var(--ink); outline-offset: 0; }
+tr.presentation:hover { outline-offset: -2px; }
+.entry .label.presentation:hover { background: var(--select); }
+.tool-ref + .tool-ref::before { content: " "; }
+
+/* The right button's menu: an Interlisp pop-up, titled with the object. */
+.objmenu {
+  position: fixed; z-index: 60; min-width: 220px; max-width: min(420px, 90vw);
+  display: flex; flex-direction: column;
+  background: var(--paper); border: var(--border) solid var(--rule); box-shadow: var(--shadow);
+}
+.objmenu-title {
+  display: flex; gap: 8px; align-items: baseline; padding: 1px 8px;
+  background: var(--ink); color: var(--paper);
+  font-size: var(--fs-label); font-weight: 700; letter-spacing: var(--label-tracking); text-transform: uppercase;
+}
+.objmenu-title > span:first-child { white-space: nowrap; }
+.objmenu-name { text-transform: none; letter-spacing: 0; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.objmenu-item { padding: 2px 10px; border: 0; background: none; text-align: left; font: inherit; color: var(--ink); outline: none; }
+.objmenu-item.selected { background: var(--ink); color: var(--paper); }
+
+/* The inspector: parts as label / value, groups as Lisp comments. */
+.inspector-parts .inspector-group th { padding-top: 8px; color: var(--ink-3); font-weight: 700; max-width: none; }
+.inspector-text.long { display: block; max-height: 18em; overflow: auto; white-space: pre-wrap; font-size: 0.95em; }
+
+/* Lisp flavour: section heads are ;;; comments. */
+.panel-section > h3 { justify-content: flex-start; gap: 6px; }
+.panel-section > h3::before { content: ";;;"; color: var(--ink-3); letter-spacing: 0; }
+.panel-section > h3 > :last-child:not(:first-child) { margin-left: auto; }
+.procs caption { caption-side: top; text-align: left; padding: 0 0 3px; color: var(--ink-3); font-size: 0.95em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agents-map > summary { cursor: pointer; color: var(--ink-3); font-size: 0.86em; margin-bottom: 4px; }
+
+/* One prompt on the screen: the Lisp tab's REPL input is the prompt there. */
+.frame[data-view="lisp"] > .composer, .frame[data-view="lisp"] > .queue { display: none; }
+.presentation:focus-visible { outline: var(--border) solid var(--blue); outline-offset: 1px; }
+.objmenu-item.danger { color: var(--red); border-top: var(--rule-thin) solid var(--rule-soft); }
+.objmenu-item.danger.selected { background: var(--red); color: var(--on-red); }
+[data-theme="mono"] .objmenu-item.danger { color: var(--ink); text-decoration: underline double; }
+
+/* Activity is a transcript, not a stack of cards: entries are ruled rows. */
+.activity-list { gap: 0; }
+.act { border: 0; border-bottom: var(--rule-thin) dashed var(--rule-soft); background: none; padding: 3px 0; }
+.act-head .chip { border: var(--rule-mid) solid currentColor; }
+.act-body { border-top: 0; padding: 2px 0 2px 1ch; }
+.act .output { margin: 2px 0 4px 1ch; }

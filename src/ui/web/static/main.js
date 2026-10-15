@@ -18,14 +18,19 @@ import './code.js';
 import './live.js';
 import { lispApi } from './lisp.js';
 import { lispState } from './forms.js';
+import { presentationDoc, present, inspect, keymapObject, sessionObject } from './objects.js';
 
 const { state, on, el, boot } = core;
 const $ = id => document.getElementById(id);
 
-// ---------- toasts and the mouse-documentation line ----------
+// ---------- toasts, and the who-line's mouse documentation ----------
+//
+// One line at the bottom, as on a Lisp machine: the who-line shows the
+// machine's state, and while the pointer is over something it says what the
+// mouse would do there (Genera's mouse-documentation line, folded in).
 
-const DEFAULT_DOC = 'Enter: ask, or evaluate a (form) · Alt-Enter: ask · Tab: complete · ↑↓: history · Esc: abort · Alt-L: Lisp tab · Alt-C: code · Alt-S: sessions · Alt-M: model · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
 let docOverride = null;
+let docShown = '';          // what the who-line says about the thing under the pointer
 let docTimer = null;
 
 function toast(text, color = 'ink', ms = 4200) {
@@ -35,20 +40,30 @@ function toast(text, color = 'ink', ms = 4200) {
   return node;
 }
 
+function showDoc(text) {
+  docShown = text || '';
+  const doc = $('wholine').querySelector('.wl-doc');
+  if (!doc) return;
+  doc.textContent = docShown;
+  $('wholine').classList.toggle('documenting', !!docShown);
+}
+
+/** Say TEXT in the who-line for a moment (messages, "No completions."). */
 function mousedoc(text) {
   docOverride = text;
-  $('mousedoc').textContent = text;
+  showDoc(text);
   clearTimeout(docTimer);
-  docTimer = setTimeout(() => { docOverride = null; $('mousedoc').textContent = DEFAULT_DOC; }, 2500);
+  docTimer = setTimeout(() => { docOverride = null; showDoc(''); }, 2500);
 }
 
 function installMousedoc() {
-  $('mousedoc').textContent = DEFAULT_DOC;
   document.addEventListener('mouseover', e => {
-    if (docOverride) return;
+    if (docOverride || e.target.closest?.('#wholine')) return;   // it would cover what is under the pointer
+    const presentation = e.target.closest?.('.presentation');
     const target = e.target.closest?.('[data-doc]');
-    $('mousedoc').textContent = target ? target.dataset.doc : DEFAULT_DOC;
+    showDoc((presentation && presentationDoc(presentation)) || (target ? target.dataset.doc : ''));
   });
+  document.addEventListener('mouseleave', () => { if (!docOverride) showDoc(''); });
 }
 
 // ---------- title bar and who-line ----------
@@ -57,7 +72,7 @@ function updateTitle() {
   const s = state.session || {};
   const stats = state.stats;
   $('title-info').textContent = [s.name, stats && `${stats.provider} · ${stats.model}`, s.cwd].filter(Boolean).join('   ');
-  $('listener-info').textContent = state.connected ? (s.mode ? `mode ${s.mode}` : '') : 'disconnected';
+  $('listener-info').textContent = state.connected ? '' : 'disconnected';
   $('custom-flag').hidden = boot.safe || !(state.ui?.overrides?.length || state.ui?.patches?.length);
   document.title = `${state.thinking || state.planning ? '● ' : ''}cl-agent${s.name ? ` · ${s.name}` : ''}`;
 }
@@ -72,11 +87,11 @@ function updateWholine() {
   const date = new Date();
   const agents = state.subagents || [];
   $('wholine').classList.toggle('running', busy && state.connected);
-  $('wholine').replaceChildren(
+  const status = el('span', { class: 'wl-status' },
     el('span', { 'data-doc': 'Local time' }, `${date.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: 'short' })} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`),
     el('span', { 'data-doc': 'User and host' }, `${s.user || 'user'}@${s.host || 'localhost'}`),
     el('span', { 'data-doc': 'The package forms at the prompt are read in' }, `${lispState.package}:`),
-    stats.provider ? el('span', { class: 'mouse', 'data-doc': 'Provider and model · Click: choose the model (Alt-M)', onclick: () => session.openModelMenu() }, `${stats.provider} · ${stats.model}`) : '',
+    stats.provider ? present(el('span', {}, `${stats.provider} · ${stats.model}`), sessionObject, { left: 'Choose the model' }) : '',
     stats.provider ? el('span', { 'data-doc': 'Session totals' },
       `${stats.requests} req · ${stats.tool_calls} tools · ${core.fmtCount(stats.total_tokens)} tok · ${core.fmtDuration(stats.elapsed_seconds)}`) : '',
     agents.length ? el('span', {
@@ -85,8 +100,11 @@ function updateWholine() {
         .map(k => [k, agents.filter(a => a.state === k).length]).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ')}`,
     }, 'agents', agents.slice(-12).map(a => el('i', { class: `state-${a.state}`, title: `${a.id} ${a.state}`, 'aria-hidden': 'true' }))) : '',
     state.queued?.length ? el('span', { 'data-doc': 'Messages waiting for the running turn' }, `${state.queued.length} queued`) : '',
-    el('span', { class: 'wl-spacer' }),
-    el('span', { class: `wl-state fill-${color}`, 'data-doc': 'Agent state' }, label));
+    s.mode && s.mode !== 'direct' ? el('span', { 'data-doc': 'The orchestration mode (/mode)' }, `mode ${s.mode}`) : '');
+  const doc = el('span', { class: 'wl-doc', 'aria-live': 'polite' }, docShown);
+  $('wholine').classList.toggle('documenting', !!docShown);
+  $('wholine').replaceChildren(status, doc, el('span', { class: 'wl-spacer' }),
+    present(el('span', { class: `wl-state fill-${color}`, 'data-doc': 'The agent\'s state' }, label), sessionObject));
 }
 
 // ---------- theme, panes and splitter ----------
@@ -133,6 +151,7 @@ function installKeys() {
   document.addEventListener('keydown', e => {
     if (e.altKey && (e.key === 't' || e.key === 'T' || e.code === 'KeyT')) { e.preventDefault(); core.setTheme('toggle'); return; }
     if (e.altKey && !e.ctrlKey && e.code === 'KeyM') { e.preventDefault(); session.openModelMenu(); return; }
+    if ((e.altKey && !e.ctrlKey && e.code === 'KeyH') || e.key === 'F1') { e.preventDefault(); inspect(keymapObject()); return; }
     if (e.altKey && !e.ctrlKey && e.code === 'KeyS') {
       e.preventDefault();
       views.showView(views.activeView() === 'sessions' ? 'listener' : 'sessions');
@@ -204,6 +223,7 @@ function installCommands() {
   core.registerUICommand('reload', () => location.reload());
 
   core.registerCommand('clear', () => render.clearListener(), 'Clear the listener (the conversation itself is kept)');
+  core.registerCommand('keys', () => inspect(keymapObject()), 'Inspect the keys and mouse buttons (Alt-H)');
   core.registerCommand('panel', arg => {
     const id = arg.trim();
     if (!panels.panelIds().includes(id)) throw new Error(`Panels: ${panels.panelIds().join(', ')}`);
@@ -227,6 +247,10 @@ const CLAgent = {
   toast,
   mousedoc,
   insert: composer.insert,
+  present,
+  inspect,
+  openModelMenu: () => session.openModelMenu(),
+  editFile: path => core.clientCommands.get('edit')?.run(path),
   complete: composer.complete,
   showPanel: panels.showPanel,
   showView: views.showView,
@@ -277,8 +301,7 @@ on('connection', connected => {
 });
 for (const type of ['state', 'status', 'subagents', 'lisp-entry']) on(type, () => { updateTitle(); updateWholine(); });
 // The working directory in the title opens it in the Code tab.
-$('title-info').addEventListener('click', () => views.showView('code'));
-$('title-info').dataset.doc = 'Open the working directory in the Code tab';
+present($('title-info'), sessionObject, { left: 'Inspect' });
 // /cd, the Code tab or the agent changed the working directory.
 on('cwd', ev => { if (state.session) state.session.cwd = ev.cwd; updateTitle(); });
 setInterval(updateWholine, 1000);

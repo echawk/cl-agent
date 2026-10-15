@@ -712,6 +712,26 @@ default. The theme button and `Alt-T` cycle through light, dark and **mono**,
 a 1-bit Lisp-machine screen where state is shown by inversion and hatching
 instead of colour. `/theme NAME` picks one directly.
 
+- **Everything on the screen is an object**, as on a Lisp machine. Each of
+  these is a *presentation* of something you can examine:
+  - a printed Lisp value;
+  - a message label (`(C3)`, `(D3)`, an error);
+  - a tool call or a tool;
+  - an agent row;
+  - a file, a stored or live session, a compiler diagnostic, the model;
+  - text you have selected.
+
+  The pointer boxes a presentation and the who-line says what the buttons
+  do. **Left** does the obvious thing, which is usually to inspect it.
+  **Right** opens its menu of commands: Inspect, Ask the agent about it,
+  Copy, and its own commands (Cancel, Open in a tab, Edit in Lem, Call it
+  yourself, Evaluate it…). Commands that can't be undone come last.
+
+  The **Inspect** panel shows any object's parts, and the parts are
+  presentations too, so you can keep drilling down. ◀ Back returns. From
+  the keyboard, Tab to a presentation, press Enter for Left and the Menu
+  key or Shift-F10 for Right. `Alt-H` (or `/keys`) inspects the keymap
+  itself.
 - **One prompt for everything**, as at a Genera listener. The input line reads
   what you type and the prompt says what `Enter` will do before you press it:
   - a **Lisp form** (`(+ 1 2)`, `'sym`, `#'f`, or `,anything`) is evaluated in
@@ -749,11 +769,16 @@ instead of colour. `/theme NAME` picks one directly.
 - **Activity, Tools, UI panels**: every tool call with its output, the
   tool catalog (click a tool to `/call` it), and theme, text-size and
   customization controls.
-- **Who-line and mouse-documentation line**, as on a Lisp machine: clock,
-  user, provider/model, totals, agent state, and help for whatever the
-  pointer is over.
+- **Who-line**, as on a Lisp machine: clock, user, the REPL's package,
+  provider and model, totals, subagents, and the agent's state. While the
+  pointer is over something, the who-line instead says what the mouse would
+  do there (Genera's mouse-documentation line, folded into the who-line
+  rather than taking a bar of its own).
 - **Lisp tab** (`Alt-L`): a SLY-style REPL on the agent's own image, beside
-  a scratch buffer the agent shares (see below).
+  a scratch buffer the agent shares (see below). There is only one prompt on
+  screen at a time, so on this tab the REPL's input *is* the prompt.
+  `Alt-Enter` there asks the agent and takes you to the Listener for the
+  answer.
 - **Pick up where you left off**: when the page finds an empty conversation (a
   fresh start, or cl-agent restarted under an open page), it offers to resume
   your most recent sessions. Resuming runs `/session resume` and replays the

@@ -154,6 +154,7 @@
            (:static-file "lem-view.js")
            (:static-file "lisp-read.js")
            (:static-file "forms.js")
+           (:static-file "objects.js")
            (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"
