@@ -3,7 +3,8 @@
 ;;;; top-level form at point -- at the main prompt of every open page, with
 ;;;; where it came from, for you to finish the question.  Nothing is sent:
 ;;;; the prompt is yours.  (The listener calls the editor with /edit and
-;;;; /mx; docs/ui-ux-review.md, section 16.)
+;;;; /mx, whose argument completes from Lem's commands below;
+;;;; docs/ui-ux-review.md, section 16.)
 
 (in-package :cl-agent)
 
@@ -39,3 +40,16 @@ region if marked, the top-level form at point in a Lisp buffer, else NIL."
     (lem:message "At the listener's prompt: finish your question there.")))
 
 (lem:define-key lem:*global-keymap* "C-c C-a" 'cl-agent-ask)
+
+;;; /mx's argument completes from Lem's own commands (the page's /mx runs
+;;; one in the Code tab): names starting with what you typed, or, failing
+;;; that, containing it -- each with its documentation's first line.
+(define-command-completer "mx" (context)
+  (when (eql (getf context :arg-index) 0)
+    (let* ((token (getf context :token))
+           (all (ignore-errors (second (lem-command-names "" :limit 5000))))
+           (prefixed (completions-matching token all :key #'car :doc #'cdr :kind "lem-command")))
+      (or prefixed
+          (loop for (name . doc) in all
+                when (search (string-downcase token) name)
+                  collect (make-completion name :doc doc :kind "lem-command"))))))

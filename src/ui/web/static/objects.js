@@ -371,7 +371,7 @@ export function keymapObject() {
         ['Shift-Enter', 'a new line'], ['Tab', 'complete /commands, @paths, (lisp-symbols'],
         ['↑ ↓', 'history'], ['Esc', 'abort the running turn, or break into a form'],
         [',form', 'evaluate anything, a bare symbol too'], ['/edit @file:line', 'open a file in Lem'],
-        ['/mx command', 'run a Lem command'], ['/keys', 'this']]),
+        ['/mx command', 'run a Lem command (Tab completes its name)'], ['/keys', 'this']]),
       ...group('Anywhere', [
         ['Alt-L', 'the Lisp tab'], ['Alt-C', 'the Code tab'], ['Alt-S', 'the Sessions tab'],
         ['Alt-1…9', 'a side panel'], ['Alt-M', 'choose the model'], ['Alt-T', 'next theme'],

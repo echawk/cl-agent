@@ -739,7 +739,8 @@ instead of colour. `/theme NAME` picks one directly.
     in the listener as `CL-AGENT>` entries. Click a value to inspect it, or
     Alt-click to use it in the next form.
   - **`/name`** runs a command. `/edit @path[:line]` opens a file in the
-    Code tab's Lem, and `/mx [command]` runs a Lem command there (`M-x`).
+    Code tab's Lem, and `/mx [command]` runs a Lem command there (`M-x`;
+    Tab completes Lem's command names).
     The other way round, `C-c C-a` in Lem (`M-x cl-agent-ask`) puts the
     region, or the Lisp form at point, at this prompt with its file and
     lines, so you can finish the question.

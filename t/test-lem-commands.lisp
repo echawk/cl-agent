@@ -285,3 +285,12 @@
                (sb-int:unencapsulate 'web-ui-command 'test-capture)))
         (ignore-errors (editor-close-file lisp-path :force t))
         (ignore-errors (delete-file lisp-path))))))
+
+(deftest mx-completes-from-lems-commands ()
+  ;; /mx's argument: Lem's command names, by prefix, else by substring.
+  (let ((prefixed (completion-values "/mx find-fi")))
+    (check (member "find-file" prefixed :test #'equal) "a prefix")
+    (check (every (lambda (name) (uiop:string-prefix-p "find-fi" name)) prefixed) "only those"))
+  (check (member "cl-agent-ask" (completion-values "/mx agent-as") :test #'equal)
+         "a name containing it, when none starts with it")
+  (check (getf (first (getf (complete-input "/mx find-fi" 11) :candidates)) :doc) "with documentation"))
