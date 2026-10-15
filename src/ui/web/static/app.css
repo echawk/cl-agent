@@ -1052,9 +1052,9 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .code-copilot.on { background: var(--green); color: var(--on-green); border-color: var(--green); }
 .code-copilot-model { max-width: 14em; padding: 1px 4px; font-size: 0.8em; }
 .code-lem-host { flex: 1; min-height: 0; display: flex; background: var(--paper); position: relative; }
-.code-lem-starting { display: none; }
-.code-lem-host.starting .code-lem-starting { display: flex; position: absolute; inset: 0; align-items: center; justify-content: center; color: var(--ink-3); background: var(--paper); }
-.code-lem-frame { flex: 1; width: 100%; height: 100%; border: 0; display: block; }
+/* The one Lem frame (lem-view.js) lies over whichever slot shows Lem. */
+.lem-frame { position: fixed; z-index: 4; border: 0; display: block; visibility: hidden; background: var(--paper); }
+.code-lem-host.starting::after { content: "Starting Lem…"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
 /* The Lisp tab's scratch buffer in Lem (lisp.js). */
 .scratch-lem-host { flex: 1; min-height: 0; }
 .scratch-lem-keys { white-space: nowrap; }

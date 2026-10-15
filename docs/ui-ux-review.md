@@ -396,3 +396,31 @@ this. They talk to the same session and tools, not to the page.
   would move text everywhere for little gain (brief: "Do not introduce a
   giant generic design system").
 
+### Pass 4: one Lem view (section 16, step 1)
+
+- `lem-view.js` now keeps **one** iframe for the page. The Code tab and
+  the Lisp tab's scratch each have a *slot*. The frame is
+  `position: fixed` over the slot that last asked for it, follows that
+  slot's rectangle (a ResizeObserver, window resizes, and a cheap 300 ms
+  check for layout changes no event reports), and hides when the slot is
+  not on screen.
+  - The frame is positioned, never moved: moving an iframe in the DOM
+    reloads it.
+  - The result is one websocket and one size, with no second frame
+    competing for Lem's window. Switching tabs no longer reloads Lem's
+    client.
+  - The slot API (`ensure`, `remeasure`, `focus`, `drop`) is unchanged,
+    so code.js and lisp.js did not change.
+- *Found while testing, mitigated, not explained*: on some cold page
+  loads, a request made while the page boots never settles. The shared
+  `pending` promise then blocked the view for good, leaving a blank Lem
+  pane. This pre-dates this pass, since the old per-tab frame awaited the
+  same requests.
+  - Each attempt now has a 5 s deadline. Past it, the attempt is
+    abandoned: a late finish cannot add a second frame, and another
+    attempt follows 3 s later.
+  - Three cold starts in a row all showed Lem by 20 s. Before the fix,
+    the same test stayed blank.
+  - Still open: which request stalls, and why. The server's threads show
+    no handler stuck at the time.
+
