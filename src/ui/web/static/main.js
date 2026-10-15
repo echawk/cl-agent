@@ -81,7 +81,9 @@ function updateWholine() {
       `${stats.requests} req · ${stats.tool_calls} tools · ${core.fmtCount(stats.total_tokens)} tok · ${core.fmtDuration(stats.elapsed_seconds)}`) : '',
     agents.length ? el('span', {
       class: 'wl-agents mouse', 'data-doc': 'Subagents (click: Agents panel)', onclick: () => panels.showPanel('agents'),
-    }, 'agents', agents.slice(-12).map(a => el('i', { class: `state-${a.state}`, title: `${a.id} ${a.state}` }))) : '',
+      role: 'button', 'aria-label': `Subagents: ${['running', 'queued', 'succeeded', 'failed', 'cancelled']
+        .map(k => [k, agents.filter(a => a.state === k).length]).filter(([, n]) => n).map(([k, n]) => `${n} ${k}`).join(', ')}`,
+    }, 'agents', agents.slice(-12).map(a => el('i', { class: `state-${a.state}`, title: `${a.id} ${a.state}`, 'aria-hidden': 'true' }))) : '',
     state.queued?.length ? el('span', { 'data-doc': 'Messages waiting for the running turn' }, `${state.queued.length} queued`) : '',
     el('span', { class: 'wl-spacer' }),
     el('span', { class: `wl-state fill-${color}`, 'data-doc': 'Agent state' }, label));

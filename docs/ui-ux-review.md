@@ -379,3 +379,20 @@ this. They talk to the same session and tools, not to the page.
   what they want to know, and an empty "About lines 3–9:" request wastes a
   turn.
 
+### Pass 3: consistency and colour-free state
+
+- Tokens for the roles that were drawn differently in different places:
+  `--rule-mid` (1.5 px) and `--rule-thin` (1 px) replace the literal
+  widths throughout app.css, 48 sites. `--fs-label` and `--label-tracking`
+  give every uppercase title label (pane, menu, debugger, code-block and
+  offer heads, tabs) one size, 0.75em, and one tracking. The tabs shrink
+  slightly from 0.78em; nothing else moves.
+- The who-line's subagent dots gained an accessible summary ("Subagents: 1
+  running, 1 failed"). In mono they are empty for queued, hatched for
+  running, white for done and crossed for failed. In the mono
+  constellation, a failed node is an open, heavy ring.
+- *Rejected*: a sweep of every font size into a scale. Most of the 0.8x em
+  values are deliberate per-context density choices, and unifying them
+  would move text everywhere for little gain (brief: "Do not introduce a
+  giant generic design system").
+

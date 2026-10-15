@@ -98,7 +98,11 @@
   --font: "IBM Plex Mono", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --font-size: 14px;
   --line: 1.55;
-  --border: 2px;
+  --border: 2px;            /* pane boundaries, controls */
+  --rule-mid: 1.5px;        /* chips, cards and boxes inside a pane */
+  --rule-thin: 1px;         /* row separators */
+  --fs-label: 0.75em;       /* UPPERCASE title labels: pane, menu, debugger, code-block heads */
+  --label-tracking: .08em;
   --gap: 8px;
   --side-width: 420px;
 }
