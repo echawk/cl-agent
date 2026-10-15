@@ -118,16 +118,17 @@ library), or NIL.  CL_AGENT_TREE_SITTER_PREFIX names one."
            (remove nil (list (uiop:getenv "CL_AGENT_TREE_SITTER_PREFIX")
                              "/opt/homebrew" "/usr/local" "/usr" "/opt/local"))))
 
-(defun compile-shared-library (output sources &key includes prefix)
+(defun compile-shared-library (output sources &key includes prefix (libraries '("tree-sitter")))
   "Compile C SOURCES into the shared library OUTPUT with cc, linking
-libtree-sitter from PREFIX when given."
+LIBRARIES (libtree-sitter) from PREFIX when given."
   (ensure-directories-exist output)
   (let ((command (append (list "cc" "-O2" "-fPIC" "-shared")
                          (and (uiop:os-macosx-p) (list "-dynamiclib"))
                          (list "-o" (uiop:native-namestring output))
                          (mapcar (lambda (directory) (format nil "-I~a" (uiop:native-namestring directory))) includes)
                          (mapcar #'uiop:native-namestring sources)
-                         (and prefix (list (format nil "-L~a/lib" prefix) "-ltree-sitter")))))
+                         (and prefix (cons (format nil "-L~a/lib" prefix)
+                                           (mapcar (lambda (library) (format nil "-l~a" library)) libraries))))))
     (multiple-value-bind (output-text error-text status)
         (uiop:run-program command :output :string :error-output :string :ignore-error-status t)
       (declare (ignore output-text))

@@ -744,6 +744,15 @@ instead of colour. `/theme NAME` picks one directly.
     The other way round, `C-c C-a` in Lem (`M-x cl-agent-ask`) puts the
     region, or the Lisp form at point, at this prompt with its file and
     lines, so you can finish the question.
+    `/term [dir]` opens a terminal in the Code tab, under the file you're
+    editing. `/run [@file]` saves a file and runs it there by its type,
+    compiling it first if it is C, C++ or Rust. In the terminal, `C-c`
+    interrupts the program and `C-x C-a` puts its last lines at this
+    prompt to ask about them. The agent can read the terminal
+    (`terminal-output`), but never types into it. The terminal is Lem's
+    own, over libvterm (`brew install libvterm`, or `apt install
+    libvterm-dev`), and its small C shim is compiled the first time a
+    terminal opens.
   - **anything else** goes to the agent as `(C n)`. `Alt-Enter` asks the
     agent even when the text looks like Lisp.
 

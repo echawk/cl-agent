@@ -7,6 +7,7 @@ Status: **partly implemented.**
 - Also implemented: **the agent runs Lem's commands** through a minibuffer bridge (`src/lem/commands.lisp`, the `lem-command` tool, §10).
 - Also implemented: **the Lisp tab's scratch buffer can be edited in Lem** (`src/lem/lisp-scratch.lisp`, `static/lem-view.js`). A minor mode, `cl-agent-scratch-mode`, sends `C-c C-c` / `C-x C-e` / `C-c C-k` to the Lisp tab's REPL, and saves the buffer as it is edited. The one Lem is shared by both tabs: each puts its own buffer in Lem's window when it is shown, and a visit that lands after the tab was left is dropped. Lem's tab bar is off by default (`*lem-tab-bar*`), and the user's init file can turn it back on.
 - Not yet: the composer and the Lisp tab's REPL input are still cl-agent's own editors.
+- **Terminal:** Lem's terminal (`lem-terminal`, libvterm) runs in the Code tab: `/term`, `/run`, `C-x C-a` to ask about it, and the agent's `terminal-output` (`src/lem/terminal.lisp`; the plan's Stage 6b, done early).
 - **Next:** `docs/lem-frontend-plan.md` stages cl-agent's own renderer for Lem's display protocol, with the goal that Lem is transparent. The stages are: a screen model and recorded streams, then a page renderer, then retiring the iframe, presentations in buffers, one prompt, and a shell and terminal. Each has testing notes. The terminal UI is out of scope: the web UI is the frontend that matters.
 
 This plan covers two things:

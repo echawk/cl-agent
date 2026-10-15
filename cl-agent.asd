@@ -42,6 +42,7 @@
                "lem-clojure-mode" "lem-elisp-mode" "lem-lua-mode" "lem-perl-mode" "lem-swift-mode"
                "lem-kotlin-mode" "lem-scala-mode" "lem-dart-mode" "lem-zig-mode" "lem-nix-mode"
                "lem-server"                                   ; Lem's web frontend: the Code tab's editor
+               "lem-terminal"                                 ; Lem's terminal (libvterm), src/lem/terminal.lisp
                "tree-sitter-cl"                               ; syntax trees for the agent's structural edits
                "cl-kanren")                                   ; miniKanren: the logic tool (logic.lisp)
   :build-operation "program-op"
@@ -212,6 +213,7 @@
                    (:file "live")))
      (:file "lem/lisp-scratch")
      (:file "lem/listener")
+     (:file "lem/terminal")
      (:file "tools/lisp-scratch-tool")
      (:file "tools/scratch-tool")
      (:file "tools/source-tool")
@@ -271,6 +273,7 @@
    (:file "test-editor-files")
    (:file "test-systems")
    (:file "test-lem-commands")
+   (:file "test-lem-terminal")
    (:file "test-copilot")
    (:file "test-syntax-tree")
    (:file "test-logic")

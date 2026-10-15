@@ -24,7 +24,7 @@
 //   text      what Copy copies;  about  how "Ask the agent" names it
 //   refresh() an async function returning the object anew (↻ Refresh)
 
-import { el, api, state, registerPanel, copyText, fmtClock, fmtDuration, fmtCount, now } from './core.js';
+import { el, api, state, registerPanel, copyText, fmtClock, fmtDuration, fmtCount, now, clientCommands } from './core.js';
 import { showPanel } from './panels.js';
 import { insert as insertInComposer } from './composer.js';
 import { classify, evaluate as evaluateForm } from './forms.js';
@@ -340,6 +340,11 @@ export function sessionObject() {
   };
 }
 
+/** Run the prompt's /NAME with ARG; a failure is said, not thrown. */
+const runCommand = (name, arg) => Promise.resolve()
+  .then(() => clientCommands.get(name)?.run(arg))
+  .catch(err => window.CLAgent?.toast(err.message, 'red'));
+
 /** A file, by PATH (with what a listing knows: SIZE, MTIME). */
 export function fileObject(path, { size, mtime, directory = false } = {}) {
   const name = path.replace(/\/$/, '').split('/').pop();
@@ -348,7 +353,10 @@ export function fileObject(path, { size, mtime, directory = false } = {}) {
     about: `@${path}`,
     parts: [['path', path], ['size', size != null ? `${size} bytes` : '—'], ['modified', mtime ? new Date(mtime * 1000).toLocaleString() : '—']],
     commands: [
-      ...(directory ? [] : [{ label: 'Edit in Lem', doc: '/edit', run: () => window.CLAgent?.editFile?.(path) }]),
+      ...(directory
+        ? [{ label: 'Terminal here', doc: '/term', run: () => runCommand('term', path) }]
+        : [{ label: 'Edit in Lem', doc: '/edit', run: () => window.CLAgent?.editFile?.(path) },
+           { label: 'Run in the terminal', doc: '/run: save, then run it by its type', run: () => runCommand('run', path) }]),
       { label: 'Put @path at the prompt', run: () => insertInComposer(`@${path} `) },
     ],
   };
@@ -385,6 +393,9 @@ export function keymapObject() {
         ['C-c C-z', 'scratch ⇄ REPL'], ['0–9 q c', 'in the debugger: a restart, abort, continue']]),
       ...group('Lem (the Code tab, and the scratch buffer in Lem)', [
         ['C-x C-f', 'visit a file'], ['M-x', 'run a command'], ['C-c C-a', 'put the region or form at the prompt, to ask about it']]),
+      ...group('The terminal (/term, /run)', [
+        ['C-c', 'the program\'s: interrupt it'], ['C-x C-a', 'put its last lines at the prompt, to ask about them'],
+        ['C-x [', 'copy mode: move and mark its text (Escape leaves)'], ['C-x o', 'the other window'], ['C-x k', 'close it']]),
     ],
   };
 }
