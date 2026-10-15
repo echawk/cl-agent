@@ -77,11 +77,11 @@
   <form class="composer" id="composer" autocomplete="off">
     <label class="prompt" id="prompt" for="input">(C1)</label>
     <textarea id="input" rows="1" spellcheck="false"
-              placeholder="Ask anything · /command · @path · (lisp-symbol   Tab completes"
-              data-doc="Enter: send · Shift-Enter: newline · Tab: complete · ↑↓: history · Esc: abort"></textarea>
+              placeholder="Ask anything · (lisp form) evaluates · /command · @path   Tab completes"
+              data-doc="Enter: ask / evaluate / run, as the prompt says · Alt-Enter: ask the agent · Shift-Enter: newline · Tab: complete · ↑↓: history · Esc: abort"></textarea>
     <div class="composer-buttons">
       <button class="btn btn-danger" id="abort" type="button" hidden data-doc="Interrupt the running turn (Esc)">Abort</button>
-      <button class="btn btn-primary" id="send" type="submit" data-doc="Send to the agent (Enter)">Eval ⏎</button>
+      <button class="btn btn-primary" id="send" type="submit" data-doc="Ask the agent (Enter)">Ask ⏎</button>
     </div>
     <div class="completions" id="completions" hidden></div>
   </form>

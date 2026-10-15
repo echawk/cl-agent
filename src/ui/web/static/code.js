@@ -28,7 +28,7 @@
 //             (open-in-editor), and its writes show up here: an unchanged
 //             buffer reloads, one with unsaved changes asks which to keep
 
-import { on, el, api, state, registerView, registerUICommand, storage, store, theme } from './core.js';
+import { on, el, api, state, registerView, registerUICommand, registerCommand, storage, store, theme } from './core.js';
 import { createLispEditor } from './lisp-editor.js';
 import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
 import { insert as insertInComposer } from './composer.js';
@@ -212,9 +212,9 @@ function renderLemHead() {
     el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Find a file in Lem (C-x C-f)', onclick: () => lemRun('find-file') }, 'C-x C-f'),
     el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Run a Lem command (M-x)', onclick: () => lemRun('execute-command') }, 'M-x'),
     el('button', {
-      class: 'btn btn-small btn-primary', type: 'button', 'data-doc': 'Ask the agent about this file',
+      class: 'btn btn-small btn-ask', type: 'button', 'data-doc': 'Ask the agent about this file', 'aria-label': 'Ask the agent about this file',
       onclick: () => insertInComposer(f ? `Help me with ${short(f.path)} (open in the Lem editor).` : 'Help me with the file open in the Lem editor.'),
-    }, 'Ask the agent'),
+    }, 'Ask'),
     copilotBox(focusEditor));
 }
 
@@ -909,13 +909,13 @@ function renderEditor() {
           'data-doc': servers ? 'Ask the language server for problems (C-c C-c)' : 'Configure a language server for this file type in lsp.sexp',
           onclick: check,
         }, 'Check'),
-        button('Ask the agent', 'Ask the agent about this file (or the selected lines)', () => {
+        button('Ask', 'Ask the agent about this file (or the selected lines)', () => {
           const { start, end, text } = view.editor.selection;
           const what = file ? short(d.path) : `my ${language} scratch buffer "${d.name}"`;
           insertInComposer(text.trim()
             ? `Look at lines ${view.editor.lineOf(start)}–${view.editor.lineOf(end)} of ${what}.`
             : `Help me with ${what}.`);
-        }, 'btn-primary'),
+        }, 'btn-ask'),
         el('span', { class: 'spacer' }),
         copilotBox(focusEditor),
         file
@@ -1122,3 +1122,13 @@ registerUICommand('open-file', args => {
   showView('code');
   openDoc('file', args.path, { line: args.line || undefined });
 });
+
+// /edit at the main prompt: the listener calls the editor.
+registerCommand('edit', arg => {
+  const match = arg.trim().replace(/^@/, '').match(/^(.+?)(?::(\d+))?$/);
+  if (!match) throw new Error('Usage: /edit PATH[:LINE] (relative to the working directory; Tab completes @paths)');
+  const cwd = (state.session?.cwd || '').replace(/\/?$/, '/');
+  const path = match[1].startsWith('/') || match[1].startsWith('~') ? match[1] : cwd + match[1];
+  showView('code');
+  return openDoc('file', path, { line: match[2] ? Number(match[2]) : undefined });
+}, 'Open a file in the Code tab\'s editor: /edit @path[:line]');

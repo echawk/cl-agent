@@ -90,6 +90,10 @@
     var(--orange) 6px 8px, transparent 8px 9px, var(--red) 9px 11px, transparent 11px 12px,
     var(--violet) 12px 14px, transparent 14px 15px, var(--blue) 15px 17px);
 
+  /* The agent's mark, on everything that asks it something: a 64px pixel
+     Clippy (PNG).  A patch can replace it, e.g. --agent-mark: none. */
+  --agent-mark: url("data:image/png;base64,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");
+
   /* Type and shape */
   --font: "IBM Plex Mono", "JetBrains Mono", "SF Mono", ui-monospace, Menlo, Consolas, monospace;
   --font-size: 14px;
@@ -153,4 +157,70 @@
   --title-bg: #2b1f63;         /* deep violet bars: the neon reads on them */
   --title-fg: var(--ink);
   --shadow-color: var(--pink);
+}
+
+/* Mono ("Lisp Machine"): a 1-bit screen, black ink on white paper.  Not the
+ * colour theme desaturated: every palette colour is ink, so a chip or a
+ * selected tab is drawn by inversion, the desk is a 50% stipple, and what
+ * colour used to say (running, failed, dangerous) is said by hatching and
+ * line weight in app.css's "mono" section.  Code is set in weights and
+ * slants instead of hues. */
+[data-theme="mono"] {
+  color-scheme: light;
+
+  --paper: #ffffff;
+  --paper-2: #f1f1f1;
+  --paper-3: #dedede;
+  --desk: #ffffff;
+  --desk-dot: #000000;
+
+  --ink: #000000;
+  --ink-2: #2b2b2b;
+  --ink-3: #6b6b6b;
+  --rule: #000000;
+  --rule-soft: #9a9a9a;
+
+  --green: #000000;
+  --yellow: #000000;
+  --orange: #000000;
+  --red: #000000;
+  --violet: #000000;
+  --blue: #000000;
+  --pink: #000000;
+  --cyan: #000000;
+
+  --on-pink: #ffffff;
+  --on-blue: #ffffff;
+  --on-yellow: #ffffff;
+  --on-green: #ffffff;
+  --on-orange: #ffffff;
+  --on-violet: #ffffff;
+  --on-cyan: #ffffff;
+  --on-red: #ffffff;
+
+  --select: #d4d4d4;
+  --code-inline: #ececec;
+
+  --syn-comment: #5a5a5a;
+  --syn-string: #2b2b2b;
+  --syn-number: #000000;
+  --syn-keyword: #000000;
+  --syn-operator: #000000;
+  --syn-def: #000000;
+  --syn-constant: #000000;
+  --syn-special: #000000;
+  --paren-0: #000000;
+  --paren-1: #000000;
+  --paren-2: #000000;
+  --paren-3: #000000;
+  --paren-4: #000000;
+  --paren-5: #000000;
+
+  --title-bg: #000000;
+  --title-fg: #ffffff;
+  --shadow-color: #000000;
+  /* The racing stripes, as six white bands on the black title bar. */
+  --stripes: repeating-linear-gradient(180deg, #fff 0 2px, transparent 2px 3px) 0 0 / 100% 17px no-repeat;
+  /* A 1-bit hatch, for what is running or dangerous. */
+  --hatch: repeating-linear-gradient(-45deg, #000 0 2px, #fff 2px 5px);
 }

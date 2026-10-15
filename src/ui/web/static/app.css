@@ -50,6 +50,12 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .btn-danger { background: var(--red); color: var(--on-red); }
 .btn-danger:hover { background: var(--red); filter: brightness(1.08); }
 .btn-small { padding: 0 6px; font-size: 0.78em; }
+/* Anything that asks the agent wears its mark (--agent-mark, theme.css). */
+.btn-ask::before {
+  content: ""; flex: none; width: 1.5em; height: 1.5em; margin: -2px 0 -2px -3px;
+  background: var(--agent-mark) center / contain no-repeat;
+}
+.btn-small.btn-ask::before { width: 1.7em; height: 1.7em; margin: -3px 0 -3px -4px; }
 .btn[disabled] { opacity: .5; cursor: default; }
 
 .chip {
@@ -293,6 +299,10 @@ a { color: var(--blue); text-underline-offset: 2px; }
   padding: 2px 10px; font-weight: 700; box-shadow: var(--shadow);
 }
 
+/* A Lisp form evaluated at the main prompt (forms.js): the Lisp tab's entry. */
+.listener-form { padding: 2px 14px 4px 10px; }
+.listener-form .lisp-entry { padding: 2px 0 4px; border-bottom: 0; }
+
 /* ---------- markdown ---------- */
 
 .markdown > :first-child { margin-top: 0; }
@@ -354,6 +364,7 @@ a { color: var(--blue); text-underline-offset: 2px; }
   color: var(--user); font-weight: 700; white-space: nowrap; user-select: none;
 }
 .prompt.command { color: var(--violet); }
+.prompt.form { color: var(--violet); }
 .composer textarea {
   display: block; width: 100%;
   min-height: 40px; max-height: 40vh;
@@ -1049,3 +1060,46 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .scratch-lem-keys { white-space: nowrap; }
 .scratch-simple-buttons { display: inline-flex; gap: 6px; align-items: center; }
 .scratch-simple-buttons[hidden] { display: none; }
+
+/* ---------- mono theme (theme.css): state by inversion and hatching ---------- */
+
+[data-theme="mono"] ::selection { background: var(--ink); color: var(--paper); }
+[data-theme="mono"] .le-input::selection { background: rgb(0 0 0 / .25); color: transparent; }
+/* Selected rows are inverted, as on a Lisp machine's screen. */
+[data-theme="mono"] :is(.completion.selected, .session-row.selected, .code-row.selected, .code-file.selected,
+  .model-option:hover, .model-option:focus-visible, .dbg-restart:hover, .code-diag:hover, .code-side-tab.active),
+[data-theme="mono"] :is(.completion.selected, .code-row.selected, .code-file.selected, .dbg-restart:hover) * {
+  background: var(--ink); color: var(--paper); box-shadow: none;
+}
+[data-theme="mono"] .presentation:hover { background: var(--ink); color: var(--paper); }
+[data-theme="mono"] .sx-match { background: var(--ink); color: var(--paper); }
+/* Code: weight and slant, since every hue is ink. */
+[data-theme="mono"] :is(.sx-keyword, .sx-lambda) { font-weight: 600; }
+[data-theme="mono"] :is(.sx-string, .sx-char) { font-style: italic; }
+[data-theme="mono"] .sx-paren { font-weight: 400; }
+/* Running: a moving hatch; danger: a double rule. */
+[data-theme="mono"] .run-bar, [data-theme="mono"] .state-running .bar.run { background: var(--hatch); background-size: 7px 12px; }
+[data-theme="mono"] .wholine.running::before { background: var(--hatch); background-size: 7px 3px; }
+[data-theme="mono"] .btn-danger { background: var(--paper); color: var(--ink); border-style: double; border-width: 4px; padding-top: 1px; padding-bottom: 1px; }
+[data-theme="mono"] .state-failed .bar, [data-theme="mono"] .state-failed .glyph-box { background: var(--hatch); color: var(--ink); }
+[data-theme="mono"] .state-cancelled .bar { background: var(--paper); border-style: dashed; }
+[data-theme="mono"] .debugger { box-shadow: 4px 4px 0 var(--ink); border-width: 3px; }
+[data-theme="mono"] .entry.error .body { font-weight: 700; text-decoration: underline 1px; }
+[data-theme="mono"] .btn-ask::before { filter: grayscale(1) contrast(1.5); }
+[data-theme="mono"] .titlebar .glyph { background: var(--paper); color: var(--ink); }
+
+/* The Agents panel's process table (agents.js): Genera's Peek. */
+.procs { width: 100%; margin-bottom: 10px; border-collapse: collapse; border: var(--border) solid var(--rule); font-size: 0.86em; }
+.procs th { padding: 0 6px; background: var(--ink); color: var(--paper); text-align: left; font-size: 0.86em; letter-spacing: .08em; text-transform: uppercase; }
+.procs td { padding: 2px 6px; border-top: 1px solid var(--rule-soft); vertical-align: middle; }
+.procs .proc-id { display: flex; align-items: center; gap: 6px; font-weight: 700; white-space: nowrap; }
+.procs .proc-state { font-weight: 700; white-space: nowrap; }
+.procs .proc-time { color: var(--ink-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.procs .proc-doing { width: 100%; color: var(--ink-2); max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.procs tr.proc:hover, .procs tr.proc.selected { background: var(--select); }
+.procs .state-running .proc-state { color: var(--orange); }
+.procs .state-failed .proc-state { color: var(--red); }
+.state-idle { --state: var(--paper-3); --state-on: var(--ink); }
+.procs tr:first-child .glyph-box { background: var(--yellow); color: var(--on-yellow); }
+.agents-hint { margin: 0 0 10px; font-size: 0.86em; }
+[data-theme="mono"] .procs tr.proc.selected, [data-theme="mono"] .procs tr.proc.selected td { background: var(--ink); color: var(--paper); }

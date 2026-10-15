@@ -1,5 +1,9 @@
-// agents.js -- the Agents panel: a graphical overview of subagents.
+// agents.js -- the Agents panel: the agents as processes, then a
+// graphical overview of subagents.
 //
+//   * process table    Genera's Peek: one row per agent, the main one (λ)
+//                      first -- id, a state word (RUN WAIT DONE FAIL KILL),
+//                      elapsed time, and what it is doing now
 //   * summary chips    how many are queued / running / done / failed
 //   * constellation    the main agent in the middle, each subagent around it;
 //                      node size grows with tokens, running links animate
@@ -18,6 +22,7 @@ import { state, on, el, api, registerPanel, fmtDuration, fmtCount, now, frameThr
 const SVG = 'http://www.w3.org/2000/svg';
 const GLYPH = { queued: '○', running: '●', succeeded: '✓', failed: '✗', cancelled: '⊘' };
 const ORDER = ['running', 'queued', 'failed', 'cancelled', 'succeeded'];
+const WORD = { queued: 'WAIT', running: 'RUN', succeeded: 'DONE', failed: 'FAIL', cancelled: 'KILL' };
 let selected = null;
 let host = null;
 
@@ -78,6 +83,45 @@ function constellation(items) {
   return svg('svg', { class: 'constellation', viewBox: `0 0 ${width} ${height}`, role: 'img',
     'aria-label': `Main agent with ${items.length} subagents`, 'data-doc': 'Click a node: show that subagent' },
   ...edges, root, ...nodes);
+}
+
+// ---------- process table ----------
+
+function mainDoing() {
+  if (!state.thinking && !state.planning) return state.connected === false ? 'offline' : 'waiting for input';
+  const last = [...(state.activity || [])].reverse().find(a => a.turn === state.turn && a.kind !== 'event');
+  return last ? last.label.toLowerCase() : state.planning ? 'planning' : 'thinking';
+}
+
+function processTable(items) {
+  const t = now();
+  const busy = state.thinking || state.planning;
+  const row = ({ id, glyph, word, stateClass, time, doing, model, onclick, chosen }) => el('tr', {
+    class: `proc ${stateClass} ${chosen ? 'selected' : ''} ${onclick ? 'mouse' : ''}`, onclick,
+    'data-doc': `${id}: ${doing}${model ? ` · ${model}` : ''}${onclick ? ' · Click: details' : ''}`,
+  },
+  el('td', { class: 'proc-id' }, el('span', { class: 'glyph-box' }, glyph), id),
+  el('td', { class: 'proc-state' }, word),
+  el('td', { class: 'proc-time' }, time),
+  el('td', { class: 'proc-doing' }, doing));
+  const rows = [row({
+    id: 'main', glyph: 'λ', word: state.planning ? 'PLAN' : busy ? 'RUN' : 'IDLE',
+    stateClass: busy ? 'state-running' : 'state-idle', time: state.stats ? fmtDuration(state.stats.elapsed_seconds || 0) : '',
+    doing: mainDoing(), model: state.stats?.model,
+  })];
+  for (const a of items) {
+    rows.push(row({
+      id: a.id, glyph: GLYPH[a.state] || '?', word: WORD[a.state] || a.state.toUpperCase(), stateClass: `state-${a.state}`,
+      time: a.started ? fmtDuration((a.finished || t) - a.started) : '—',
+      doing: a.state === 'running' ? (a.activity || a.description || 'working')
+        : a.state === 'queued' ? `waiting · ${a.description || ''}`
+          : `${a.tool_calls || 0} tool${a.tool_calls === 1 ? '' : 's'} · ${a.description || a.note || ''}`,
+      model: a.model, onclick: () => select(a.id), chosen: selected === a.id,
+    }));
+  }
+  return el('table', { class: 'procs', 'aria-label': 'Agents' },
+    el('thead', {}, el('tr', {}, ['agent', 'state', 'time', 'doing'].map(h => el('th', {}, h)))),
+    el('tbody', {}, rows));
 }
 
 // ---------- tree + timeline ----------
@@ -183,10 +227,10 @@ function render(target) {
       c.failed ? el('span', { class: 'chip fill-red' }, `✗ ${c.failed} failed`) : '',
       c.cancelled ? el('span', { class: 'chip fill-ink' }, `⊘ ${c.cancelled} cancelled`) : '',
       el('span', { class: 'chip fill-paper' }, `${fmtCount(tools)} tools · ${fmtCount(tokens)} tok`)),
-    constellation(sorted(items)),
+    processTable(sorted(items)),
     items.length
-      ? el('div', { class: 'panel-section' }, el('h3', {}, 'Tree & timeline'), gantt(sorted(items)))
-      : el('div', { class: 'empty' }, 'No subagents yet. When the agent delegates work (start-subagent), each child appears here as a node and a live timeline row.'),
+      ? [constellation(sorted(items)), el('div', { class: 'panel-section' }, el('h3', {}, 'Tree & timeline'), gantt(sorted(items)))]
+      : el('div', { class: 'faint agents-hint' }, 'No subagents yet. When the agent delegates work (start-subagent), each child gets a row here, then a map and a timeline.'),
     chosen ? el('div', { class: 'panel-section' }, el('h3', {}, 'Selected'), detail(chosen)) : '');
   target.replaceChildren(body);
 }

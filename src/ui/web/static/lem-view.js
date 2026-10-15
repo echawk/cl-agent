@@ -12,7 +12,7 @@
 // display port), retried while Lem starts, and says "Starting Lem..."
 // until Lem's client has logged in.
 
-import { on, el, api, state, theme } from './core.js';
+import { on, el, api, state } from './core.js';
 
 const TOKENS = ['paper', 'paper-2', 'paper-3', 'ink', 'ink-2', 'ink-3', 'rule', 'rule-soft', 'select', 'code-inline',
   'red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet', 'pink', 'on-yellow', 'on-pink', 'title-bg', 'title-fg',
@@ -40,7 +40,9 @@ const chromeVars = colors => ({ paper: colors.paper, rule: colors.rule, 'rule-so
 function pushTheme(onError) {
   const colors = pageColors();
   for (const v of views) v.frame?.contentWindow?.postMessage({ type: 'cl-agent-style', vars: chromeVars(colors) }, '*');
-  return api('/api/lem/theme', { method: 'POST', body: { mode: theme(), colors } }).catch(err => onError?.(`Lem theme: ${err.message}`));
+  // Light or dark by the theme's color-scheme: "mono" and patches' themes too.
+  const mode = /dark/.test(getComputedStyle(document.documentElement).colorScheme) ? 'dark' : 'light';
+  return api('/api/lem/theme', { method: 'POST', body: { mode, colors } }).catch(err => onError?.(`Lem theme: ${err.message}`));
 }
 
 async function frameURL() {

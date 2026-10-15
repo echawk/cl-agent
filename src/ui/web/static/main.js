@@ -17,13 +17,14 @@ import './sessions.js';
 import './code.js';
 import './live.js';
 import { lispApi } from './lisp.js';
+import { lispState } from './forms.js';
 
 const { state, on, el, boot } = core;
 const $ = id => document.getElementById(id);
 
 // ---------- toasts and the mouse-documentation line ----------
 
-const DEFAULT_DOC = 'Enter: send · Tab: complete · ↑↓: history · Esc: abort · Alt-L: Lisp tab · Alt-C: code · Alt-S: sessions · Alt-M: model · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
+const DEFAULT_DOC = 'Enter: ask, or evaluate a (form) · Alt-Enter: ask · Tab: complete · ↑↓: history · Esc: abort · Alt-L: Lisp tab · Alt-C: code · Alt-S: sessions · Alt-M: model · Alt-T: theme · Alt-1…9: panels · Ctrl-\\: panes';
 let docOverride = null;
 let docTimer = null;
 
@@ -74,7 +75,7 @@ function updateWholine() {
   $('wholine').replaceChildren(
     el('span', { 'data-doc': 'Local time' }, `${date.toLocaleDateString([], { weekday: 'short', day: '2-digit', month: 'short' })} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`),
     el('span', { 'data-doc': 'User and host' }, `${s.user || 'user'}@${s.host || 'localhost'}`),
-    el('span', { 'data-doc': 'Package the agent reads Lisp in' }, 'CL-AGENT:'),
+    el('span', { 'data-doc': 'The package forms at the prompt are read in' }, `${lispState.package}:`),
     stats.provider ? el('span', { class: 'mouse', 'data-doc': 'Provider and model · Click: choose the model (Alt-M)', onclick: () => session.openModelMenu() }, `${stats.provider} · ${stats.model}`) : '',
     stats.provider ? el('span', { 'data-doc': 'Session totals' },
       `${stats.requests} req · ${stats.tool_calls} tools · ${core.fmtCount(stats.total_tokens)} tok · ${core.fmtDuration(stats.elapsed_seconds)}`) : '',
@@ -92,7 +93,7 @@ function updateThemeButton() {
   // It names the theme it switches to.
   const all = core.themes();
   const next = all[(all.indexOf(core.theme()) + 1) % all.length];
-  const icon = { light: '☀', dark: '◐' }[next] || '▭';
+  const icon = { light: '☀', dark: '◐', mono: '▣' }[next] || '▭';
   $('theme-toggle').textContent = `${icon} ${next[0].toUpperCase()}${next.slice(1)}`;
 }
 
@@ -272,7 +273,7 @@ on('connection', connected => {
   updateWholine();
   if (!connected) mousedoc('Lost the connection to cl-agent — retrying…');
 });
-for (const type of ['state', 'status', 'subagents']) on(type, () => { updateTitle(); updateWholine(); });
+for (const type of ['state', 'status', 'subagents', 'lisp-entry']) on(type, () => { updateTitle(); updateWholine(); });
 // The working directory in the title opens it in the Code tab.
 $('title-info').addEventListener('click', () => views.showView('code'));
 $('title-info').dataset.doc = 'Open the working directory in the Code tab';

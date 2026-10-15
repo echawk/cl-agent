@@ -130,6 +130,10 @@ export function renderMessage(message) {
 
 // ---------- turns ----------
 
+/** Functions called with TURNSECTION (turn -> its <section>) on every full
+render, to put more in the transcript: forms.js's Lisp evaluations. */
+export const turnExtras = [];
+
 function turnSection(turn) {
   const root = listener();
   let section = root.querySelector(`:scope > section.turn[data-turn="${turn}"]`);
@@ -244,7 +248,8 @@ export function clearListener() {
 function renderHerald() {
   const root = listener();
   root.querySelector(':scope > .herald')?.remove();
-  const shown = state.messages.some(m => visible(m) && m.turn > clearedThrough);
+  const shown = state.messages.some(m => visible(m) && m.turn > clearedThrough)
+    || root.querySelector(':scope > section.turn:not(.cleared) .listener-form');
   if (shown || state.pending || state.thinking || state.planning) return;
   const session = state.session || {};
   root.prepend(el('div', { class: 'herald' },
@@ -255,8 +260,9 @@ function renderHerald() {
       '<span class="accent-yellow">  ╹ ╹</span>',
     ].join('\n') }),
     el('div', {}, `${session.lisp || 'Common Lisp'} · ${session.user || ''}@${session.host || 'localhost'} · ${session.cwd || ''}`),
-    el('p', {}, 'Type a request and press ', el('kbd', {}, 'Enter'), '. ',
-      el('kbd', {}, 'Tab'), ' completes /commands, @paths and (lisp-symbols; ',
+    el('p', {}, 'Type a request and press ', el('kbd', {}, 'Enter'), '. A Lisp form — ', el('code', {}, '(+ 1 2)'),
+      ' — is evaluated here in the image instead (click its value to inspect it); ', el('code', {}, '/edit @file'),
+      ' opens a file in Lem. ', el('kbd', {}, 'Tab'), ' completes /commands, @paths and (lisp-symbols; ',
       el('kbd', {}, '↑'), ' recalls history; ', el('kbd', {}, 'Esc'), ' aborts a running turn.'),
     el('p', {}, 'Ask the agent to change this page itself ("make the labels green", "add a panel that shows git status") — see the ',
       el('a', { href: '#', onclick: e => { e.preventDefault(); window.CLAgent?.showPanel('ui'); } }, 'UI panel'), '.')));
@@ -271,6 +277,9 @@ export function renderAll() {
   }
   const turns = new Set(state.activity.filter(a => a.kind === 'tool-call').map(a => a.turn));
   for (const turn of turns) renderToolsLine(turn);
+  for (const extra of turnExtras) {
+    try { extra(turnSection); } catch (err) { console.error('[cl-agent] listener extra failed', err); }
+  }
   renderLive();
   renderHerald();
   typesetMath(root);

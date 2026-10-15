@@ -1,5 +1,11 @@
-// composer.js -- the input line: sending, the (C n) / Command: prompt,
-// queued messages, abort, history, and tab completion.
+// composer.js -- the input line: sending, the prompt, queued messages,
+// abort, history, and tab completion.
+//
+// It is a Genera-style listener prompt (forms.js): a Lisp form is
+// evaluated in the image, /name runs a command, anything else is a request
+// to the agent.  The prompt label and the send button say which, as you
+// type: CL-AGENT> / Command: / (C n), and Eval / Run / Ask.  An unfinished
+// form takes Enter as a newline; Alt-Enter always asks the agent.
 //
 // Completion asks client completers first (CLAgent.registerCompleter),
 // then the server (GET /api/complete, see completion.lisp).  Tab inserts
@@ -11,6 +17,7 @@ import {
   state, on, el, api, send, interrupt, clientCommands, completers, storage, store,
 } from './core.js';
 import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
+import { classify, evaluate as evaluateForm, interruptForm, lispState } from './forms.js';
 
 const $ = id => document.getElementById(id);
 let input, menu;
@@ -19,19 +26,37 @@ let input, menu;
 
 function busy() { return state.thinking || state.planning; }
 
+const MODES = {
+  command: { label: 'Command:', button: 'Run ⏎', doc: 'Run this command (Enter)', aria: 'Command' },
+  form: { button: 'Eval ⏎', doc: 'Evaluate this form in the agent\'s image (Enter) · Alt-Enter: ask the agent about it instead', aria: 'Lisp form' },
+  ask: { button: 'Ask ⏎', doc: 'Ask the agent (Enter)', aria: 'Request to the agent' },
+};
+
+function inputMode() {
+  const kind = classify(input.value);
+  return kind === 'open-form' ? 'form' : kind === 'empty' ? 'ask' : kind;
+}
+
 function updatePrompt() {
   const prompt = $('prompt');
-  const command = input.value.startsWith('/');
-  prompt.textContent = command ? 'Command:' : `(C${(state.turn || 0) + 1})`;
-  prompt.classList.toggle('command', command);
+  const mode = inputMode();
+  prompt.textContent = mode === 'command' ? MODES.command.label
+    : mode === 'form' ? `${lispState.package}>` : `(C${(state.turn || 0) + 1})`;
+  prompt.classList.toggle('command', mode === 'command');
+  prompt.classList.toggle('form', mode === 'form');
+  input.setAttribute('aria-label', MODES[mode].aria);
+  updateButtons();
 }
 
 function updateButtons() {
+  const mode = inputMode();
   $('abort').hidden = !busy();
-  $('send').textContent = busy() ? 'Queue ⏎' : 'Eval ⏎';
-  $('send').dataset.doc = busy()
+  const queue = mode === 'ask' && busy();
+  $('send').textContent = queue ? 'Queue ⏎' : MODES[mode].button;
+  $('send').classList.toggle('btn-ask', mode === 'ask');
+  $('send').dataset.doc = queue
     ? 'The agent is busy: your message runs at its next safe point (Enter)'
-    : 'Send to the agent (Enter)';
+    : MODES[mode].doc;
 }
 
 function renderQueue() {
@@ -93,11 +118,19 @@ export function insert(text) {
 
 // ---------- sending ----------
 
-async function submit() {
+async function submit({ ask = false } = {}) {
   const text = input.value.trim();
   if (!text) return;
   remember(text);
   hideMenu();
+  if (!ask && classify(text) === 'form') {
+    setInput('');
+    try { await evaluateForm(text); } catch (err) {
+      setInput(text);
+      window.CLAgent?.toast(`Not evaluated: ${err.message}`, 'red');
+    }
+    return;
+  }
   const match = text.match(/^\/(\S+)\s*([\s\S]*)$/);
   const local = match && clientCommands.get(match[1]);
   setInput('');
@@ -205,7 +238,14 @@ function onKeyDown(e) {
     complete();
     return;
   }
+  if (e.key === 'Enter' && e.altKey && !e.isComposing) {
+    e.preventDefault();
+    submit({ ask: true });
+    return;
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    // An unfinished form: Enter continues it on the next line.
+    if (classify(input.value) === 'open-form' && input.selectionStart === input.value.length) return;
     e.preventDefault();
     submit();
     return;
@@ -213,6 +253,7 @@ function onKeyDown(e) {
   if (e.key === 'Escape') {
     e.preventDefault();
     if (busy()) interrupt();
+    else interruptForm();
     return;
   }
   if (e.key === 'ArrowUp' && caretOnFirstLine() && !e.shiftKey) {
@@ -244,7 +285,7 @@ export function install() {
     const saved = sessionStorage.getItem('cl-agent.draft');
     if (saved) setInput(saved);
   } catch (err) { /* ignore */ }
-  for (const type of ['status', 'state', 'message']) {
+  for (const type of ['status', 'state', 'message', 'lisp-entry']) {
     on(type, () => { updatePrompt(); updateButtons(); renderQueue(); });
   }
   updatePrompt();

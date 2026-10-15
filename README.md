@@ -708,7 +708,26 @@ an HTTP server.
 `--ui web` opens a flat, Lisp-machine-inspired workspace (think Symbolics
 Genera and Interlisp-D, in an 80s workstation palette: putty and paper, the
 classic six-band rainbow as racing stripes, and a neon-CRT dark mode). It is light by
-default; switch to dark with the ◐ button, `Alt-T`, or `/theme dark`.
+default. The theme button and `Alt-T` cycle through light, dark and **mono**,
+a 1-bit Lisp-machine screen where state is shown by inversion and hatching
+instead of colour. `/theme NAME` picks one directly.
+
+- **One prompt for everything**, as at a Genera listener. The input line reads
+  what you type and the prompt says what `Enter` will do before you press it:
+  - a **Lisp form** (`(+ 1 2)`, `'sym`, `#'f`, or `,anything`) is evaluated in
+    the agent's own image, and its output, values and debugger appear right
+    in the listener as `CL-AGENT>` entries. Click a value to inspect it, or
+    Alt-click to use it in the next form.
+  - **`/name`** runs a command. `/edit @path[:line]` opens a file in the
+    Code tab's Lem.
+  - **anything else** goes to the agent as `(C n)`. `Alt-Enter` asks the
+    agent even when the text looks like Lisp.
+
+  The rule is "only Lisp forms at the top level": `(optional) fix the tests`
+  goes to the agent, and an unfinished form takes `Enter` as a newline.
+  Evaluations are ordinary entries in the Lisp tab's REPL, so the agent sees
+  them too (`lisp-scratch`). Every button that asks the agent carries its
+  mark, a pixel Clippy.
 
 - **Listener**: inputs are numbered `(C n)` and replies `(D n)`, Macsyma-style.
   Replies render as Markdown, with copyable code blocks and MathJax. Each
@@ -719,9 +738,11 @@ default; switch to dark with the ◐ button, `Alt-T`, or `/theme dark`.
   tool's parameters, `/mode`, `/session restore`, `/settings set`, …), `@paths`,
   and `(lisp-symbols` with their documentation. `↑`/`↓` recall history; `Esc`
   aborts a running turn; messages typed while the agent works are queued.
-- **Agents panel**: a live constellation of subagents around the main agent,
-  plus a tree-and-timeline (Gantt) view with queued and running segments.
-  Click any node for its details, or to cancel it.
+- **Agents panel**: a process table first, as in Genera's Peek: one row per
+  agent, the main one included, with a state word (`RUN`, `WAIT`, `DONE`,
+  `FAIL`), elapsed time and what it is doing. Below it are a live
+  constellation of subagents and a tree-and-timeline (Gantt) view. Click any
+  row or node for details, or to cancel the subagent.
 - **Activity, Tools, UI panels**: every tool call with its output, the
   tool catalog (click a tool to `/call` it), and theme, text-size and
   customization controls.

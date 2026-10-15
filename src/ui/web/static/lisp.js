@@ -61,13 +61,20 @@ function reference(id) {
   return lisp.package === 'CL-AGENT' ? `(lisp-repl-object ${id})` : `(cl-agent::lisp-repl-object ${id})`;
 }
 
-function presentation(text, id, type = '') {
+// Where an entry is shown: the REPL here, or the main listener (forms.js).
+const replContext = {
+  insert: text => { ui?.repl.insert(text); ui?.repl.focus(); },
+  focus: () => ui?.repl.focus(),
+  where: 'the REPL input',
+};
+
+function presentation(text, id, type = '', context = replContext) {
   if (!id) return el('span', {}, text);
   return el('span', {
     class: 'presentation mouse',
-    'data-doc': `${type ? `${type} · ` : ''}Click: inspect · Alt-click: put ${reference(id)} in the REPL input`,
+    'data-doc': `${type ? `${type} · ` : ''}Click: inspect · Alt-click: put ${reference(id)} in ${context.where}`,
     onclick: e => {
-      if (e.altKey) { ui?.repl.insert(reference(id)); ui?.repl.focus(); } else inspect(id);
+      if (e.altKey) context.insert(reference(id)); else inspect(id);
     },
   }, text);
 }
@@ -88,13 +95,14 @@ function scrollToEnd() { ui.transcript.scrollTop = ui.transcript.scrollHeight; }
 
 // ---------- the transcript ----------
 
-function entryNode(entry) {
+function entryNode(entry, context = replContext) {
   const node = el('div', { class: `lisp-entry state-${entry.state} source-${entry.source}`, 'data-id': entry.id });
   const input = entry.mode === 'compile-file' ? ';; compile and load the scratch buffer' : entry.input.replace(/\s+$/, '');
   node.append(el('div', { class: 'lisp-in' },
     el('span', { class: 'lisp-prompt' }, `${entry.package}>`),
     code(input),
-    entry.source === 'scratch' ? el('span', { class: 'chip fill-paper lisp-from', 'data-doc': 'Sent from the scratch buffer' }, entry.mode === 'compile' ? 'compiled' : 'scratch') : ''));
+    entry.source === 'scratch' ? el('span', { class: 'chip fill-paper lisp-from', 'data-doc': 'Sent from the scratch buffer' }, entry.mode === 'compile' ? 'compiled' : 'scratch')
+      : entry.source === 'listener' && context === replContext ? el('span', { class: 'chip fill-paper lisp-from', 'data-doc': 'Typed at the main listener' }, 'listener') : ''));
   node.append(el('pre', { class: 'lisp-output', hidden: !entry.output }, entry.output));
   for (const note of entry.notes) {
     node.append(el('div', { class: `lisp-note ${note.severity}` }, `; ${note.severity}: ${note.message}`));
@@ -104,7 +112,7 @@ function entryNode(entry) {
     node.append(el('div', { class: 'lisp-running' }, el('span', { class: 'run-bar' }), ' evaluating… ',
       el('button', { class: 'btn btn-small btn-danger', type: 'button', onclick: interrupt, 'data-doc': 'Break into the evaluation (C-c C-c)' }, 'Interrupt')));
   } else if (entry.state === 'debugger') {
-    node.append(debuggerNode(entry));
+    node.append(debuggerNode(entry, context));
   } else if (entry.state === 'aborted') {
     node.append(el('div', { class: 'lisp-aborted' }, `; Evaluation aborted${d ? ` on #<${d.type}>` : ''}`));
     if (d) node.append(conditionDetails(d));
@@ -112,7 +120,7 @@ function entryNode(entry) {
     if (d) node.append(el('details', { class: 'lisp-recovered' }, el('summary', {}, `; recovered from ${d.type}: ${d.condition.split('\n')[0]}`), conditionDetails(d, true)));
     if (!entry.values.length) node.append(el('div', { class: 'lisp-none' }, '; No values'));
     for (const value of entry.values) {
-      node.append(el('div', { class: 'lisp-value' }, presentation(value.text, value.id, value.type)));
+      node.append(el('div', { class: 'lisp-value' }, presentation(value.text, value.id, value.type, context)));
     }
     if (entry.elapsed >= 0.2) node.append(el('div', { class: 'lisp-elapsed' }, `; ${entry.elapsed < 60 ? `${entry.elapsed.toFixed(2)} s` : fmtDuration(entry.elapsed)}`));
   }
@@ -126,7 +134,7 @@ function conditionDetails(d, bare = false) {
     el('ol', { class: 'dbg-frames', start: 0 }, d.backtrace.map(frame => el('li', {}, code(frame)))));
 }
 
-function debuggerNode(entry) {
+function debuggerNode(entry, context = replContext) {
   const d = entry.debugger;
   const value = el('input', {
     class: 'field dbg-input', type: 'text', spellcheck: 'false',
@@ -145,10 +153,10 @@ function debuggerNode(entry) {
       else if (e.key === 'c') {
         const restart = d.restarts.find(r => r.name === 'CONTINUE');
         if (restart) { e.preventDefault(); choose(restart.index); }
-      } else if (e.key === 'Escape') ui.repl.focus();
+      } else if (e.key === 'Escape') context.focus();
     },
   },
-  el('div', { class: 'dbg-title' }, el('span', {}, 'Debugger'), presentation(d.type, d.id, 'the condition')),
+  el('div', { class: 'dbg-title' }, el('span', {}, 'Debugger'), presentation(d.type, d.id, 'the condition', context)),
   el('pre', { class: 'dbg-condition-text' }, d.condition),
   d.note ? el('div', { class: 'dbg-note' }, d.note) : '',
   el('div', { class: 'dbg-heading' }, 'Restarts'),
@@ -159,14 +167,18 @@ function debuggerNode(entry) {
   el('div', { class: 'dbg-row' }, value,
     el('button', { class: 'btn btn-small', type: 'button', onclick: () => choose('abort'), 'data-doc': 'Abandon the evaluation (q)' }, 'Abort'),
     el('button', {
-      class: 'btn btn-small', type: 'button',
+      class: 'btn btn-small btn-ask', type: 'button', 'aria-label': 'Ask the agent about this error',
       'data-doc': 'Ask the agent about this error (it reads the REPL transcript)',
       onclick: () => insertInComposer(`Explain the error in my Lisp REPL (entry [${entry.id}], ${d.type}) and how to fix it.`),
-    }, 'Ask the agent')),
+    }, 'Ask')),
   el('details', { class: 'dbg-backtrace' }, el('summary', {}, `Backtrace · ${d.backtrace.length} frames`),
     el('ol', { class: 'dbg-frames', start: 0 }, d.backtrace.map(frame => el('li', {}, code(frame))))));
   return box;
 }
+
+/** A Lisp REPL entry's node, for showing it elsewhere: CONTEXT says where
+Alt-click puts a reference ({insert, focus, where}). */
+export function lispEntryNode(entry, context) { return entryNode(entry, context); }
 
 function renderEntry(entry) {
   if (!ui) return;
@@ -184,7 +196,7 @@ function renderTranscript() {
     el('div', { class: 'lisp-herald' },
       el('div', {}, el('b', {}, 'Lisp listener'), ' · the agent\'s own image · SBCL ', el('span', { class: 'faint' }, '(Click a value to inspect it.)')),
       el('div', { class: 'faint' }, 'RET evaluates · Tab completes · M-p/M-n history · C-c C-c interrupts · C-c C-z scratch · M-. definition · C-c C-d d describe')),
-    ...[...lisp.entries.values()].map(entryNode));
+    ...[...lisp.entries.values()].map(entry => entryNode(entry)));
   scrollToEnd();
 }
 
@@ -527,13 +539,13 @@ function mount(container) {
       el('div', { class: 'subpane-title' }, el('span', { class: 'subpane-name' }, 'Scratch'), scratchInfo, saveState,
         el('span', { class: 'spacer' }), lemKeys, modeSwitch,
         simpleButtons,
-        button('Ask the agent', 'Ask the agent to review this buffer (or the selected lines)', () => {
+        button('Ask', 'Ask the agent to review this buffer (or the selected lines)', () => {
           if (lisp.lemMode) { insertInComposer('Review the code in my Lisp scratch buffer.'); return; }
           const { start, end, text } = ui.scratch.selection;
           insertInComposer(text.trim()
             ? `Review lines ${ui.scratch.lineOf(start)}–${ui.scratch.lineOf(end)} of my Lisp scratch buffer.`
             : 'Review the code in my Lisp scratch buffer.');
-        }, 'btn-primary')),
+        }, 'btn-ask')),
       conflict, scratchHost, lemHost),
     el('section', { class: 'subpane repl-pane', 'aria-label': 'REPL' },
       el('div', { class: 'subpane-title' }, el('span', { class: 'subpane-name' }, 'REPL'), replStatus,
@@ -667,13 +679,13 @@ async function inspect(id) {
 
 registerPanel({
   id: 'inspector', title: 'Inspect', color: 'cyan', order: 15,
-  doc: 'The Lisp inspector: click a value in the Lisp tab to look inside it',
+  doc: 'The Lisp inspector: click any printed value to look inside it',
   events: [],
   render(target) {
     const top = inspected[inspected.length - 1];
     if (!top) {
       target.replaceChildren(el('div', { class: 'panel' }, el('div', { class: 'empty' },
-        'Nothing inspected yet. In the Lisp tab, click any printed value (or press C-c I) to look inside it here.')));
+        'Nothing inspected yet. Click any printed value — in the listener or the Lisp tab — to look inside it here (C-c I in the Lisp tab).')));
       return;
     }
     const part = p => el('tr', {},

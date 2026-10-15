@@ -152,6 +152,8 @@
            (:static-file "copilot.js")
            (:static-file "live.js")
            (:static-file "lem-view.js")
+           (:static-file "lisp-read.js")
+           (:static-file "forms.js")
            (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"

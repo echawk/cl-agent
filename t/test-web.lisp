@@ -491,3 +491,32 @@
     (hunchentoot:acceptor-log-message acceptor :error "Error while processing connection: ~A"
                                       (make-condition 'simple-error :format-control "real trouble"))
     (check (search "real trouble" (get-output-stream-string log)) "real errors are still logged")))
+
+(deftest the-prompt-tells-a-form-from-a-request ()
+  ;; lisp-read.js decides, as you type, whether the main prompt evaluates
+  ;; or asks the agent.  It needs no DOM, so node runs it when installed.
+  (let ((node (find-executable-on-path "node")))
+    (if (null node)
+        (check t "node is not installed: skipped")
+        (let ((script (merge-pathnames "classify-test.mjs" *config-directory*)))
+          (write-string-atomically
+           script
+           (concatenate
+            'string
+            (read-text-file (merge-pathnames "lisp-read.js" *web-static-directory*))
+            "
+const cases = {
+  '(+ 1 2)': 'form', \"  'foo\": 'form', \"#'car\": 'form', '(defun f (x) x) (f 2)': 'form',
+  '(defun f (x)': 'open-form', '(optional) fix the tests': 'ask', 'fix the tests': 'ask',
+  '/help': 'command', ',*features*': 'form', '#(1 2 3)': 'form', '#+sbcl (print 1)': 'form',
+  '(format t \"a ) b\")': 'form', '(format t \"unclosed': 'open-form', '#5 is broken': 'ask',
+  '\"quoted\" text here': 'ask', '(foo) ; comment': 'form', '`(a ,b ,@c)': 'form',
+  \"'what' does this do\": 'ask', '#p\"/tmp/x\"': 'form', '(a |weird ) sym|)': 'form', ')': 'ask', '': 'empty',
+};
+const bad = Object.entries(cases).filter(([t, want]) => classify(t) !== want)
+  .map(([t, want]) => `${JSON.stringify(t)}: ${classify(t)}, not ${want}`);
+console.log(bad.length ? bad.join('\\n') : 'ok');
+"))
+          (let ((output (uiop:run-program (list node (uiop:native-namestring script))
+                                          :output :string :error-output :string :ignore-error-status t)))
+            (check-equal (string-trim '(#\Newline) output) "ok"))))))
