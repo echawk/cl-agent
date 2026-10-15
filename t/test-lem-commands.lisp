@@ -243,3 +243,45 @@
            (check (scratch-wait-until (lambda () (search ":agent" (lem-buffer-text-of path)))) "the agent's edit shows in Lem"))
       (setf *lisp-repl* saved)
       (ignore-errors (editor-close-file path :force t)))))
+
+(deftest lem-asks-the-listener-about-the-region-or-the-form ()
+  ;; C-c C-a in Lem puts what you are looking at at the main prompt.
+  (with-lem-test-file (path (format nil "(defun one ()~%  1)~%~%(defun two () 2)~%"))
+    (let ((lisp-path (concatenate 'string path ".lisp")))
+      (rename-file path lisp-path)
+      (unwind-protect
+           (let ((sent '()) (lock (bt:make-lock)))
+             (lem-visit lisp-path)
+             ;; The form at point, in a Lisp buffer.
+             (let ((text (lem-call (lambda ()
+                                     (let ((buffer (lem:current-buffer)))
+                                       (lem:move-point (lem:buffer-point buffer) (lem:buffer-start-point buffer))
+                                       (lem:line-offset (lem:buffer-point buffer) 1)
+                                       (lem-ask-prompt-text buffer))))))
+               (check (search "About lines 1–2 of" text) "the top-level form at point, with its lines")
+               (check (search "(defun one ()" text))
+               (check (not (search "defun two" text)) "only that form"))
+             ;; A region wins.
+             (let ((text (lem-call (lambda ()
+                                     (let ((buffer (lem:current-buffer)))
+                                       (lem:move-point (lem:buffer-point buffer) (lem:buffer-start-point buffer))
+                                       (lem:line-offset (lem:buffer-point buffer) 3)
+                                       (lem:set-current-mark (lem:copy-point (lem:buffer-point buffer) :temporary))
+                                       (lem:line-end (lem:buffer-point buffer))
+                                       (prog1 (lem-ask-prompt-text buffer)
+                                         (lem:buffer-mark-cancel buffer)))))))
+               (check (search "About line 4 of" text) "the region")
+               (check (search "(defun two () 2)" text)))
+             ;; The command itself asks the pages to insert it.
+             (sb-int:encapsulate 'web-ui-command 'test-capture
+                                 (lambda (function command &optional (args (jobj)))
+                                   (bt:with-lock-held (lock) (push (cons command args) sent))
+                                   (funcall function command args)))
+             (unwind-protect
+                  (progn
+                    (lem-call (lambda () (lem:call-command 'cl-agent-ask nil)))
+                    (check (scratch-wait-until (lambda () (bt:with-lock-held (lock) (assoc "insert" sent :test #'equal))))
+                           "the main prompt gets the text"))
+               (sb-int:unencapsulate 'web-ui-command 'test-capture)))
+        (ignore-errors (editor-close-file lisp-path :force t))
+        (ignore-errors (delete-file lisp-path))))))

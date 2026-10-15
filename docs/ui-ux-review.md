@@ -364,3 +364,18 @@ this. They talk to the same session and tools, not to the page.
 - *Observed, not changed*: the Code tab's toolbar path (`direction: rtl`)
   sometimes renders empty although its text is there. This happened
   before this pass as well.
+
+### Pass 2: the listener and the editor call each other (section 16, step 2 and part of 3)
+
+- `/edit @path[:line]` and `/mx [command]` at the main prompt open a file,
+  or run a Lem command, in the Code tab's Lem. `/mx` switches the tab to
+  Lem first, because Lem's prompts are answered in its own view.
+- `C-c C-a` in Lem (`cl-agent-ask`, `src/lem/listener.lisp`) puts the
+  region, or else the top-level form at point in a Lisp buffer, at every
+  open page's main prompt, with file and lines. It never sends: the prompt
+  is the person's. The command publishes from Lem's helper thread
+  (`lem-in-background`), because pages are other code's to lock.
+- *Rejected*: sending the question straight away. The person has not said
+  what they want to know, and an empty "About lines 3–9:" request wastes a
+  turn.
+

@@ -210,6 +210,7 @@
                    (:file "file-routes")
                    (:file "live")))
      (:file "lem/lisp-scratch")
+     (:file "lem/listener")
      (:file "tools/lisp-scratch-tool")
      (:file "tools/scratch-tool")
      (:file "tools/source-tool")

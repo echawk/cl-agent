@@ -1132,3 +1132,10 @@ registerCommand('edit', arg => {
   showView('code');
   return openDoc('file', path, { line: match[2] ? Number(match[2]) : undefined });
 }, 'Open a file in the Code tab\'s editor: /edit @path[:line]');
+
+// /mx at the main prompt: Lem's M-x, in the Code tab (its prompts ask there).
+registerCommand('mx', async arg => {
+  showView('code');
+  if (!view.lemMode) await setLemMode(true);
+  return lemRun(arg.trim() || 'execute-command');
+}, 'Run a Lem command in the Code tab: /mx [command] (M-x)');
