@@ -140,7 +140,14 @@ const ensureLemFrame = () => (lemView ? lemView.ensure() : Promise.resolve(null)
 const lemRemeasure = () => lemView?.remeasure();
 const focusLem = () => lemView?.focus();
 
-async function lemVisit(path, line) {
+function lemVisit(path, line) {
+  // Remembered: a terminal opened meanwhile waits for it, or the visit
+  // would land in the terminal's window.
+  view.visiting = lemVisit1(path, line);
+  return view.visiting;
+}
+
+async function lemVisit1(path, line) {
   await ensureLemFrame();
   // Lem is shared with the Lisp tab: a visit that lands after you left
   // would cover its scratch buffer.  Showing this tab visits it again.
@@ -234,6 +241,7 @@ async function openTerminal(body) {
   showView('code');
   if (!view.lemMode) await setLemMode(true);
   await ensureLemFrame();
+  await view.visiting;   // showing the tab visits its file: first, not over the terminal
   const json = await api('/api/lem/terminal', { method: 'POST', body });
   focusLem();
   return json;

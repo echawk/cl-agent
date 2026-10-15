@@ -74,6 +74,14 @@ close every terminal afterwards."
       (check-equal (jget (lem-open-terminal :directory directory) "name") (jget opened "name")
                    "the same directory's terminal is shown again, not another"))))
 
+(deftest a-terminal-opens-in-the-working-directory-by-default ()
+  (with-terminal-test (directory)
+    (let ((session (make-session (make-instance 'ollama-provider :model "m")
+                                 :working-directory (uiop:ensure-directory-pathname directory))))
+      (let ((*current-session* session))
+        (check (same-directory-p (jget (lem-open-terminal) "directory") directory) "/term with no directory")
+        (check (same-directory-p (jget (lem-open-terminal :directory "") "directory") directory) "or an empty one")))))
+
 (deftest c-x-c-a-in-a-terminal-asks-about-its-last-lines ()
   (with-terminal-test (directory)
     (lem-open-terminal :directory directory)

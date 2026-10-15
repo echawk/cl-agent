@@ -269,7 +269,10 @@ foreground, redrawn now -- and again whenever a theme loads."
 the one already there unless NEW -- and type RUN into it when given."
   (ensure-terminal)
   (let ((directory (uiop:native-namestring
-                    (uiop:ensure-directory-pathname (expand-user-path (or directory (current-directory)))))))
+                    (uiop:ensure-directory-pathname
+                     (if (and (stringp directory) (plusp (length (string-trim " " directory))))
+                         (expand-user-path directory)
+                         (current-directory))))))
     (unless (uiop:directory-exists-p directory)
       (error "No such directory: ~a" directory))
     (lem-call
