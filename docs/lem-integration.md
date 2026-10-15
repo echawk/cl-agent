@@ -6,7 +6,8 @@ Status: **partly implemented.**
 - Also implemented: **the Code tab's editor is Lem itself** (`src/lem/display.lisp`, §9). The hosted Lem's frontend class is now lem-server's renderer, and Lem's own web client runs in an iframe. Your keys, `M-x`, the minibuffer, windows and dired are all real Lem.
 - Also implemented: **the agent runs Lem's commands** through a minibuffer bridge (`src/lem/commands.lisp`, the `lem-command` tool, §10).
 - Also implemented: **the Lisp tab's scratch buffer can be edited in Lem** (`src/lem/lisp-scratch.lisp`, `static/lem-view.js`). A minor mode, `cl-agent-scratch-mode`, sends `C-c C-c` / `C-x C-e` / `C-c C-k` to the Lisp tab's REPL, and saves the buffer as it is edited. The one Lem is shared by both tabs: each puts its own buffer in Lem's window when it is shown, and a visit that lands after the tab was left is dropped. Lem's tab bar is off by default (`*lem-tab-bar*`), and the user's init file can turn it back on.
-- Not yet: the composer and the Lisp tab's REPL input are still cl-agent's own editors. The terminal UI is out of scope: the web UI is the frontend that matters.
+- Not yet: the composer and the Lisp tab's REPL input are still cl-agent's own editors.
+- **Next:** `docs/lem-frontend-plan.md` stages cl-agent's own renderer for Lem's display protocol, with the goal that Lem is transparent. The stages are: a screen model and recorded streams, then a page renderer, then retiring the iframe, presentations in buffers, one prompt, and a shell and terminal. Each has testing notes. The terminal UI is out of scope: the web UI is the frontend that matters.
 
 This plan covers two things:
 - How cl-agent would load [Lem](https://github.com/lem-project/lem) into its own image as a library. Lem would drive cl-agent's text inputs (the composer, the Lisp REPL input and the scratch buffer) with Lem's editing commands, keymaps and modes, configured by the user's own Lem init file.
