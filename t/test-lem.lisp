@@ -40,6 +40,27 @@
     (check-equal (getf (lem-host-status) :state) :stopped)
     (check (lem-host-available-p) "and starts again")))
 
+(deftest every-request-waiting-for-lem-to-start-is-woken ()
+  ;; A page's first requests arrive together and all wait while Lem starts.
+  ;; LEM-HOST-MARK once woke only one of them; the rest slept until their
+  ;; 30-second timeout, and the page's Lem view stayed blank.
+  (lem-host-stop)
+  (let ((slow (lambda () (sleep 0.3))))       ; widen the window: all four are waiting
+    (lem:add-hook lem:*before-init-hook* slow)
+    (unwind-protect
+         (let* ((start (get-internal-real-time))
+                (threads (loop repeat 4
+                               collect (bt:make-thread
+                                        (lambda ()
+                                          (list (lem-host-available-p)
+                                                (/ (- (get-internal-real-time) start) internal-time-units-per-second)))
+                                        :name "test-lem-start")))
+                (results (mapcar #'bt:join-thread threads)))
+           (check (every #'first results) "all of them see Lem running")
+           (check (every (lambda (r) (< (second r) 5)) results)
+                  (format nil "promptly, not after a timeout: ~{~,2fs~^ ~}" (mapcar #'second results))))
+      (lem:remove-hook lem:*before-init-hook* slow))))
+
 (deftest lem-host-loads-the-users-lem-init-file ()
   (let ((home (uiop:ensure-directory-pathname (uiop:getenv "LEM_HOME"))))
     (lem-host-stop)

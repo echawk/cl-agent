@@ -82,7 +82,12 @@ keeping this process's PATH (Lem's macOS init hook rewrites it)."
 (defun lem-host-mark (state)
   (bordeaux-threads:with-lock-held (*lem-host-lock*)
     (setf *lem-host-state* state)
-    (bordeaux-threads:condition-notify *lem-host-ready*)))
+    ;; Every waiter: a page's first requests arrive together, and each waits
+    ;; in LEM-HOST-START while Lem starts.  Waking only one left the others
+    ;; asleep until their 30-second timeout -- a blank Lem view on a cold
+    ;; start, now and then.
+    #+sbcl (sb-thread:condition-broadcast *lem-host-ready*)
+    #-sbcl (bordeaux-threads:condition-notify *lem-host-ready*)))
 
 (defun lem-host-thread-body ()
   (unwind-protect

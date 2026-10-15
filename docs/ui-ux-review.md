@@ -421,8 +421,8 @@ this. They talk to the same session and tools, not to the page.
     attempt follows 3 s later.
   - Three cold starts in a row all showed Lem by 20 s. Before the fix,
     the same test stayed blank.
-  - Still open: which request stalls, and why. The server's threads show
-    no handler stuck at the time.
+  - **Found and fixed later** (see "Lem's slow cold start" below): the stall
+    was a lost wake-up on the server, not the page.
 
 ### Pass 5: conforming to the brief — the presentation model
 
@@ -482,4 +482,38 @@ system-wide. All features stay; what changed is how they are represented.
   is placed on the part that stands for the object: a file's name, not the
   whole row with its Rename and Delete controls. Rows keep their own
   keyboard navigation.
+
+### Lem's slow cold start: diagnosed and fixed
+
+- **Symptom:** on some cold page loads, the Lem view stayed blank for
+  15–30 s.
+- **Cause:** a lost wake-up in `lem-host-start` (src/lem/host.lisp).
+  - A page's first requests (the Lem theme, the open-files list, the
+    visit) arrive within milliseconds of each other. Each finds Lem not yet
+    running and waits on `*lem-host-ready*` while one of them starts it,
+    which takes about 0.1 s.
+  - `lem-host-mark` signalled with `condition-notify`, which wakes exactly
+    one waiter. The rest slept until `lem-host-start`'s 30-second timeout.
+  - The page's theme request was often among the sleepers, so its Lem
+    view waited.
+  - Whether one, two or three requests landed in that 0.1 s window
+    depended on timing, which made it intermittent.
+- **How it was found:**
+  - Timestamps in lem-view.js showed the theme POST, the first request,
+    taking about 14 s on stalled loads and 0.1 s otherwise.
+  - A scratch server that logged entry and exit of `lem-host-start`,
+    `lem-core::setup`, `lem-host-load-init` and `lem-host-mark` (via
+    `sb-int:encapsulate`) reproduced the stall every time. It showed Lem
+    marked `:running` at +0.1 s, one waiter returning, and two others
+    returning only at +16.9 s, when the page was closed.
+  - An earlier probe that interrupted threads to read their backtraces
+    hid the bug: the interrupt itself woke the sleeping waiters, so every
+    start "took" exactly 2.2 s.
+- **Fix:** `condition-broadcast`, which wakes every waiter.
+- **Regression test:** `every-request-waiting-for-lem-to-start-is-woken`.
+  Four threads wait on a deliberately slowed start. Before the fix the
+  waits were 0.31 s, 30.00 s, 30.00 s and 30.00 s; after it, all are about
+  0.3 s.
+- The page's 5 s per-attempt deadline (pass 4) stays as a safety net.
+  With the fix, a cold page shows Lem within 1.5 s in every run measured.
 
