@@ -165,3 +165,19 @@
     (check-equal (with-agent-code () (depth-in-new-thread)) 1 "a thread the model's code starts is agent code")
     (check-equal (with-agent-code () (as-agent-itself (depth-in-new-thread))) 0
                  "a service thread the agent starts from there is not (Lem's editor, its display server)")))
+
+(deftest the-person-pressing-ctrl-c-can-always-quit ()
+  ;; The command line's own Ctrl-C handler (clingon's WITH-USER-ABORT, a
+  ;; HANDLER-CASE) unwinds through every guard on its way to exiting: that
+  ;; is the person quitting, not the model escaping.
+  (let ((real (make-condition 'sb-sys:interactive-interrupt :context :sigint))
+        (fake (make-condition 'sb-sys:interactive-interrupt)))
+    (unwind-protect
+         (progn
+           (check (not (person-interrupt-p fake)) "one the model made is not the person")
+           (check (not *exit-sanctioned*) "and sanctions nothing")
+           (check-equal (handler-case (with-turn-guard (:where "a test turn") (error real))
+                          (sb-sys:interactive-interrupt () :quit))
+                        :quit "a real Ctrl-C reaches the handler that quits")
+           (check *exit-sanctioned* "and the exit is the person's"))
+      (setf *exit-sanctioned* nil))))

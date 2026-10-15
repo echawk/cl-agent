@@ -299,7 +299,7 @@ non-local exit (guard.lisp)."
                                                        :where (format nil "The ~(~s~) hook ~(~a~)" hook-point name)))
        (block call
          (handler-bind ((serious-condition
-                          (lambda (c) (unless (interactive-interrupt-p c) (return-from call c)))))
+                          (lambda (c) (unless (person-interrupt-p c) (return-from call c)))))
            (setf value (unwind-protect (with-agent-code () (sb-ext:with-timeout *hook-seconds* (funcall thunk)))
                          (reassert-guards)))
            nil)))

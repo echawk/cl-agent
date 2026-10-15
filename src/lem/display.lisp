@@ -272,17 +272,23 @@ already sent at the old size)."
 (defvar *lem-publish-channel* nil)
 (defvar *lem-publish-lock* (bt:make-lock "lem-publish"))
 
-(defun lem-publish-async (type payload)
+(defun lem-in-background (function)
+  "Run FUNCTION on the editor's helper thread, in order with the rest: for
+what the editor thread must not do itself (publish to pages, save a file
+other code locks)."
   (let ((channel (bt:with-lock-held (*lem-publish-lock*)
                    (or *lem-publish-channel*
                        (let ((channel (trivial-channels:make-channel)))
                          (as-agent-itself
                            (bt:make-thread (lambda ()
-                                             (loop (let ((message (trivial-channels:recvmsg channel)))
-                                                     (ignore-errors (editor-publish (car message) (cdr message))))))
+                                             (loop (let ((job (trivial-channels:recvmsg channel)))
+                                                     (ignore-errors (funcall job)))))
                                            :name "lem-publish"))
                          (setf *lem-publish-channel* channel))))))
-    (trivial-channels:sendmsg channel (cons type payload))))
+    (trivial-channels:sendmsg channel function)))
+
+(defun lem-publish-async (type payload)
+  (lem-in-background (lambda () (editor-publish type payload))))
 
 (defun lem-shown-buffer-json (buffer)
   (if (lem:buffer-filename buffer)

@@ -130,6 +130,16 @@ none, and is treated as any other condition."
        (ignore-errors (slot-value condition 'sb-kernel::context))
        t))
 
+(declaim (ftype (function (t) (values boolean &optional)) person-interrupt-p))
+(defun person-interrupt-p (condition)
+  "For a guard's handler: true for a real Ctrl-C, which the guard lets
+through -- and the person is quitting, so the unwinding it starts (the
+command line's own handler, say, catching it to exit) passes every
+WITH-CONTAINED-EXITS on its way out."
+  (when (interactive-interrupt-p condition)
+    (setf *exit-sanctioned* t)
+    t))
+
 ;;; --- non-local exits ---
 
 (define-condition agent-escape (error)
@@ -182,7 +192,7 @@ non-local exit out of THUNK is signalled as an AGENT-ESCAPE from WHERE."
                    (block run
                      (handler-bind ((serious-condition
                                       (lambda (condition)
-                                        (unless (interactive-interrupt-p condition)
+                                        (unless (person-interrupt-p condition)
                                           (setf failure condition)
                                           (return-from run nil)))))
                        (multiple-value-list (with-agent-code () (funcall thunk))))))))
@@ -217,7 +227,7 @@ value is then NIL."
          (block ,block
            (handler-bind ((serious-condition
                             (lambda (,condition)
-                              (unless (interactive-interrupt-p ,condition)
+                              (unless (person-interrupt-p ,condition)
                                 (report-escaped-condition ,condition ,place ,ui)
                                 (return-from ,block nil)))))
              ,@body))))))

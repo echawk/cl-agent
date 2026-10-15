@@ -151,6 +151,7 @@
            (:static-file "code.js")
            (:static-file "copilot.js")
            (:static-file "live.js")
+           (:static-file "lem-view.js")
            (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"
@@ -206,6 +207,7 @@
                    (:file "scratch-routes")
                    (:file "file-routes")
                    (:file "live")))
+     (:file "lem/lisp-scratch")
      (:file "tools/lisp-scratch-tool")
      (:file "tools/scratch-tool")
      (:file "tools/source-tool")

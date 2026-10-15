@@ -155,7 +155,7 @@ turn."
           (block call
             (handler-bind ((serious-condition
                              (lambda (c)
-                               (unless (interactive-interrupt-p c)
+                               (unless (person-interrupt-p c)
                                  (return-from call (tool-failure-text name c))))))
               (let ((result (unwind-protect
                                  (with-agent-code ()

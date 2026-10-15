@@ -591,5 +591,9 @@ they replace in repl/.history/."
                      result (list :saved (1+ version))
                      published (jobj "version" (1+ version) "text" text "by" by
                                      "client" (json-or-null client)))))))
-    (when published (lisp-repl-publish "lisp-scratch" published))
+    (when published
+      (lisp-repl-publish "lisp-scratch" published)
+      ;; The agent's text reaches the scratch buffer open in Lem too.
+      (when (equal by "agent")
+        (run-hook :file-written (uiop:native-namestring (lisp-scratch-pathname)) "agent")))
     (values-list result)))

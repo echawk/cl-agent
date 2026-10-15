@@ -8,7 +8,7 @@
 // Register your own with CLAgent.registerPanel -- see EXTENDING.md.
 
 import {
-  state, on, el, api, panels, registerPanel, copyText, fmtClock, storage, store, setTheme, theme,
+  state, on, el, api, panels, registerPanel, copyText, fmtClock, storage, store, setTheme, theme, themes,
   frameThrottle, boot, emit,
 } from './core.js';
 import { insert } from './composer.js';
@@ -301,7 +301,7 @@ function renderUI(target) {
     el('div', { class: 'panel-section' }, el('h3', {}, 'Appearance'),
       el('div', { style: { display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'center' } },
         el('div', { class: 'segmented' },
-          ['light', 'dark'].map(name => el('button', {
+          themes().map(name => el('button', {
             class: `btn btn-small ${theme() === name ? 'on' : ''}`, type: 'button',
             onclick: () => { setTheme(name); renderUI(target); },
           }, name))),

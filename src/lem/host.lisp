@@ -36,6 +36,12 @@
   "Whether the Lem host loads the user's Lem init file.  The environment
 variable CL_AGENT_LEM_NO_INIT=1 also turns it off.")
 
+(defvar *lem-tab-bar* nil
+  "Whether the hosted Lem shows its tab bar (Lem's web frontends turn it on
+by default).  The Code tab lists open files itself, so it is off; a Lem
+init file that sets LEM/TABBAR:*ENABLE-TABBAR-ON-STARTUP* to T (it loads
+after this is applied) or M-x toggle-tabbar brings it back.")
+
 (defparameter *lem-call-timeout* 10
   "Seconds LEM-CALL waits for the editor thread.")
 
@@ -59,6 +65,8 @@ keeping this process's PATH (Lem's macOS init hook rewrites it)."
     (unwind-protect
          (progn
            (lem:run-hooks lem:*before-init-hook*)
+           ;; Before the person's init file, which may want it after all.
+           (setf lem/tabbar:*enable-tabbar-on-startup* *lem-tab-bar*)
            (when (lem-host-init-file-wanted-p)
              (handler-case
                  (progn

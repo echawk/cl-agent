@@ -32,8 +32,9 @@ import { on, el, api, state, registerView, registerUICommand, storage, store, th
 import { createLispEditor } from './lisp-editor.js';
 import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
 import { insert as insertInComposer } from './composer.js';
-import { showView } from './views.js';
+import { showView, activeView } from './views.js';
 import { copilotBox, copilotOptions } from './copilot.js';
+import { createLemView } from './lem-view.js';
 
 const client = `code-${Math.random().toString(36).slice(2)}`;
 const toast = (text, color) => window.CLAgent?.toast(text, color);
@@ -66,9 +67,6 @@ const view = {
   triggers: [],
   stale: true,
   lemMode: storage('code-lem', true),   // the editor is Lem itself
-  lemFrame: null,
-  lemInstance: null,      // the server instance the frame's display belongs to
-  lemPending: null,
   lemShown: 0,            // "lem-buffer" events seen: a visit's late answer is stale after one
   lemFile: null,          // what Lem's window shows: {path, name, mode, modified} (path null: not a file)
 };
@@ -135,124 +133,17 @@ async function fileAction(path, body) {
 
 // ---------- the Lem view ----------
 
-// Lem looks like the page: its colours are a Lem theme made from the
-// page's theme tokens (lem/display.lisp), sent again whenever the theme
-// changes; its font and size are the page's; its chrome takes a few
-// colours as --cl-* variables.
-const LEM_TOKENS = ['paper', 'paper-2', 'paper-3', 'ink', 'ink-2', 'ink-3', 'rule', 'rule-soft', 'select', 'code-inline',
-  'red', 'orange', 'yellow', 'green', 'cyan', 'blue', 'violet', 'pink', 'on-yellow', 'on-pink', 'title-bg', 'title-fg',
-  'shadow-color', 'syn-comment', 'syn-string', 'syn-number', 'syn-keyword', 'syn-operator', 'syn-def', 'syn-constant', 'syn-special'];
-
-function pageColors() {
-  const probe = el('span', { hidden: true });
-  document.body.append(probe);
-  const colors = {};
-  for (const name of LEM_TOKENS) {
-    probe.style.color = '';
-    probe.style.color = `var(--${name})`;
-    const rgb = getComputedStyle(probe).color.match(/[\d.]+/g);
-    if (rgb && rgb.length >= 3) colors[name] = '#' + rgb.slice(0, 3).map(v => Math.round(+v).toString(16).padStart(2, '0')).join('');
-  }
-  probe.remove();
-  return colors;
-}
-
-function lemChromeVars(colors) {
-  return { paper: colors.paper, rule: colors.rule, 'rule-soft': colors['rule-soft'], shadow: colors['shadow-color'] };
-}
-
-function lemTheme() {
-  const colors = pageColors();
-  view.lemFrame?.contentWindow?.postMessage({ type: 'cl-agent-style', vars: lemChromeVars(colors) }, '*');
-  return api('/api/lem/theme', { method: 'POST', body: { mode: theme(), colors } }).catch(err => message(`Lem theme: ${err.message}`));
-}
-
-async function lemFrameURL() {
-  const style = getComputedStyle(document.documentElement);
-  const font = style.getPropertyValue('--font').trim() || 'monospace';
-  const size = Math.round(parseFloat(style.getPropertyValue('--font-size')) || 14);
-  const { url } = await api('/api/lem/display', { params: { font, size } });
-  const chrome = Object.entries(lemChromeVars(pageColors())).filter(([, v]) => v);
-  return url + '&' + new URLSearchParams(chrome);
-}
-
-async function ensureLemFrame() {
-  const box = $('.code-lem');
-  if (!box) return null;
-  // A restarted server has a new Lem display (another port): a frame made
-  // for the old one would stay blank.
-  if (view.lemFrame && view.lemInstance && state.instance && view.lemInstance !== state.instance) dropLemFrame();
-  if (view.lemFrame) return view.lemFrame;
-  if (!view.lemPending) {
-    view.lemPending = (async () => {
-      try {
-        await lemTheme();
-        const frame = el('iframe', { class: 'code-lem-frame', src: await lemFrameURL(), title: 'Lem', allow: 'clipboard-read; clipboard-write' });
-        view.lemFrame = frame;
-        view.lemInstance = state.instance;
-        const host = box.querySelector('.code-lem-host');
-        // Lem's client loads its code and font before it draws: until it
-        // has logged in ("lem-display"), say so rather than show nothing.
-        host.replaceChildren(frame, el('div', { class: 'code-lem-starting' }, 'Starting Lem…'));
-        host.classList.add('starting');
-        clearTimeout(view.lemStartTimer);
-        view.lemStartTimer = setTimeout(() => host.classList.remove('starting'), 30000);
-        watchLemSize(host);
-      } catch (err) {
-        message(`Lem view unavailable: ${err.message}`);
-        // Lem may still be starting: try again while its view is wanted.
-        clearTimeout(view.lemRetry);
-        view.lemRetry = setTimeout(() => { if (view.lemMode && view.node && !view.lemFrame) ensureLemFrame(); }, 3000);
-      }
-      view.lemPending = null;
-      return view.lemFrame;
-    })();
-  }
-  return view.lemPending;
-}
-
-function dropLemFrame() {
-  view.lemFrame?.remove();
-  view.lemFrame = null;
-  view.lemInstance = null;
-}
-
-// Lem's client measures itself on its window's resize event, which an
-// iframe does not always get when only the page's layout changes (the side
-// panes, the Code tab shown again): tell it, once the size settles.  A
-// hidden frame (0x0) is not measured at all.
-let lemResizeTimer = 0;
-function lemRemeasure() {
-  clearTimeout(lemResizeTimer);
-  lemResizeTimer = setTimeout(() => {
-    const frame = view.lemFrame;
-    if (!frame || !frame.offsetWidth || !frame.offsetHeight) return;
-    frame.contentWindow?.postMessage({ type: 'cl-agent-resize' }, '*');
-  }, 120);
-}
-
-let lemObserver = null;
-function watchLemSize(host) {
-  lemObserver?.disconnect();
-  if (typeof ResizeObserver === 'undefined') return;
-  lemObserver = new ResizeObserver(lemRemeasure);
-  lemObserver.observe(host);
-}
-
-on('state', () => {
-  if (!view.lemFrame) return;
-  if (!view.lemInstance) { view.lemInstance = state.instance; return; }   // made before the first state
-  if (state.instance && view.lemInstance !== state.instance) { dropLemFrame(); if (view.node && view.lemMode) ensureLemFrame(); }
-});
-
-on('theme', () => { if (view.lemFrame) lemTheme(); });
-// A new size means new cells: the client measures its font once.
-on('font-size', async () => { if (view.lemFrame) view.lemFrame.src = await lemFrameURL(); });
-
-function focusLem() { setTimeout(() => { view.lemFrame?.focus(); view.lemFrame?.contentWindow?.focus(); }, 0); }
+// Lem's own view, in an iframe (lem-view.js), made when the tab mounts.
+let lemView = null;
+const ensureLemFrame = () => (lemView ? lemView.ensure() : Promise.resolve(null));
+const lemRemeasure = () => lemView?.remeasure();
+const focusLem = () => lemView?.focus();
 
 async function lemVisit(path, line) {
   await ensureLemFrame();
+  // Lem is shared with the Lisp tab: a visit that lands after you left
+  // would cover its scratch buffer.  Showing this tab visits it again.
+  if (activeView() !== 'code') return;
   try {
     const shown = view.lemShown;
     const json = await api('/api/lem/visit', { method: 'POST', body: { path, line: line || undefined } });
@@ -331,6 +222,8 @@ function focusEditor() { if (view.lemMode) focusLem(); else view.editor?.focus()
 
 async function openDoc(kind, key, { line } = {}) {
   if (view.lemMode) {
+    // Hidden, it is the file this tab opens when shown (Lem is shared).
+    if (activeView() !== 'code') { view.current = { kind, key }; store('code-current', view.current); return; }
     if (kind === 'file') return lemVisit(key, line);
     const scratch = view.buffers.find(b => b.name === key);
     if (scratch) return lemVisit(scratch.path, line);
@@ -1150,6 +1043,7 @@ function mount(node) {
   showPane(view.pane);
   loadScratch();
   loadOpenFiles();
+  lemView = createLemView($('.code-lem-host'), { wanted: () => view.lemMode && !!view.node, message });
   if (view.lemMode) ensureLemFrame();
   if (view.current) openDoc(view.current.kind, view.current.key);
 }
@@ -1160,15 +1054,13 @@ registerView({
   mount,
   show: () => {
     if (view.stale) loadScratch();
-    if (view.lemMode) { ensureLemFrame().then(() => { lemRemeasure(); focusLem(); }); }
+    // Lem is shared with the Lisp tab's scratch buffer: put this tab's file back.
+    if (view.lemMode) {
+      ensureLemFrame().then(() => { lemRemeasure(); focusLem(); });
+      if (view.current) openDoc(view.current.kind, view.current.key);
+    }
     else setTimeout(() => (view.editor?.input || $('.code-files'))?.focus(), 0);
   },
-});
-
-on('lem-display', () => {
-  clearTimeout(view.lemStartTimer);
-  view.node?.querySelector('.code-lem-host')?.classList.remove('starting');
-  lemRemeasure();
 });
 
 // What Lem's window shows -- visited here, with C-x C-f or C-x b in Lem,
@@ -1178,7 +1070,9 @@ on('lem-buffer', ev => {
   if (open && open.modified !== ev.modified) open.modified = ev.modified;
   else if (ev.path && !open) loadOpenFiles();
   view.lemShown += 1;
-  if (view.lemMode && view.node) noteLemShown(ev);
+  // Only while this tab is the one in front: the Lisp tab shows its scratch
+  // buffer in the same Lem.
+  if (view.lemMode && view.node && activeView() === 'code') noteLemShown(ev);
 });
 
 // ---------- what other pages and the agent change ----------

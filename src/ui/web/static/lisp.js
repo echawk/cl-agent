@@ -10,6 +10,10 @@
 //              reference), errors open the debugger with real restarts
 //   echo area  the argument list of the call at the cursor, and messages
 //   Inspect    a side panel for drilling into any presented value
+//   Lem        the scratch pane's Lem | Simple switch: the scratch buffer in
+//              Lem itself (lem/lisp-scratch.lisp) -- your Lem keys, its
+//              lisp-mode, paredit if you use it -- with C-c C-c, C-x C-e and
+//              C-c C-k sent to this REPL, and every edit saved as you go
 //
 // Keys, SLY's as far as a browser allows (both editors unless marked):
 //   Tab  indent or complete     RET  (REPL) evaluate a complete input
@@ -29,12 +33,14 @@ import { showPanel } from './panels.js';
 import { insert as insertInComposer } from './composer.js';
 import { showView, activeView } from './views.js';
 import { copilotBox, copilotOptions } from './copilot.js';
+import { createLemView } from './lem-view.js';
 
 const toast = (text, color) => window.CLAgent?.toast(text, color);
 const client = Math.random().toString(36).slice(2);
 
 const lisp = {
   mounted: false,
+  lemMode: storage('lisp-lem', false),   // the scratch buffer is edited in Lem
   package: 'CL-AGENT',
   busy: false,
   entries: new Map(),          // id -> entry, in order
@@ -505,22 +511,30 @@ function mount(container) {
   const button = (label, doc, onclick, cls = '') => el('button', { class: `btn btn-small ${cls}`, type: 'button', 'data-doc': doc, onclick }, label);
 
   const scratchHost = el('div', { class: 'scratch-host' });
+  const lemHost = el('div', { class: 'code-lem-host scratch-lem-host', hidden: true });
+  const simpleButtons = el('span', { class: 'scratch-simple-buttons' });
+  const lemKeys = el('span', { class: 'subpane-info scratch-lem-keys', hidden: true,
+                               'data-doc': 'In Lem: C-c C-c compiles the form at point, C-x C-e evaluates the form before it, C-c C-k loads the buffer -- here' },
+    'C-c C-c compile · C-x C-e eval · C-c C-k load');
+  const modeSwitch = el('span', { class: 'code-editor-switch', role: 'group', 'aria-label': 'Scratch editor' },
+    el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'lem', 'data-doc': 'Edit the scratch buffer in Lem itself: your keys, its lisp-mode, evaluation here',
+                   onclick: () => setLemMode(true) }, 'Lem'),
+    el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'simple', 'data-doc': 'Edit it in the lightweight editor',
+                   onclick: () => setLemMode(false) }, 'Simple'));
   const replHost = el('div', { class: 'repl-input-host' });
   container.append(el('div', { class: 'lisp-split' },
     el('section', { class: 'subpane scratch-pane', 'aria-label': 'Scratch buffer' },
       el('div', { class: 'subpane-title' }, el('span', { class: 'subpane-name' }, 'Scratch'), scratchInfo, saveState,
-        el('span', { class: 'spacer' }),
-        button('Compile form', 'Compile the toplevel form at the cursor (C-c C-c)', () => actions.compileForm(ui.scratch)),
-        button('Eval last', 'Evaluate the form before the cursor (C-x C-e)', () => actions.evalLast(ui.scratch)),
-        button('Load buffer', 'Compile and load the whole buffer (C-c C-k)', () => actions.compileBuffer()),
-        copilotBox(() => ui.scratch.focus()),
+        el('span', { class: 'spacer' }), lemKeys, modeSwitch,
+        simpleButtons,
         button('Ask the agent', 'Ask the agent to review this buffer (or the selected lines)', () => {
+          if (lisp.lemMode) { insertInComposer('Review the code in my Lisp scratch buffer.'); return; }
           const { start, end, text } = ui.scratch.selection;
           insertInComposer(text.trim()
             ? `Review lines ${ui.scratch.lineOf(start)}–${ui.scratch.lineOf(end)} of my Lisp scratch buffer.`
             : 'Review the code in my Lisp scratch buffer.');
         }, 'btn-primary')),
-      conflict, scratchHost),
+      conflict, scratchHost, lemHost),
     el('section', { class: 'subpane repl-pane', 'aria-label': 'REPL' },
       el('div', { class: 'subpane-title' }, el('span', { class: 'subpane-name' }, 'REPL'), replStatus,
         el('span', { class: 'spacer' }), interruptButton,
@@ -530,7 +544,15 @@ function mount(container) {
       el('div', { class: 'repl-input' }, prompt, replHost))),
   echo);
 
-  ui = { container, transcript, prompt, echo, conflict, replStatus, saveState, scratchInfo, interruptButton, dirty: false, saved: lisp.scratch.text };
+  simpleButtons.append(
+    button('Compile form', 'Compile the toplevel form at the cursor (C-c C-c)', () => actions.compileForm(ui.scratch)),
+    button('Eval last', 'Evaluate the form before the cursor (C-x C-e)', () => actions.evalLast(ui.scratch)),
+    button('Load buffer', 'Compile and load the whole buffer (C-c C-k)', () => actions.compileBuffer()),
+    copilotBox(() => ui.scratch.focus()));
+
+  ui = { container, transcript, prompt, echo, conflict, replStatus, saveState, scratchInfo, interruptButton, dirty: false, saved: lisp.scratch.text,
+         scratchHost, lemHost, simpleButtons, lemKeys, modeSwitch };
+  ui.lem = createLemView(lemHost, { wanted: () => lisp.lemMode && activeView() === 'lisp', message: text => message(text, 4000) });
 
   ui.scratch = createLispEditor(scratchHost, {
     className: 'scratch-editor',
@@ -583,6 +605,7 @@ function mount(container) {
   renderTranscript();
   updateChrome();
   renderAutodoc();
+  renderLemMode();
   loadState().catch(err => message(`Could not load the Lisp REPL: ${err.message}`));
 }
 
@@ -674,6 +697,42 @@ registerPanel({
 
 // ---------- registration ----------
 
+// ---------- the scratch buffer in Lem ----------
+
+function renderLemMode() {
+  if (!ui) return;
+  ui.scratchHost.hidden = lisp.lemMode;
+  ui.lemHost.hidden = !lisp.lemMode;
+  ui.simpleButtons.hidden = lisp.lemMode;
+  ui.lemKeys.hidden = !lisp.lemMode;
+  for (const b of ui.modeSwitch.querySelectorAll('button')) {
+    const active = (b.dataset.mode === 'lem') === lisp.lemMode;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-pressed', String(active));
+  }
+}
+
+/** Lem is shared with the Code tab: put the scratch buffer in its window. */
+async function showScratchInLem() {
+  await ui.lem.ensure();
+  if (!lisp.lemMode || activeView() !== 'lisp') return;   // left meanwhile: Lem is the Code tab's
+  try { await api('/api/lem/lisp-scratch', { method: 'POST' }); } catch (err) { message(err.message, 4000); }
+  ui.lem.remeasure();
+  ui.lem.focus();
+}
+
+async function setLemMode(on) {
+  if (!ui || on === lisp.lemMode) return;
+  // What one editor has, the other reads: the simple editor's text is
+  // saved first; Lem saves as it goes ("lisp-scratch" brings it back).
+  if (on && ui.dirty) await saveScratch(true);
+  lisp.lemMode = on;
+  store('lisp-lem', on);
+  renderLemMode();
+  if (on) showScratchInLem();
+  else setTimeout(() => ui.scratch.focus(), 0);
+}
+
 registerView({
   id: 'lisp', title: 'Lisp', color: 'violet', order: 10,
   doc: 'A Common Lisp REPL on the agent\'s own image, and a scratch buffer shared with the agent (Alt-L)',
@@ -684,7 +743,8 @@ registerView({
   mount,
   show: () => {
     lisp.agentEdited = false;
-    setTimeout(() => ui?.repl.focus(), 0);
+    if (lisp.lemMode) showScratchInLem();
+    else setTimeout(() => ui?.repl.focus(), 0);
   },
 });
 

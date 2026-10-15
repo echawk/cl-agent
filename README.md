@@ -799,6 +799,12 @@ you would expect from SLY or SLIME:
   up live, a clash with unsaved typing asks which version to keep, and the
   text it replaced is kept in `repl/.history/`. **Ask the agent** buttons on the
   buffer and in the debugger pre-fill the question.
+- **In Lem**: the **Lem | Simple** switch on the scratch buffer's title
+  edits it in Lem itself, your init file and keys included, with
+  `C-c C-c`, `C-x C-e` and `C-c C-k` sending to this tab's REPL. Edits
+  save as you type, and the agent's edits show up in Lem. There is one Lem,
+  shared with the Code tab: each tab puts its own buffer back in Lem's
+  window when you switch to it.
 
 ### The Code tab
 
@@ -814,7 +820,9 @@ the Code toolbar changes to a lightweight editor that edits the same Lem
 buffers (described below), and back. The file you are on goes with you,
 and so does one you chose in Lem itself (`C-x C-f`, `C-x b`). The page
 follows what Lem shows: the header names the file and marks unsaved
-changes, and so does the Open list.
+changes, and so does the Open list. Lem's tab bar is off, since the Open
+list does its job; `(setf lem/tabbar:*enable-tabbar-on-startup* t)` in your
+Lem init file turns it back on.
 
 The agent runs Lem's editing commands too, with the `lem-command` tool:
 - **Any command, as `M-x` would run it:** `query-replace`, `indent-region`,
@@ -974,7 +982,9 @@ buffer, or the REPL transcript with its errors and backtraces) and
 Open pages restyle (CSS) or reload (anything else) as soon as a file changes,
 including edits to the repository's own `static/` files. When an edit breaks
 the page, `http://127.0.0.1:PORT/safe` serves the built-in files only and
-offers **Reset every override**. From the input line, `/ui` lists
+offers **Reset every override**. A page whose overrides keep it from
+starting at all, such as an old `core.js` copy missing a newer export, goes
+to `/safe` by itself and says why. From the input line, `/ui` lists
 customizations, and `/ui reset PATH|all` and `/ui revert PATH` undo them.
 
 For behavior that needs Lisp, extension files (`write-extension`) can use

@@ -229,9 +229,27 @@ export function registerCompleter(fn) { completers.push(fn); }
 
 export function theme() { return document.documentElement.dataset.theme || 'light'; }
 
+/** The themes this page has: light and dark, and any a stylesheet adds --
+a patch styling html[data-theme="NAME"] (patches/NAME-theme.css, say) makes
+NAME one, with no other file to change. */
+export function themes() {
+  const names = new Set(['light', 'dark']);
+  const scan = rules => {
+    for (const rule of rules || []) {
+      for (const [, name] of (rule.selectorText || '').matchAll(/data-theme="([\w-]+)"/g)) names.add(name);
+      if (rule.cssRules) scan(rule.cssRules);
+    }
+  };
+  for (const sheet of document.styleSheets) {
+    try { scan(sheet.cssRules); } catch (err) { /* another origin's: no rules to read */ }
+  }
+  return [...names];
+}
+
 export function setTheme(name) {
-  const next = name === 'toggle' ? (theme() === 'dark' ? 'light' : 'dark') : name;
-  if (next !== 'light' && next !== 'dark') return;
+  const all = themes();
+  const next = name === 'toggle' ? all[(all.indexOf(theme()) + 1) % all.length] : name;
+  if (!all.includes(next)) return;
   document.documentElement.dataset.theme = next;
   try { localStorage.setItem('cl-agent.theme', next); } catch (err) { /* private mode */ }
   emit('theme', next);

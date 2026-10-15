@@ -89,7 +89,11 @@ function updateWholine() {
 // ---------- theme, panes and splitter ----------
 
 function updateThemeButton() {
-  $('theme-toggle').textContent = core.theme() === 'dark' ? '☀ Light' : '◐ Dark';
+  // It names the theme it switches to.
+  const all = core.themes();
+  const next = all[(all.indexOf(core.theme()) + 1) % all.length];
+  const icon = { light: '☀', dark: '◐' }[next] || '▭';
+  $('theme-toggle').textContent = `${icon} ${next[0].toUpperCase()}${next.slice(1)}`;
 }
 
 function togglePanes(force) {
@@ -246,6 +250,12 @@ $('theme-toggle').addEventListener('click', () => core.setTheme('toggle'));
 $('pane-toggle').addEventListener('click', () => togglePanes());
 $('custom-flag').addEventListener('click', () => panels.showPanel('ui'));
 $('safe-banner').hidden = !boot.safe;
+// Sent here because the customised client did not start (index.html).
+const fallback = boot.safe && new URLSearchParams(location.search).get('fallback');
+if (fallback) {
+  $('safe-banner').querySelector('span').textContent =
+    `Your customised UI did not start (${fallback}), so this is the built-in one. Reset all overrides with the button here, or ask the agent to bring them up to date.`;
+}
 $('reset-all').addEventListener('click', async () => {
   try {
     const result = await core.api('/api/ui/reset', { method: 'POST', body: { all: true } });

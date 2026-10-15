@@ -199,3 +199,47 @@
                (check (seen (lambda (e) (and (equal (gethash "path" e) (namestring (truename two))) (gethash "modified" e))))
                       "and its becoming modified")))
         (sb-int:unencapsulate 'editor-publish 'test-capture)))))
+
+;;; --- the Lisp tab's scratch buffer in Lem (lem/lisp-scratch.lisp) ---
+
+(defun scratch-wait-until (predicate &key (tries 300))
+  (loop repeat tries
+        for value = (funcall predicate)
+        when value return value
+        do (sleep 0.01)))
+
+(deftest the-lisp-tabs-scratch-buffer-runs-in-lem ()
+  (let ((saved *lisp-repl*)
+        (path (uiop:native-namestring (lisp-scratch-pathname))))
+    (setf *lisp-repl* (make-lisp-repl))   ; Lem's commands run on its thread: not a binding
+    (unwind-protect
+         (progn
+           (lisp-scratch-save (format nil "(+ 1 2)~%") :by "user")
+           (let ((json (lem-visit-lisp-scratch)))
+             (check-equal (gethash "path" json) (namestring (truename path)) "Lem shows the scratch file"))
+           (check (lem-call (lambda () (lem:mode-active-p (lem:current-buffer) 'cl-agent-scratch-mode)))
+                  "with the Lisp tab's keys")
+           (check-equal (lem-call (lambda () (lem-core::find-keybind (lem-core::parse-keyspec "C-c C-c"))))
+                        'cl-agent-scratch-compile-form "which win over lisp-mode's")
+           ;; C-x C-e after the form: the Lisp tab's REPL evaluates it.
+           (lem-call (lambda ()
+                       (lem:move-point (lem:current-point) (lem:buffer-start-point (lem:current-buffer)))
+                       (lem:line-end (lem:current-point))
+                       (lem:call-command 'cl-agent-scratch-eval-last nil)))
+           (let ((entry (scratch-wait-until (lambda () (find "scratch" (lisp-repl-entries *lisp-repl*)
+                                                   :key #'lisp-entry-source :test #'equal)))))
+             (check entry "C-x C-e starts an entry")
+             (when entry
+               (lisp-repl-wait entry)
+               (check-equal (entry-value-texts entry) '("3"))))
+           ;; Typing in Lem saves the scratch buffer as it goes.
+           (lem-call (lambda ()
+                       (lem:insert-string (lem:buffer-end-point (lem:current-buffer)) "(* 6 7)")
+                       (lem:run-hooks lem:*post-command-hook*)))
+           (check (scratch-wait-until (lambda () (search "(* 6 7)" (lisp-scratch-contents)))) "an edit in Lem is saved")
+           (check (not (lem-call (lambda () (lem:buffer-modified-p (lem:current-buffer))))) "and Lem knows it")
+           ;; The agent's edit reaches Lem's buffer.
+           (lisp-scratch-save (format nil "(list :agent)~%") :by "agent")
+           (check (scratch-wait-until (lambda () (search ":agent" (lem-buffer-text-of path)))) "the agent's edit shows in Lem"))
+      (setf *lisp-repl* saved)
+      (ignore-errors (editor-close-file path :force t)))))

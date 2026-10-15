@@ -10,6 +10,18 @@
      base, patches); see ui/web/frontend.lisp's WEB-INDEX-HTML.  The saved
      theme is applied here, before first paint, to avoid a flash. */
   window.CL_AGENT_BOOT = {{BOOT}};
+  /* A customised file that no longer fits the rest (an import it lacks)
+     stops the whole client, and the page would stay empty.  So, unless this
+     is safe mode already: if the client has not started a moment after the
+     page loaded, open safe mode -- the built-in files -- saying why. */
+  window.CL_AGENT_ERRORS = [];
+  window.addEventListener('error', function (e) { CL_AGENT_ERRORS.push(String(e.message || e.error || e)); });
+  window.addEventListener('load', function () {
+    setTimeout(function () {
+      if (window.CLAgent || (window.CL_AGENT_BOOT && CL_AGENT_BOOT.safe)) return;
+      location.replace('/safe?fallback=' + encodeURIComponent(CL_AGENT_ERRORS.join(' / ') || 'it did not start'));
+    }, 2000);
+  });
   try { var t = localStorage.getItem('cl-agent.theme'); if (t) document.documentElement.dataset.theme = t;
         var f = localStorage.getItem('cl-agent.font-size'); if (f) document.documentElement.style.setProperty('--font-size', f); } catch (e) {}
   window.MathJax = { tex: { inlineMath: { '[+]': [['$', '$']] }, displayMath: [['$$', '$$'], ['\\[', '\\]']] },
