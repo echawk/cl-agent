@@ -30,7 +30,10 @@
            :documentation "The underlying CL-MCP.CLIENT:MCP-CLIENT struct.")
    (tool-names :initarg :tool-names :accessor mcp-connection-tool-names :initform nil
                :documentation "Wire names (see MCP-REMOTE-TOOL-NAME) this
-connection registered, so DISCONNECT-MCP-SERVER can clean them up."))
+connection registered, so DISCONNECT-MCP-SERVER can clean them up.")
+   (timeout :initarg :timeout :reader mcp-connection-timeout
+            :documentation "Seconds each tools/call on this connection waits
+for its response (see MCP-CALL-TOOL)."))
   (:documentation "Bookkeeping for one live connection to an external
 MCP server: which cl-mcp.client object it is, and which cl-agent TOOLs
 it contributed so they can be unregistered on disconnect."))
@@ -61,18 +64,62 @@ cl-agent's provider layer threads through yet either."
                 for text = (cdr (assoc "text" block :test #'string=))
                 when text collect text)))
 
-(defun connect-mcp-server (name command)
+(defparameter *mcp-default-call-timeout* 30
+  "Seconds a tools/call waits for its response when the connection sets
+no :TIMEOUT of its own. 30 is cl-mcp.client's own fixed default, kept so
+servers configured without :TIMEOUT behave exactly as before.")
+
+(defun mcp-call-timeout (value)
+  "VALUE as a tools/call timeout in seconds: NIL means
+*MCP-DEFAULT-CALL-TIMEOUT*; anything but a positive real is an error."
+  (cond ((null value) *mcp-default-call-timeout*)
+        ((and (realp value) (plusp value)) value)
+        (t (error "MCP :timeout must be a positive number of seconds, got ~s" value))))
+
+(defun mcp-call-tool (client name arguments timeout)
+  "CL-MCP.CLIENT:CALL-TOOL, but waiting up to TIMEOUT seconds for the
+response. cl-mcp's CALL-TOOL always waits its internal %SEND-REQUEST's
+30 s default, which is too short for servers that start a heavyweight
+backend on first use -- REA (https://github.com/morluto/rea) allows
+Ghidra 330 s just to start. So this sends the same tools/call request
+itself and signals the same conditions CALL-TOOL does: MCP-SESSION-
+CLOSED on timeout, MCP-PROTOCOL-ERROR on a JSON-RPC error, MCP-TOOL-
+ERROR on isError:true. Returns the result's content blocks.
+
+%SEND-REQUEST is internal to cl-mcp.client; re-check this function
+against CALL-TOOL whenever ocicl.csv's cl-mcp pin changes."
+  (let* ((response (cl-mcp.client::%send-request
+                    client "tools/call"
+                    `(("name" . ,name)
+                      ("arguments" . ,(or arguments (make-hash-table :test #'equal))))
+                    :timeout timeout))
+         (err (cl-mcp.json-rpc:response-error response))
+         (result (cl-mcp.json-rpc:response-result response))
+         (content (cdr (assoc "content" result :test #'string=))))
+    (when err
+      (error 'cl-mcp.client.conditions:mcp-protocol-error
+             :message (format nil "tools/call failed: ~a" (getf err :message))))
+    (when (cdr (assoc "isError" result :test #'string=))
+      (error 'cl-mcp.client.conditions:mcp-tool-error
+             :tool-name name :content content
+             :message (format nil "Tool ~a returned an error" name)))
+    content))
+
+(defun connect-mcp-server (name command &key timeout)
   "Launch COMMAND (a list of strings, e.g. (\"npx\" \"-y\"
 \"@modelcontextprotocol/server-filesystem\" \"/tmp\")) as an MCP
 server subprocess, perform the MCP handshake, and register each tool
 it advertises as a cl-agent TOOL (see MCP-REMOTE-TOOL-NAME for the
-registered name). Re-running with the same NAME disconnects and
+registered name). Each call to one of those tools waits up to TIMEOUT
+seconds (default *MCP-DEFAULT-CALL-TIMEOUT*) for the server's response.
+Re-running with the same NAME disconnects and
 replaces any previous connection under that name. Returns the number
 of tools registered. Signals MCP-ERROR, tagged with NAME, if the
-subprocess can't be started or the handshake fails."
+subprocess can't be started, the handshake fails, or TIMEOUT is invalid."
   (when (gethash name *mcp-connections*) (disconnect-mcp-server name))
   (handler-case
-      (let* ((client (cl-mcp.client:make-client :name "cl-agent" :command command))
+      (let* ((timeout (mcp-call-timeout timeout))
+             (client (cl-mcp.client:make-client :name "cl-agent" :command command))
              (remote-tools (progn (cl-mcp.client:connect client) (cl-mcp.client:list-tools client)))
              (tool-names
                (let ((*registration-origin* (list :mcp name))
@@ -89,17 +136,17 @@ subprocess can't be started or the handshake fails."
                                       :metadata (list :remote-name remote-name :server name)
                                       :handler (lambda (args)
                                                  (mcp-content-blocks->text
-                                                  (getf (cl-mcp.client:call-tool client remote-name (jhash->alist args))
-                                                        :content)))))
+                                                  (mcp-call-tool client remote-name (jhash->alist args) timeout)))))
                       wire-name))
                   remote-tools))))
         (setf (gethash name *mcp-connections*)
-              (make-instance 'mcp-connection :name name :client client :tool-names tool-names))
+              (make-instance 'mcp-connection :name name :client client :tool-names tool-names
+                                             :timeout timeout))
         (publish-component :mcp-connection name
                            :owner (format nil "mcp:~a" name)
                            :origin (list :mcp name)
                            :provides tool-names
-                           :metadata (list :command command))
+                           :metadata (list :command command :timeout timeout))
         (length tool-names))
     (error (c)
       (error 'mcp-error :server-name name :message (princ-to-string c)))))

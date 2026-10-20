@@ -29,4 +29,12 @@
                             ("properties" . (("text" . (("type" . "string")))))
                             ("required" . ("text")))
                   :handler (lambda (args) (cdr (assoc "text" args :test #'string=))))
+  (register-tool server "sleep"
+                  :description "Sleep for the given seconds, then reply \"done\""
+                  :schema '(("type" . "object")
+                            ("properties" . (("seconds" . (("type" . "number")))))
+                            ("required" . ("seconds")))
+                  :handler (lambda (args)
+                             (sleep (cdr (assoc "seconds" args :test #'string=)))
+                             "done"))
   (run-server server))

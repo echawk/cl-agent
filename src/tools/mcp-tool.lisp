@@ -14,10 +14,13 @@
                         "properties"
                         (jobj "name" (jobj "type" "string" "description" "A short name for this connection, e.g. \"filesystem\" or \"postgres\". Used as the mcp__NAME__... prefix on its tools.")
                               "command" (jobj "type" "array" "items" (jobj "type" "string")
-                                               "description" "The subprocess command and arguments, e.g. [\"npx\", \"-y\", \"@modelcontextprotocol/server-filesystem\", \"/tmp\"]."))
+                                               "description" "The subprocess command and arguments, e.g. [\"npx\", \"-y\", \"@modelcontextprotocol/server-filesystem\", \"/tmp\"].")
+                              "timeout" (jobj "type" "number"
+                                               "description" "Optional seconds each of this server's tool calls may take before failing (default 30). Raise it for servers that do slow work, such as starting a decompiler."))
                         "required" (list "name" "command")))
   (handler-case
-      (let ((count (connect-mcp-server (jget args "name") (jget args "command"))))
+      (let ((count (connect-mcp-server (jget args "name") (jget args "command")
+                                       :timeout (jget args "timeout"))))
         (format nil "Connected to MCP server ~s: ~d tool(s) registered." (jget args "name") count))
     (mcp-error (c) (format nil "~a" c))))
 

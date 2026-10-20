@@ -118,6 +118,10 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
                    \"filesystem\" :command (\"npx\" \"-y\"
                    \"@modelcontextprotocol/server-filesystem\" \"/tmp\"))).
                    A single (:name ... :command ...) plist is also accepted.
+                   Optional :TIMEOUT SECONDS sets how long each of that
+                   server's tool calls may take (default 30), e.g.
+                   (:name \"rea\" :command (\"npx\" \"-y\"
+                   \"rea-agents@6.7.0\" \"mcp\") :timeout 600).
                    A server that fails to connect is reported and
                    skipped, not fatal to startup.
   LSP servers are configured separately in config-dir/lsp.sexp using

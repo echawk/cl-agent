@@ -416,6 +416,16 @@ tools too -- attaching to a new MCP server mid-conversation is a
 self-extension act like writing a new tool, so it gets the same
 treatment.
 
+Each tool call waits 30 seconds for the server by default. A server that
+does slow work takes `:timeout SECONDS`, for example
+[REA](https://github.com/morluto/rea), whose Ghidra backend alone may
+take minutes to start:
+
+```lisp
+:mcp-servers ((:name "rea" :command ("npx" "-y" "rea-agents@6.7.0" "mcp")
+               :timeout 600))
+```
+
 **As a server**, `cl-agent --mcp-serve` runs as an MCP server over
 stdio instead of the chat REPL, exposing every registered tool --
 `shell`, `eval-lisp`, `write-extension`, `lookup-cl-spec`, anything an

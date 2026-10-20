@@ -211,7 +211,8 @@ Best-effort: a server that fails to connect is reported to
 *ERROR-OUTPUT* and skipped, same policy as a broken extension -- one
 unreachable MCP server shouldn't prevent the agent from starting."
   (dolist (spec (mcp-server-specs (config-value config :mcp-servers)))
-    (handler-case (connect-mcp-server (getf spec :name) (getf spec :command))
+    (handler-case (connect-mcp-server (getf spec :name) (getf spec :command)
+                                      :timeout (getf spec :timeout))
       (mcp-error (c) (format *error-output* "~&[mcp] ~a~%" c)))))
 
 (defun main ()

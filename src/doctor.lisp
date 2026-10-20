@@ -83,7 +83,9 @@
                 (loop for spec in servers
                       for name = (getf spec :name)
                       for command = (getf spec :command)
+                      for timeout = (getf spec :timeout)
                       unless (and (stringp name) (listp command) (stringp (first command))
+                                  (or (null timeout) (and (realp timeout) (plusp timeout)))
                                   (or (probe-file (first command))
                                       (find-executable-on-path (first command))))
                         collect (or name "unnamed server"))))

@@ -14,7 +14,7 @@
 (deftest connect-mcp-server-registers-remote-tools ()
   (unwind-protect
        (let ((count (connect-mcp-server "demo" *demo-mcp-server-command*)))
-         (check-equal count 2)
+         (check-equal count 3)
          (check (find-tool "mcp__demo__add"))
          (check (find-tool "mcp__demo__echo")))
     (disconnect-mcp-server "demo")))
@@ -51,6 +51,34 @@
          (connect-mcp-server "demo" *demo-mcp-server-command*)
          (connect-mcp-server "demo" *demo-mcp-server-command*)
          (check-equal (length (list-mcp-connections)) 1))
+    (disconnect-mcp-server "demo")))
+
+(deftest mcp-call-timeout-is-per-connection ()
+  (unwind-protect
+       (progn
+         (connect-mcp-server "demo" *demo-mcp-server-command* :timeout 0.5)
+         (check (search "Timeout (0.5s)" (call-tool "mcp__demo__sleep" (jobj "seconds" 2)))
+                "a call outlasting the connection's :timeout fails")
+         (connect-mcp-server "demo" *demo-mcp-server-command* :timeout 5)
+         (check-equal (call-tool "mcp__demo__sleep" (jobj "seconds" 1)) "done"))
+    (disconnect-mcp-server "demo")))
+
+(deftest connect-mcp-server-defaults-and-validates-timeout ()
+  (unwind-protect
+       (progn
+         (connect-mcp-server "demo" *demo-mcp-server-command*)
+         (check-equal (mcp-connection-timeout (gethash "demo" *mcp-connections*))
+                      *mcp-default-call-timeout*))
+    (disconnect-mcp-server "demo"))
+  (check-condition mcp-error (connect-mcp-server "demo" *demo-mcp-server-command* :timeout -1))
+  (check-condition mcp-error (connect-mcp-server "demo" *demo-mcp-server-command* :timeout "600")))
+
+(deftest mcp-tool-error-result-reaches-the-model-as-text ()
+  (unwind-protect
+       (progn
+         (connect-mcp-server "demo" *demo-mcp-server-command*)
+         (check (search "Error running mcp__demo__sleep"
+                        (call-tool "mcp__demo__sleep" (jobj "seconds" "not-a-number")))))
     (disconnect-mcp-server "demo")))
 
 (deftest connect-mcp-server-bad-command-signals-mcp-error ()
