@@ -108,7 +108,8 @@ message and a non-zero exit, not a Lisp backtrace."
         (let ((config (load-user-config))
               (task (format nil "~{~a~^ ~}" (clingon:command-arguments cmd))))
           (handler-case
-        (let* ((provider-keyword (resolve-provider-keyword (let ((p (clingon:getopt cmd :provider)))
+        (let* ((environment (apply-config-environment config))
+               (provider-keyword (resolve-provider-keyword (let ((p (clingon:getopt cmd :provider)))
                                                               (and p (intern (string-upcase p) :keyword)))
                                                             config))
                (configured-model (or (clingon:getopt cmd :model) (config-value config :model)))
@@ -117,6 +118,7 @@ message and a non-zero exit, not a Lisp backtrace."
                                          :base-url (config-value config :base-url)
                                          :api-key-env (config-value config :api-key-env)
                                          :ensure-ready t)))
+          (declare (ignore environment))
           ;; An ACP/MCP stdio server must never prompt on its protocol stream,
           ;; and the web UI asks in the page instead of the terminal.
           (unless (or configured-model (clingon:getopt cmd :acp-serve)

@@ -54,3 +54,12 @@ of BODY, so config/extensions tests never touch the user's real
     (bt:join-thread (bt:make-thread (lambda () (setf seen *config-directory*))))
     (check (uiop:pathname-equal seen *config-directory*))
     (check (not (under-directory-p seen (user-config-directory))))))
+
+(deftest environment-config-is-inherited-by-child-processes ()
+  (check-equal (environment-specs '("A" "1" "B" nil)) '(("A" . "1") ("B")))
+  (check-equal (environment-specs '(("A" . "1"))) '(("A" . "1")))
+  (apply-config-environment '(:environment ("CL_AGENT_TEST_ENV" "hello")))
+  (check-equal (uiop:run-program '("/bin/sh" "-c" "printf %s \"$CL_AGENT_TEST_ENV\"") :output :string)
+               "hello")
+  (apply-config-environment '(:environment (("CL_AGENT_TEST_ENV" . nil))))
+  (check-equal (uiop:getenv "CL_AGENT_TEST_ENV") nil))

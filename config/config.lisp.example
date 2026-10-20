@@ -27,5 +27,7 @@
  ;; a worker uses the host model. `tool` is automatically used by
  ;; explore-project, if configured. Long form remains supported:
  ;; (:name "fast-shell" :model "your-fast-model" :description "...")
+ ;; :environment ("RUST_LOG" "info" "NODE_OPTIONS" "--max-old-space-size=4096")
+ ;; optional; set for cl-agent and every tool call, MCP/LSP server, etc. it starts
  :extensions :all             ; :all, or a list like ("word-count.lisp")
  :max-tool-iterations 1000)

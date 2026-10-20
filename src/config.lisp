@@ -124,6 +124,13 @@ or NIL if the file doesn't exist. Recognized keys, all optional:
                    \"rea-agents@6.7.0\" \"mcp\") :timeout 600).
                    A server that fails to connect is reported and
                    skipped, not fatal to startup.
+  :ENVIRONMENT    environment variables to set in cl-agent's own process at
+                   startup, so every child it starts (shell tool calls, MCP
+                   and LSP servers, debug adapters, git) inherits them. Either
+                   a plist or an alist of name/value strings:
+                     (\"PATH\" \"/opt/bin:/usr/bin\" \"RUST_LOG\" \"info\")
+                     ((\"PATH\" . \"/opt/bin:/usr/bin\") (\"RUST_LOG\" . \"info\"))
+                   A value of NIL unsets that variable.
   LSP servers are configured separately in config-dir/lsp.sexp using
                    cl-lsp's bounded (:VERSION 1 :SERVERS (...)) data format.
                    At startup cl-agent reports commands missing from PATH but
@@ -160,6 +167,32 @@ fail with a bare \"malformed property list\" error."
     ((listp value) value)
     (t (error ":MCP-SERVERS must be a server plist or a list of server plists, got ~s"
               value))))
+
+(defun environment-specs (value)
+  "Normalize :ENVIRONMENT configuration VALUE to an alist of (NAME . VALUE-OR-NIL).
+Accepts a plist (\"A\" \"1\" \"B\" \"2\") or an alist ((\"A\" . \"1\"))."
+  (flet ((check (name val)
+           (unless (and (stringp name) (plusp (length name)) (not (find #\= name))
+                        (or (null val) (stringp val)))
+             (error ":ENVIRONMENT entries must be NAME/VALUE strings, got ~s ~s" name val))
+           (cons name val)))
+    (cond
+      ((null value) nil)
+      ((not (listp value)) (error ":ENVIRONMENT must be a plist or alist, got ~s" value))
+      ((every #'consp value) (mapcar (lambda (e) (check (car e) (cdr e))) value))
+      (t (unless (evenp (length value))
+           (error ":ENVIRONMENT plist has an odd number of elements: ~s" value))
+         (loop for (name val) on value by #'cddr collect (check name val))))))
+
+(defun apply-config-environment (config)
+  "Set CONFIG's :ENVIRONMENT variables in this process so every child process
+inherits them. Returns the applied alist."
+  (let ((specs (environment-specs (config-value config :environment))))
+    #+sbcl (require :sb-posix)
+    (dolist (spec specs specs)
+      (if (cdr spec)
+          (funcall (find-symbol "SETENV" :sb-posix) (car spec) (cdr spec) 1)
+          (funcall (find-symbol "UNSETENV" :sb-posix) (car spec))))))
 
 (defun config-text-with-model (text model &key replace)
   "TEXT (config.lisp's contents) with :MODEL set to MODEL, edited in place so
