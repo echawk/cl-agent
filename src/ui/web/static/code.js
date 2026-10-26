@@ -212,7 +212,7 @@ function renderLemHead() {
       f ? `\u200e${f.path ? short(f.path) : f.name}\u200e${f.modified ? ' ●' : ''}` : 'C-x C-f visits a file · M-x runs a command'),
     el('span', { class: 'spacer' }),
     el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Run a Lem command (M-x)', onclick: () => lemRun('execute-command') }, 'M-x'),
-    f?.path ? el('button', { class: 'btn btn-small', type: 'button', 'data-doc': `Save ${f.name || 'this file'} and run it in the Terminal tab (/run)`, onclick: () => runFile(f.path).catch(err => message(err.message)) }, 'Run') : '',
+    f?.path ? el('button', { class: 'btn btn-small', type: 'button', 'data-doc': `Save ${f.name || 'this file'} and run it in the Terminal tab (/shell)`, onclick: () => runFile(f.path).catch(err => message(err.message)) }, 'Run') : '',
     el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'A terminal in this file\'s directory, in the Terminal tab (/term)', onclick: () => openTerminal({ directory: f?.path ? f.path.replace(/[^/]*$/, '') : undefined }).catch(err => message(err.message)) }, 'Terminal'),
     el('button', {
       class: 'btn btn-small btn-ask', type: 'button', 'data-doc': 'Ask the agent about this file', 'aria-label': 'Ask the agent about this file',
@@ -1155,7 +1155,7 @@ registerCommand('edit', arg => {
   return openDoc('file', path, { line: match[2] ? Number(match[2]) : undefined });
 }, 'Open a file in the Code tab\'s editor: /edit @path[:line]');
 
-/** The file the Code tab shows, for /run with no argument. */
+/** The file the Code tab shows, for /shell with no argument. */
 export function currentFile() {
   return view.lemFile?.path || (view.doc && !view.lemMode ? view.doc.path : null);
 }

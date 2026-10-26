@@ -4,9 +4,9 @@
 // /api/terminal/slt-terminal.js).  Each terminal talks to its shell over a
 // WebSocket of its own; this module keeps the tabs, the theme and the keys.
 //
-//   /term [dir]   a terminal in DIR (the working directory), shown here
-//   /run [@file]  save a file and run it in a terminal in its directory
-//   Ask           the terminal's last lines at the main prompt (Ctrl-Shift-A)
+//   /term [dir]     a terminal in DIR (the working directory), shown here
+//   /shell [@file]  save a file and run it in a terminal in its directory
+//   Ask             the terminal's last lines at the main prompt (Ctrl-Shift-A)
 //
 // In a terminal every key is the program's -- Alt is Meta, Ctrl-C
 // interrupts -- but for Ctrl-Shift-A (ask) and Ctrl-Shift-P (to the prompt).
@@ -204,7 +204,7 @@ function mount(node) {
     el('div', { class: 'term-host' },
       el('div', { class: 'term-empty' },
         el('p', {}, ';; No terminal yet.'),
-        el('p', {}, '/term [dir] opens one; /run @file saves a file and runs it here. ',
+        el('p', {}, '/term [dir] opens one; /shell @file saves a file and runs it here. ',
           'In a terminal every key is the program\'s -- Ctrl-C interrupts it -- but Ctrl-Shift-A, which asks the agent about what it shows, and Ctrl-Shift-P, back to the prompt.'),
         el('button', { class: 'btn', type: 'button', onclick: () => openTerminal().catch(err => toast(err.message, 'red')) }, 'Open a terminal'))));
   // Before slt's own key handling: the two keys that are not the program's.
@@ -220,7 +220,7 @@ function mount(node) {
 
 registerView({
   id: 'terminal', title: 'Terminal', color: 'cyan', order: 17,
-  doc: 'Shells next to your files, run by slt: run programs, then ask the agent about what they printed (/term, /run)',
+  doc: 'Shells next to your files, run by slt: run programs, then ask the agent about what they printed (/term, /shell)',
   badge: () => { const n = view.list.filter(t => t.state === 'running').length; return n ? String(n) : ''; },
   mount,
   show: () => { load(); focusActive(); },
@@ -232,7 +232,7 @@ load();
 
 // ---------- the prompt's commands ----------
 
-/** /term and /run's argument: a path relative to the working directory. */
+/** /term and /shell's argument: a path relative to the working directory. */
 function promptPath(arg) {
   const path = arg.trim().replace(/^@/, '');
   if (!path) return null;
@@ -243,8 +243,8 @@ function promptPath(arg) {
 registerCommand('term', arg => openTerminal({ directory: promptPath(arg) || undefined }),
   'A terminal in the Terminal tab: /term [dir] (Ctrl-Shift-A in it asks about it)');
 
-registerCommand('run', arg => {
+registerCommand('shell', arg => {
   const path = promptPath(arg) || currentFile();
-  if (!path) throw new Error('Usage: /run @file (or with a file open in the Code tab): save it and run it in a terminal');
+  if (!path) throw new Error('Usage: /shell @file (or with a file open in the Code tab): save it and run it in a terminal');
   return runFile(path);
-}, 'Save a file and run it in a terminal by its type: /run [@file] (C, C++, Rust, Go, Python, Ruby, Racket, JS, Lisp, shell...)');
+}, 'Save a file and run it in a terminal by its type: /shell [@file] (C, C++, Rust, Go, Python, Ruby, Racket, JS, Lisp, shell...)');

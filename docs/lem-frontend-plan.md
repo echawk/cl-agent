@@ -302,7 +302,8 @@ the output an object you can inspect and ask about.
 - In the UI:
   - **Shell here** (Code tab, and the file object's menu) opens a shell
     buffer in the file's directory.
-  - `/shell [dir]` at the prompt does the same.
+  - A prompt command would do the same. (`/shell` now names the Terminal
+    tab's run command: see 6b.)
   - The shell buffer is an ordinary editor buffer, so the renderer,
     presentations and the agent's `lem-command` all apply.
 - **Run this file:**
@@ -332,13 +333,13 @@ in a **Terminal tab of its own**: a separate frontend, not a Lem buffer
   terminal, local pages only). Its browser client (`slt-terminal.js`)
   draws each terminal in the page's theme and font.
 - slt is a git submodule, `third-party/slt`, pinned to one commit.
-- `/term`, `/run`, Ask (Ctrl-Shift-A) and the agent's `terminal-output`
+- `/term`, `/shell`, Ask (Ctrl-Shift-A) and the agent's `terminal-output`
   work as they did. In a terminal every key is the program's: the page's
   Alt- keys step aside.
 - What standalone slt does not need, cl-agent does:
   - It reaps a closed terminal's shell. slt sends SIGTERM, which an
     interactive shell ignores, and then quits; cl-agent lives on.
-  - It starts a shell at the page's size, so that `/run`'s first output
+  - It starts a shell at the page's size, so that `/shell`'s first output
     is not wrapped at 80 columns.
   - It keeps an exited terminal's last screen to read and ask about.
 - Lem's `M-x terminal` is gone from the hosted Lem: the libvterm shim, its
@@ -364,7 +365,7 @@ Still open from 6:
   - Open one in a directory whose name needs quoting; `pwd` shows it.
   - `sleep 30`, then Ctrl-C as the client sends it: the prompt is back
     within 3 s, even right after a full GC.
-  - `/run` on a C file: compiled, run, and `$?` is the program's.
+  - `/shell` on a C file: compiled, run, and `$?` is the program's.
   - Closing hangs up and reaps the shell; an exited shell keeps its last
     screen.
   - The socket refuses a wrong token and a page from elsewhere.

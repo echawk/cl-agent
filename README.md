@@ -754,7 +754,7 @@ instead of colour. `/theme NAME` picks one directly.
     The other way round, `C-c C-a` in Lem (`M-x cl-agent-ask`) puts the
     region, or the Lisp form at point, at this prompt with its file and
     lines, so you can finish the question.
-    `/term [dir]` opens a terminal in the Terminal tab, and `/run [@file]`
+    `/term [dir]` opens a terminal in the Terminal tab, and `/shell [@file]`
     saves a file and runs it there by its type (see
     [The Terminal tab](#the-terminal-tab)).
   - **anything else** goes to the agent as `(C n)`. `Alt-Enter` asks the
@@ -1029,7 +1029,7 @@ and the tab draws it with slt's own browser client. slt is a git submodule
   A running terminal already in that directory is shown instead; **+ New**
   always opens another. Each terminal is a tab of its own, and right-click
   gives its menu.
-- **`/run [@file]`** saves a file and runs it in a terminal in its
+- **`/shell [@file]`** saves a file and runs it in a terminal in its
   directory, by its type. C, C++ and Rust are compiled first; Go, Python,
   Ruby, Racket, JavaScript, Lisp and shell scripts run directly. The
   Code tab's **Run** button and a file's **Run in the terminal** menu

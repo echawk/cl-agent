@@ -5,12 +5,12 @@
 ;;;; files there -- compile a scratch buffer and run it -- and ask the agent
 ;;;; about what they printed.
 ;;;;
-;;;;   /term [dir]   at the main prompt: a terminal in DIR (the working
-;;;;                 directory), in the Terminal tab
-;;;;   /run [file]   save FILE and run it in a terminal in its directory, by
-;;;;                 its type (*TERMINAL-RUN-COMMANDS*)
-;;;;   Ctrl-Shift-A  in a terminal: its last lines at the main prompt, to ask
-;;;;                 about them (the tab's Ask button does the same)
+;;;;   /term [dir]    at the main prompt: a terminal in DIR (the working
+;;;;                  directory), in the Terminal tab
+;;;;   /shell [file]  save FILE and run it in a terminal in its directory, by
+;;;;                  its type (*TERMINAL-RUN-COMMANDS*)
+;;;;   Ctrl-Shift-A   in a terminal: its last lines at the main prompt, to ask
+;;;;                  about them (the tab's Ask button does the same)
 ;;;;
 ;;;; Each terminal is slt's LAUNCH-TERMINAL on a thread of its own, with
 ;;;; slt's pure-Lisp lispvt engine and slt's web frontend -- but where that
@@ -358,18 +358,18 @@ NIL after TIMEOUT seconds."
     ("sh" . "sh {file}")
     ("bash" . "bash {file}")
     ("zsh" . "zsh {file}"))
-  "How /run runs a file, by its type: {file} is the file's name (the
+  "How /shell runs a file, by its type: {file} is the file's name (the
 terminal is in its directory), {out} a place for a compiled program.")
 
 (defun terminal-programs-directory ()
   (merge-pathnames "terminal/bin/" *config-directory*))
 
 (defun terminal-run-command (path)
-  "The command line /run types for PATH, or an error naming the types it knows."
+  "The command line /shell types for PATH, or an error naming the types it knows."
   (let* ((type (pathname-type path))
          (template (and type (cdr (assoc type *terminal-run-commands* :test #'string-equal)))))
     (unless template
-      (error "/run doesn't know how to run ~:[extension-less~;.~:*~a~] files: it knows ~{.~a~^, ~}."
+      (error "/shell doesn't know how to run ~:[extension-less~;.~:*~a~] files: it knows ~{.~a~^, ~}."
              type (mapcar #'car *terminal-run-commands*)))
     (let ((out (merge-pathnames (pathname-name path) (terminal-programs-directory))))
       (ensure-directories-exist out)
@@ -431,7 +431,7 @@ has exited, what it showed then."
           (terminal-transcript terminal :lines 60)))
 
 (define-tool terminal-output (args)
-    (:description "Read the person's terminal in cl-agent's Terminal tab (they open one with /term and run files with /run): its scrollback and screen, newest last. Use it when they ask about a command they ran there -- a failing build, a crash, a test's output. Read-only: it never types into their terminal; run commands yourself with your own shell tool."
+    (:description "Read the person's terminal in cl-agent's Terminal tab (they open one with /term and run files with /shell): its scrollback and screen, newest last. Use it when they ask about a command they ran there -- a failing build, a crash, a test's output. Read-only: it never types into their terminal; run commands yourself with your own shell tool."
      :effects '(:read-workspace)
      :parameters (jobj "type" "object"
                        "properties" (jobj "lines" (jobj "type" "integer" "minimum" 1 "maximum" 2000
