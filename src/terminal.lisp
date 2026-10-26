@@ -185,10 +185,6 @@ system's are used.")
         "title" (terminal-title terminal)
         "directory" (abbreviate-home (terminal-directory terminal))
         "state" (string-downcase (terminal-state terminal))
-        ;; The cell size slt assumes, which image placements are in.
-        "cell" (let ((frontend (terminal-frontend terminal)))
-                 (list (slt::headless-frontend-default-cell-width frontend)
-                       (slt::headless-frontend-default-cell-height frontend)))
         "url" (if (and *terminal-acceptor* (terminal-running-p terminal)) (terminal-socket-url terminal) :null)
         "problem" (json-or-null (terminal-problem terminal))))
 
@@ -242,9 +238,9 @@ the person's ($SHELL)."
 
 (defun terminal-size-from (body)
   "A new terminal's size from a request's BODY, as the page measured it: a
-plist of :ROWS and :COLUMNS, and :CELL-WIDTH and :CELL-HEIGHT in pixels --
-slt places images and answers programs' pixel queries by them, and assumes
-8x16 cells otherwise."
+plist of :ROWS and :COLUMNS, and :CELL-WIDTH and :CELL-HEIGHT in pixels.
+slt's client sends its own once it connects; until then, what a program
+prints is laid out in these (slt assumes 8x16 cells otherwise)."
   (flet ((sane (key low high)
            (let ((value (jget body key)))
              (and (integerp value) (< low value high) value))))
