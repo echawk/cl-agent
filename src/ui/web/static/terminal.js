@@ -32,7 +32,19 @@ const $ = sel => view.node?.querySelector(sel);
 // ---------- slt's client ----------
 
 let client = null;
-const loadClient = () => (client ??= import('/api/terminal/slt-terminal.js'));
+const loadClient = () => (client ??= import('/api/terminal/slt-terminal.js').then(module => ({ ...module, PageTerminal: pageTerminalClass(module.SltTerminal) })));
+
+/** slt's client, drawing images in its own cells: the server's placements are
+ *  in pixels of whole-pixel cells (ENTRY.cell), the page's cells fractional. */
+function pageTerminalClass(SltTerminal) {
+  return class PageTerminal extends SltTerminal {
+    constructor(container, options, cell) { super(container, options); this.serverCell = cell || [8, 16]; }
+    _drawImages(sources, items) {
+      const sx = this._cell.w / this.serverCell[0], sy = this._cell.h / this.serverCell[1];
+      super._drawImages(sources, items.map(item => ({ ...item, x: item.x * sx, y: item.y * sy, w: item.w * sx, h: item.h * sy })));
+    }
+  };
+}
 
 /** The page's colours and font as an slt theme (any page theme, mono too). */
 function pageTheme() {
@@ -74,11 +86,11 @@ function setList(list) {
 
 async function ensureShown(entry) {
   if (view.shown.has(entry.id) || !entry.url) return view.shown.get(entry.id);
-  const { SltTerminal } = await loadClient();
+  const { PageTerminal } = await loadClient();
   if (view.shown.has(entry.id)) return view.shown.get(entry.id);
   const node = el('div', { class: 'term-screen', dataset: { id: entry.id }, hidden: entry.id !== view.active });
   $('.term-host').append(node);
-  const terminal = new SltTerminal(node, { url: entry.url, theme: pageTheme() });
+  const terminal = new PageTerminal(node, { url: entry.url, theme: pageTheme() }, entry.cell);
   terminal.addEventListener('title', () => renderTabs());
   terminal.addEventListener('exit', () => load());
   const shown = { terminal, node };
@@ -140,7 +152,9 @@ function hostSize() {
   probe.remove();
   // .term-screen's inset: 6px above and below, 8px either side.
   return width ? { rows: Math.max(2, Math.floor((host.clientHeight - 12) / height)),
-                   cols: Math.max(2, Math.floor((host.clientWidth - 16) / width)) } : {};
+                   cols: Math.max(2, Math.floor((host.clientWidth - 16) / width)),
+                   // slt places images in pixels of these cells, and tells programs them.
+                   cellWidth: Math.round(width), cellHeight: height } : {};
 }
 
 /** Open (or show) a terminal: BODY is {directory, new} or {file} (run it). */

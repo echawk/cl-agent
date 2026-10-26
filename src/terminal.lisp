@@ -126,10 +126,24 @@ carries, on the terminal server, from a local page."
          (and terminal (terminal-running-p terminal)
               (slt::web-frontend-resource (terminal-frontend terminal))))))
 
+(defparameter *terminal-library-prefixes* '("/opt/homebrew" "/usr/local" "/opt/local")
+  "Where slt's image libraries -- libpng for Kitty's PNG images, libsixel
+for SIXEL -- are looked for besides the system's own places (Homebrew and
+MacPorts).  slt itself bundles them beside its executable; in cl-agent the
+system's are used.")
+
+(defun add-terminal-library-directories ()
+  "Let CFFI find slt's image libraries, which it loads by name on first use."
+  (dolist (prefix (reverse (remove nil (cons (uiop:getenv "CL_AGENT_LIBRARY_PREFIX") *terminal-library-prefixes*))))
+    (let ((directory (probe-file (format nil "~a/lib/" prefix))))
+      (when directory
+        (pushnew directory cffi:*foreign-library-directories* :test #'uiop:pathname-equal)))))
+
 (defun ensure-terminal-server ()
   (bt:with-recursive-lock-held (*terminals-lock*)
     (or *terminal-acceptor*
         (as-agent-itself
+          (add-terminal-library-directories)
           (let ((acceptor (make-instance 'terminal-socket-acceptor
                                          :address "127.0.0.1" :port (free-local-port)
                                          ;; A browser leaving drops its socket: no news.
@@ -171,6 +185,10 @@ carries, on the terminal server, from a local page."
         "title" (terminal-title terminal)
         "directory" (abbreviate-home (terminal-directory terminal))
         "state" (string-downcase (terminal-state terminal))
+        ;; The cell size slt assumes, which image placements are in.
+        "cell" (let ((frontend (terminal-frontend terminal)))
+                 (list (slt::headless-frontend-default-cell-width frontend)
+                       (slt::headless-frontend-default-cell-height frontend)))
         "url" (if (and *terminal-acceptor* (terminal-running-p terminal)) (terminal-socket-url terminal) :null)
         "problem" (json-or-null (terminal-problem terminal))))
 
@@ -181,8 +199,8 @@ it is closed."
        (handler-case
            (slt:launch-terminal :frontend (terminal-frontend terminal)
                                 :engine *terminal-engine*
-                                :rows (or (car size) 24)
-                                :columns (or (cdr size) 80)
+                                :rows (getf size :rows 24)
+                                :columns (getf size :columns 80)
                                 :directory (terminal-directory terminal)
                                 :login-shell nil
                                 :load-config nil
@@ -211,9 +229,9 @@ as an existing directory's native namestring."
 
 (defun open-terminal (&key directory new size)
   "A running terminal in DIRECTORY (the working directory): the one already
-there unless NEW, else a new one, SIZE (rows . columns) when given -- the
-page's, so what runs first is not wrapped at 80 columns.  Its shell is the
-person's ($SHELL)."
+there unless NEW, else a new one of SIZE when given (TERMINAL-SIZE-FROM:
+the page's, so what runs first is not wrapped at 80 columns).  Its shell is
+the person's ($SHELL)."
   (let ((directory (terminal-directory-for directory)))
     (or (and (not new)
              (find-if (lambda (terminal)
@@ -222,10 +240,18 @@ person's ($SHELL)."
                       (list-terminals)))
         (start-terminal directory :size size))))
 
-(defun terminal-size-from (rows columns)
-  "(ROWS . COLUMNS) from a request, when both are sane."
-  (and (integerp rows) (integerp columns) (< 1 rows 1000) (< 1 columns 1000)
-       (cons rows columns)))
+(defun terminal-size-from (body)
+  "A new terminal's size from a request's BODY, as the page measured it: a
+plist of :ROWS and :COLUMNS, and :CELL-WIDTH and :CELL-HEIGHT in pixels --
+slt places images and answers programs' pixel queries by them, and assumes
+8x16 cells otherwise."
+  (flet ((sane (key low high)
+           (let ((value (jget body key)))
+             (and (integerp value) (< low value high) value))))
+    (let ((rows (sane "rows" 1 1000)) (columns (sane "cols" 1 1000))
+          (cell-width (sane "cellWidth" 2 200)) (cell-height (sane "cellHeight" 2 400)))
+      (append (and rows columns (list :rows rows :columns columns))
+              (and cell-width cell-height (list :cell-width cell-width :cell-height cell-height))))))
 
 (defun start-terminal (directory &key size (timeout 10))
   (ensure-terminal-server)
@@ -236,7 +262,9 @@ person's ($SHELL)."
                        (setf *terminals* (append *terminals* (list terminal)))
                        terminal))))
     (setf (terminal-frontend terminal)
-          (make-instance 'agent-terminal-frontend :terminal terminal :token (terminal-token terminal)))
+          (make-instance 'agent-terminal-frontend :terminal terminal :token (terminal-token terminal)
+                                                   :cell-width (getf size :cell-width 8)
+                                                   :cell-height (getf size :cell-height 16)))
     (setf (terminal-thread terminal)
           (as-agent-itself
             (bt:make-thread (lambda () (run-terminal terminal :size size))
@@ -431,7 +459,7 @@ has exited, what it showed then."
 (define-web-route terminal-open (:method :post :path "/api/terminal")
   (let ((body (web-json-body)))
     (with-terminal-errors
-      (let* ((size (terminal-size-from (jget body "rows") (jget body "cols")))
+      (let* ((size (terminal-size-from body))
              (terminal (if (jget body "file")
                            (run-file-in-terminal (jget body "file") :size size)
                            (open-terminal :directory (jget body "directory") :new (jget body "new") :size size))))
@@ -455,12 +483,24 @@ has exited, what it showed then."
 
 ;;; --- doctor ---
 
+(defun terminal-image-library-p (library)
+  "Whether LIBRARY (\"png16\", \"sixel\") is where ADD-TERMINAL-LIBRARY-DIRECTORIES
+looks, or where the system's loader finds it."
+  (or (some (lambda (prefix) (directory (format nil "~a/lib/lib~a.*" prefix library)))
+            (remove nil (cons (uiop:getenv "CL_AGENT_LIBRARY_PREFIX") *terminal-library-prefixes*)))
+      (some (lambda (prefix) (directory (format nil "~a/lib*/**/lib~a.so*" prefix library))) '("/usr" "/lib"))))
+
 (defun doctor-terminal-check (config)
   (declare (ignore config))
-  (doctor-result "terminal" :ok
-                 (format nil "slt ~a, the ~(~a~) engine; shells run as $SHELL (~a)."
-                         (asdf:component-version (asdf:find-system "slt/core"))
-                         *terminal-engine* (or (uiop:getenv "SHELL") "/bin/sh"))))
+  (let ((missing (remove-if #'terminal-image-library-p '("png16" "sixel"))))
+    (doctor-result "terminal" (if missing :warning :ok)
+                   (format nil "slt ~a, the ~(~a~) engine; shells run as $SHELL (~a).~@[ Images: ~{lib~a~^ and ~} not found, so ~:*~{~/cl-agent::image-library-use/~^ and ~} will not show (brew install libpng libsixel, or your system's packages).~]"
+                           (asdf:component-version (asdf:find-system "slt/core"))
+                           *terminal-engine* (or (uiop:getenv "SHELL") "/bin/sh") missing))))
+
+(defun image-library-use (stream library &rest arguments)
+  (declare (ignore arguments))
+  (write-string (if (string= library "png16") "Kitty's PNG images" "SIXEL images") stream))
 
 (setf *doctor-checks*
       (append (remove "terminal" *doctor-checks* :key #'doctor-check-id :test #'string=)

@@ -138,3 +138,35 @@ close every terminal afterwards."
                    "a wrong token is refused")
       (check-equal (terminal-socket-messages url :origin "https://evil.example") :refused
                    "a page elsewhere is refused"))))
+
+(defparameter *one-pixel-png*
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
+  "A 1x1 PNG, as Kitty's graphics protocol sends one (f=100).")
+
+(defun terminal-test-image-count (terminal)
+  (terminal-call terminal
+                 (lambda ()
+                   (let ((emulator (terminal-emulator terminal)))
+                     (length (slt::terminal-image-render-list (slt::terminal-emulator-image-store emulator) 8 16))))))
+
+(deftest a-terminal-shows-kitty-png-images ()
+  (with-terminal-test (directory)
+    (if (not (or (some (lambda (prefix) (directory (format nil "~a/lib/libpng16.*" prefix))) *terminal-library-prefixes*)
+                 (ignore-errors (cffi:load-foreign-library '(:or "libpng16.so.16" "libpng16.16.dylib")) t)))
+        (check t "skipped: libpng is not installed")
+        (let ((terminal (open-terminal :directory directory)))
+          (terminal-type-line terminal (format nil "printf '\\033_Ga=T,f=100;~a\\033\\\\'; echo drawn-$((1+1))" *one-pixel-png*))
+          (check (terminal-test-shows terminal "drawn-2"))
+          (check (scratch-wait-until (lambda () (plusp (or (terminal-test-image-count terminal) 0))))
+                 "the PNG is decoded and placed (libpng found where the system keeps it)")))))
+
+(deftest a-terminal-takes-the-pages-size-and-cells ()
+  (check-equal (terminal-size-from (jobj "rows" 40 "cols" 120 "cellWidth" 9 "cellHeight" 17))
+               '(:rows 40 :columns 120 :cell-width 9 :cell-height 17))
+  (check-equal (terminal-size-from (jobj "rows" 0 "cols" 120 "cellWidth" "x")) nil "nonsense is ignored")
+  (with-terminal-test (directory)
+    (let* ((terminal (open-terminal :directory directory :size '(:rows 30 :columns 100 :cell-width 9 :cell-height 17)))
+           (json (terminal-json terminal)))
+      (check-equal (coerce (jget json "cell") 'list) '(9 17) "images are placed in the page's cells")
+      (terminal-type-line terminal "stty size")
+      (check (terminal-test-shows terminal "30 100") "the shell starts at the page's size"))))

@@ -1042,6 +1042,10 @@ and the tab draws it with slt's own browser client. slt is a git submodule
 - **The agent** reads a terminal with the `terminal-output` tool, and
   never types into it. A shell that exits leaves its last screen behind,
   so you can still ask about it; **Close** hangs up a shell.
+- **Images:** Kitty's graphics protocol and SIXEL work. slt decodes PNG
+  images with the system's libpng and SIXEL with libsixel (`brew install
+  libpng libsixel`, or your system's packages); raw RGB images need
+  neither. `doctor` says which are missing.
 - Each terminal reaches its shell over a WebSocket on 127.0.0.1. The
   socket needs a random token per terminal and a page on this machine.
 ### Changing the UI (including by the agent)
