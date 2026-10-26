@@ -67,6 +67,8 @@ clingon.test, ghcr.io/ocicl/clingon@sha256:27d1426613e66fd28223c737bd7886dfdd4f2
 clinker-transcript, git+https://github.com/lambda-symbolics/clinker-transcript@d7cd04903fb36b62224fe618a0e1a11bebf0d8cb, clinker-transcript-d7cd049/clinker-transcript.asd
 closer-mop, ghcr.io/ocicl/closer-mop@sha256:39ec579e68118a8be57a7882812ff31094a031f88b77f11cf4434a92261f1126, closer-mop-20260329-04db182/closer-mop.asd
 colorize, ghcr.io/ocicl/colorize@sha256:6a4c03efd20266dd630b9009620b29c0e22fffdb30781e258bf5ae308b8bb8a2, colorize-20241110-c41fcc5/colorize.asd
+com.inuoe.jzon, ghcr.io/ocicl/com.inuoe.jzon@sha256:b0cfbc3d8fb3c09526d92575b40b13a68ad93be7edeb48fd69dcea053c5611a5, jzon-20251113-f05afbb/com.inuoe.jzon.asd
+com.inuoe.jzon-tests, ghcr.io/ocicl/com.inuoe.jzon@sha256:b0cfbc3d8fb3c09526d92575b40b13a68ad93be7edeb48fd69dcea053c5611a5, jzon-20251113-f05afbb/com.inuoe.jzon-tests.asd
 command-line-arguments, ghcr.io/ocicl/command-line-arguments@sha256:f21c79fdae342967c60c50fda5fa412655c5a78cab729d931acfbb8bc294ed8c, command-line-arguments-20240503-5008c4e/command-line-arguments.asd
 daphne, git+https://github.com/lambda-symbolics/daphne@65f68216152c70110a092b79050b37ce75cdbdb1, daphne-65f6821/daphne.asd
 defstar, ghcr.io/ocicl/defstar@sha256:68cca1f2d9b6cf68b4e899d5865d2c774179ae5e2ebae11e93a5a45456847fa9, defstar-20240503-132829d/defstar.asd
@@ -89,6 +91,7 @@ fast-io, ghcr.io/ocicl/fast-io@sha256:7ba35a0eddf00b3c25656b3c5a93e95460f6cb8f80
 fast-websocket, ghcr.io/ocicl/fast-websocket@sha256:046c8152322c407ba5362900a957733ed7531a0c00dab7c323dfcfacdd347a0c, fast-websocket-20240513-66ea866/fast-websocket.asd
 flexi-streams, ghcr.io/ocicl/flexi-streams@sha256:95005b06a8a95c82780c75ead53810bcb273d07fcf5fe76b527f1856df9923f2, flexi-streams-20240503-4951d57/flexi-streams.asd
 flexi-streams-test, ghcr.io/ocicl/flexi-streams@sha256:95005b06a8a95c82780c75ead53810bcb273d07fcf5fe76b527f1856df9923f2, flexi-streams-20240503-4951d57/flexi-streams-test.asd
+float-features, ghcr.io/ocicl/float-features@sha256:96d7f31d99c87db8771f3f4e4866df1f09f9f3c0c7bca86b6d221bba403c83b1, float-features-20261011-ee18952/float-features.asd
 frugal-uuid, ghcr.io/ocicl/frugal-uuid@sha256:243abf7c9d026cb588737620235beee7981c884bfa7ad7d765e05afee06efdb2, cl-frugal-uuid-20260807-b25fcdd/frugal-uuid.asd
 global-vars, ghcr.io/ocicl/global-vars@sha256:d197e871c9c9abc4bf31b1186f5fd28f0ca848ebe2e9dddf2d82ecee01dbdc65, global-vars-20240503-c749f32/global-vars.asd
 global-vars-test, ghcr.io/ocicl/global-vars@sha256:d197e871c9c9abc4bf31b1186f5fd28f0ca848ebe2e9dddf2d82ecee01dbdc65, global-vars-20240503-c749f32/global-vars-test.asd

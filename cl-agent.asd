@@ -42,7 +42,7 @@
                "lem-clojure-mode" "lem-elisp-mode" "lem-lua-mode" "lem-perl-mode" "lem-swift-mode"
                "lem-kotlin-mode" "lem-scala-mode" "lem-dart-mode" "lem-zig-mode" "lem-nix-mode"
                "lem-server"                                   ; Lem's web frontend: the Code tab's editor
-               "lem-terminal"                                 ; Lem's terminal (libvterm), src/lem/terminal.lisp
+               "slt/core" "slt/web"                           ; slt, the Terminal tab's terminals (third-party/slt), src/terminal.lisp
                "tree-sitter-cl"                               ; syntax trees for the agent's structural edits
                "cl-kanren")                                   ; miniKanren: the logic tool (logic.lisp)
   :build-operation "program-op"
@@ -156,6 +156,7 @@
            (:static-file "lisp-read.js")
            (:static-file "forms.js")
            (:static-file "objects.js")
+           (:static-file "terminal.js")
            (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"
@@ -213,7 +214,7 @@
                    (:file "live")))
      (:file "lem/lisp-scratch")
      (:file "lem/listener")
-     (:file "lem/terminal")
+     (:file "terminal")
      (:file "tools/lisp-scratch-tool")
      (:file "tools/scratch-tool")
      (:file "tools/source-tool")
@@ -224,7 +225,7 @@
 ;; never touches the network and needs no LLM provider configured.
 (asdf:defsystem "cl-agent/tests"
   :description "Offline unit tests for cl-agent."
-  :depends-on ("cl-agent")
+  :depends-on ("cl-agent" "websocket-driver-client")
   :pathname "t"
   :serial t
   :components
@@ -273,7 +274,7 @@
    (:file "test-editor-files")
    (:file "test-systems")
    (:file "test-lem-commands")
-   (:file "test-lem-terminal")
+   (:file "test-terminal")
    (:file "test-copilot")
    (:file "test-syntax-tree")
    (:file "test-logic")

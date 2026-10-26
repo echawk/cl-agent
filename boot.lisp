@@ -8,9 +8,11 @@
 ;;;;     shelling out to the `ocicl` CLI.
 ;;;;  2. Points ASDF's source-registry at this project directory, so it
 ;;;;     finds cl-agent.asd, plus third-party/ (recursively), which
-;;;;     holds small vendored ASDF systems that aren't ocicl packages
-;;;;     themselves -- currently just opsis-conditions-stub, see that
-;;;;     directory's header comment for why it exists.
+;;;;     holds ASDF systems that aren't ocicl packages themselves:
+;;;;     opsis-conditions-stub (see that directory's header comment for
+;;;;     why it exists) and slt, the Terminal tab's terminal emulator, a
+;;;;     git submodule pinned to one commit (`make install-deps` fetches
+;;;;     it; its own build's ocicl/ directory must not be there).
 ;;;;  3. Registers one extra :DIRECTORY entry per package listed in
 ;;;;     ocicl.csv (see OCICL-PACKAGE-DIRECTORIES below) -- needed
 ;;;;     because ocicl.csv keys a package by its PRIMARY system name,

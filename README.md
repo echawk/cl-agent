@@ -754,15 +754,9 @@ instead of colour. `/theme NAME` picks one directly.
     The other way round, `C-c C-a` in Lem (`M-x cl-agent-ask`) puts the
     region, or the Lisp form at point, at this prompt with its file and
     lines, so you can finish the question.
-    `/term [dir]` opens a terminal in the Code tab, under the file you're
-    editing. `/run [@file]` saves a file and runs it there by its type,
-    compiling it first if it is C, C++ or Rust. In the terminal, `C-c`
-    interrupts the program and `C-x C-a` puts its last lines at this
-    prompt to ask about them. The agent can read the terminal
-    (`terminal-output`), but never types into it. The terminal is Lem's
-    own, over libvterm (`brew install libvterm`, or `apt install
-    libvterm-dev`), and its small C shim is compiled the first time a
-    terminal opens.
+    `/term [dir]` opens a terminal in the Terminal tab, and `/run [@file]`
+    saves a file and runs it there by its type (see
+    [The Terminal tab](#the-terminal-tab)).
   - **anything else** goes to the agent as `(C n)`. `Alt-Enter` asks the
     agent even when the text looks like Lisp.
 
@@ -1021,6 +1015,35 @@ event log, so a reconnecting page catches up without missing or repeating
 anything. Mutating requests require an `X-CL-Agent` header and a loopback
 `Host`, so other web pages cannot drive the agent through your browser.
 
+
+### The Terminal tab
+
+The Terminal tab holds shells next to your files, so you can run programs
+and then ask the agent about what they printed. The terminals are
+[slt](https://github.com/echawk/slt), a terminal emulator in Common Lisp.
+slt runs inside cl-agent's own image with its pure-Lisp `lispvt` engine,
+and the tab draws it with slt's own browser client. slt is a git submodule
+(`third-party/slt`), pinned to one commit; `make install-deps` fetches it.
+
+- **`/term [dir]`** opens a terminal in DIR, or in the working directory.
+  A running terminal already in that directory is shown instead; **+ New**
+  always opens another. Each terminal is a tab of its own, and right-click
+  gives its menu.
+- **`/run [@file]`** saves a file and runs it in a terminal in its
+  directory, by its type. C, C++ and Rust are compiled first; Go, Python,
+  Ruby, Racket, JavaScript, Lisp and shell scripts run directly. The
+  Code tab's **Run** button and a file's **Run in the terminal** menu
+  item do the same.
+- **Keys:** in a terminal every key is the program's. Ctrl-C interrupts
+  it and Alt is Meta, so the page's own Alt- keys step aside. Two keys
+  are not the program's: Ctrl-Shift-A puts the terminal's last lines at
+  the prompt, to ask about them (the **Ask** button does the same), and
+  Ctrl-Shift-P goes back to the prompt.
+- **The agent** reads a terminal with the `terminal-output` tool, and
+  never types into it. A shell that exits leaves its last screen behind,
+  so you can still ask about it; **Close** hangs up a shell.
+- Each terminal reaches its shell over a WebSocket on 127.0.0.1. The
+  socket needs a random token per terminal and a page on this machine.
 ### Changing the UI (including by the agent)
 
 The client is a set of plain files in `src/ui/web/static/`: `theme.css`

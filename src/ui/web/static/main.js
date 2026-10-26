@@ -15,6 +15,7 @@ import * as session from './session.js';
 import './agents.js';
 import './sessions.js';
 import './code.js';
+import './terminal.js';
 import './live.js';
 import { lispApi } from './lisp.js';
 import { lispState } from './forms.js';
@@ -149,6 +150,9 @@ function installSplitter() {
 
 function installKeys() {
   document.addEventListener('keydown', e => {
+    // In a terminal every key is the program's (Alt is Meta): terminal.js
+    // keeps the two that are not.
+    if (e.target?.closest?.('.slt-root')) return;
     if (e.altKey && (e.key === 't' || e.key === 'T' || e.code === 'KeyT')) { e.preventDefault(); core.setTheme('toggle'); return; }
     if (e.altKey && !e.ctrlKey && e.code === 'KeyM') { e.preventDefault(); session.openModelMenu(); return; }
     if ((e.altKey && !e.ctrlKey && e.code === 'KeyH') || e.key === 'F1') { e.preventDefault(); inspect(keymapObject()); return; }

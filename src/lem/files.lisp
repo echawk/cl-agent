@@ -36,7 +36,10 @@
 relative to DIRECTORY, the way Lem's EXPAND-FILE-NAME reads it."
   (unless (and (stringp path) (plusp (length (string-trim " " path))))
     (error "Give a path."))
-  (lem:expand-file-name (string-trim " " path) (uiop:native-namestring (uiop:ensure-directory-pathname directory))))
+  (let ((path (string-trim " " path)))
+    ;; Lem's EXPAND-FILE-NAME reads "~/" as home, but "~" alone as a name.
+    (lem:expand-file-name (if (string= path "~") "~/" path)
+                          (uiop:native-namestring (uiop:ensure-directory-pathname directory)))))
 
 (defun set-working-directory (directory &key (by "user"))
   "Make DIRECTORY the working directory: the shell tools, file tools, LSP

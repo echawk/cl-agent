@@ -393,9 +393,9 @@ export function keymapObject() {
         ['C-c C-z', 'scratch ⇄ REPL'], ['0–9 q c', 'in the debugger: a restart, abort, continue']]),
       ...group('Lem (the Code tab, and the scratch buffer in Lem)', [
         ['C-x C-f', 'visit a file'], ['M-x', 'run a command'], ['C-c C-a', 'put the region or form at the prompt, to ask about it']]),
-      ...group('The terminal (/term, /run)', [
-        ['C-c', 'the program\'s: interrupt it'], ['C-x C-a', 'put its last lines at the prompt, to ask about them'],
-        ['C-x [', 'copy mode: move and mark its text (Escape leaves)'], ['C-x o', 'the other window'], ['C-x k', 'close it']]),
+      ...group('The Terminal tab (/term, /run)', [
+        ['any key', 'the program\'s: Ctrl-C interrupts it, Alt is Meta'], ['Ctrl-Shift-A', 'put its last lines at the prompt, to ask about them'],
+        ['Ctrl-Shift-P', 'back to the prompt'], ['⌘C / ⌘V', 'copy the mouse\'s selection, paste'], ['wheel, Shift-PageUp', 'its history']]),
     ],
   };
 }

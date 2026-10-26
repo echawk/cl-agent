@@ -24,10 +24,7 @@ region if marked, the top-level form at point in a Lisp buffer, else NIL."
                (span start end)))))))
 
 (defun lem-ask-prompt-text (buffer)
-  "What C-c C-a puts at the main prompt for BUFFER: in a terminal, its
-last lines (lem/terminal.lisp)."
-  (when (lem-terminal/terminal-mode::buffer-terminal buffer)
-    (return-from lem-ask-prompt-text (terminal-ask-prompt-text buffer)))
+  "What C-c C-a puts at the main prompt for BUFFER."
   (let ((where (or (lem:buffer-filename buffer) (lem:buffer-name buffer))))
     (multiple-value-bind (text first last) (lem-ask-context buffer)
       (if (and text (plusp (length (string-trim '(#\Space #\Tab #\Newline) text))))

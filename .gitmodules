@@ -1,0 +1,3 @@
+[submodule "third-party/slt"]
+	path = third-party/slt
+	url = https://github.com/echawk/slt.git

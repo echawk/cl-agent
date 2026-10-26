@@ -23,7 +23,10 @@ all: build
 check-env:
 	./check-env.sh
 
+# third-party/slt is a git submodule (slt, the Terminal tab's terminal
+# emulator, pinned to one commit): fetched here when it is missing.
 install-deps: check-env
+	@test -f third-party/slt/slt.asd || git submodule update --init third-party/slt
 	ocicl install
 
 build: install-deps

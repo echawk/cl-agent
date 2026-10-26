@@ -2,7 +2,11 @@
 
 (deftest skills-discover-metadata-and-read-on-demand ()
   (with-temp-config-dir ()
-    (let* ((*skill-catalog* nil)
+    ;; Project skills come from the working directory's .agents/skills/: a
+    ;; session in the temporary one, not the checkout this runs in.
+    (let* ((*current-session* (make-session (make-instance 'ollama-provider :model "m")
+                                            :working-directory (uiop:ensure-directory-pathname *config-directory*)))
+           (*skill-catalog* nil)
            (directory (merge-pathnames "release-notes/" (skills-directory)))
            (source (merge-pathnames "SKILL.sexp" directory)))
       (ensure-directories-exist source)

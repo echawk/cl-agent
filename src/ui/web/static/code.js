@@ -36,6 +36,7 @@ import { showView, activeView } from './views.js';
 import { copilotBox, copilotOptions } from './copilot.js';
 import { createLemView } from './lem-view.js';
 import { present, fileObject } from './objects.js';
+import { openTerminal, runFile } from './terminal.js';
 
 const client = `code-${Math.random().toString(36).slice(2)}`;
 const toast = (text, color) => window.CLAgent?.toast(text, color);
@@ -140,14 +141,7 @@ const ensureLemFrame = () => (lemView ? lemView.ensure() : Promise.resolve(null)
 const lemRemeasure = () => lemView?.remeasure();
 const focusLem = () => lemView?.focus();
 
-function lemVisit(path, line) {
-  // Remembered: a terminal opened meanwhile waits for it, or the visit
-  // would land in the terminal's window.
-  view.visiting = lemVisit1(path, line);
-  return view.visiting;
-}
-
-async function lemVisit1(path, line) {
+async function lemVisit(path, line) {
   await ensureLemFrame();
   // Lem is shared with the Lisp tab: a visit that lands after you left
   // would cover its scratch buffer.  Showing this tab visits it again.
@@ -218,50 +212,13 @@ function renderLemHead() {
       f ? `\u200e${f.path ? short(f.path) : f.name}\u200e${f.modified ? ' ●' : ''}` : 'C-x C-f visits a file · M-x runs a command'),
     el('span', { class: 'spacer' }),
     el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Run a Lem command (M-x)', onclick: () => lemRun('execute-command') }, 'M-x'),
-    f?.path ? el('button', { class: 'btn btn-small', type: 'button', 'data-doc': `Save ${f.name || 'this file'} and run it in the terminal (/run)`, onclick: () => runFile(f.path).catch(err => message(err.message)) }, 'Run') : '',
-    el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'A terminal in this directory, below the file (/term)', onclick: () => openTerminal({ directory: f?.path ? f.path.replace(/[^/]*$/, '') : undefined }).catch(err => message(err.message)) }, 'Terminal'),
-    terminalShown(f)
-      ? el('button', {
-        class: 'btn btn-small btn-ask', type: 'button', 'data-doc': 'Ask the agent about what the terminal shows (C-x C-a)', 'aria-label': 'Ask the agent about the terminal',
-        onclick: () => askAboutTerminal(f.name),
-      }, 'Ask')
-      : el('button', {
-        class: 'btn btn-small btn-ask', type: 'button', 'data-doc': 'Ask the agent about this file', 'aria-label': 'Ask the agent about this file',
-        onclick: () => insertInComposer(f ? `Help me with ${short(f.path)} (open in the Lem editor).` : 'Help me with the file open in the Lem editor.'),
-      }, 'Ask'),
+    f?.path ? el('button', { class: 'btn btn-small', type: 'button', 'data-doc': `Save ${f.name || 'this file'} and run it in the Terminal tab (/run)`, onclick: () => runFile(f.path).catch(err => message(err.message)) }, 'Run') : '',
+    el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'A terminal in this file\'s directory, in the Terminal tab (/term)', onclick: () => openTerminal({ directory: f?.path ? f.path.replace(/[^/]*$/, '') : undefined }).catch(err => message(err.message)) }, 'Terminal'),
+    el('button', {
+      class: 'btn btn-small btn-ask', type: 'button', 'data-doc': 'Ask the agent about this file', 'aria-label': 'Ask the agent about this file',
+      onclick: () => insertInComposer(f ? `Help me with ${short(f.path)} (open in the Lem editor).` : 'Help me with the file open in the Lem editor.'),
+    }, 'Ask'),
     copilotBox(focusEditor));
-}
-
-// ---------- the terminal (lem/terminal.lisp) ----------
-
-const terminalShown = f => !f?.path && /^Terminal/.test(f?.mode || '');
-
-/** Show a terminal in Lem's window: BODY is {directory, new} or {file} (run it). */
-async function openTerminal(body) {
-  showView('code');
-  if (!view.lemMode) await setLemMode(true);
-  await ensureLemFrame();
-  await view.visiting;   // showing the tab visits its file: first, not over the terminal
-  const json = await api('/api/lem/terminal', { method: 'POST', body });
-  focusLem();
-  return json;
-}
-
-const runFile = path => openTerminal({ file: path });
-
-async function askAboutTerminal(name) {
-  try {
-    const { prompt } = await api('/api/lem/terminal/transcript', { params: { name } });
-    insertInComposer(prompt);
-  } catch (err) { message(err.message); }
-}
-
-/** /term and /run's argument: a path relative to the working directory. */
-function promptPath(arg) {
-  const path = arg.trim().replace(/^@/, '');
-  if (!path) return null;
-  const cwd = (state.session?.cwd || '').replace(/\/?$/, '/');
-  return path.startsWith('/') || path.startsWith('~') ? path : cwd + path;
 }
 
 function focusEditor() { if (view.lemMode) focusLem(); else view.editor?.focus(); }
@@ -1198,15 +1155,10 @@ registerCommand('edit', arg => {
   return openDoc('file', path, { line: match[2] ? Number(match[2]) : undefined });
 }, 'Open a file in the Code tab\'s editor: /edit @path[:line]');
 
-// /term and /run at the main prompt: a terminal next to your files.
-registerCommand('term', arg => openTerminal({ directory: promptPath(arg) || undefined }),
-  'A terminal in the Code tab: /term [dir] (C-c is the program\'s; C-x C-a asks about it)');
-
-registerCommand('run', arg => {
-  const path = promptPath(arg) || view.lemFile?.path || (view.doc && !view.lemMode ? view.doc.path : null);
-  if (!path) throw new Error('Usage: /run @file (or with a file shown in the Code tab): save it and run it in the terminal');
-  return runFile(path);
-}, 'Save a file and run it in the terminal by its type: /run [@file] (C, C++, Rust, Go, Python, Ruby, Racket, JS, Lisp, shell...)');
+/** The file the Code tab shows, for /run with no argument. */
+export function currentFile() {
+  return view.lemFile?.path || (view.doc && !view.lemMode ? view.doc.path : null);
+}
 
 // /mx at the main prompt: Lem's M-x, in the Code tab (its prompts ask there).
 registerCommand('mx', async arg => {

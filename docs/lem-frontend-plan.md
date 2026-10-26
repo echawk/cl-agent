@@ -318,58 +318,37 @@ the output an object you can inspect and ask about.
     status, output, and duration. "Ask the agent about it" then works
     on a failing compile.
 
-**6b. A real terminal: Lem's `lem-terminal` (libvterm) — done, ahead of the order**
+**6b. A real terminal — done, and then replaced by slt**
 
-Built first, in today's iframe view, because a terminal was wanted soon
-(`src/lem/terminal.lisp`, tests in `t/test-lem-terminal.lisp`). It
-differs from the sketch above it in these ways:
-- **No `make terminal`.** The shim is compiled on first use, as
-  tree-sitter's wrapper is: Lem's `terminal.c`, read into the image at
-  build time, is written to `<config>/terminal/build/` and compiled
-  against the system's libvterm into `<config>/terminal/lib/`. A newer
-  Lem rebuilds it. Nothing is written under `ocicl/`.
-- **Our changes to the shim**, applied as anchored patches (a changed
-  `terminal.c` fails loudly rather than silently):
-  - The shell starts with no signal blocked or ignored. It is forked
-    from a Lisp thread and would otherwise keep SBCL's mask, and Ctrl-C
-    would never interrupt its programs.
-  - Text in the default colour takes the theme's foreground (libvterm's
-    default is light grey), following theme changes
-    (`*after-load-theme-hook*`).
-  - The shell's pid and pty are exposed, to hang it up.
-- **What Lem's terminal leaves to its host:**
-  - Killing the buffer closes the pty, sends SIGHUP and reaps the shell.
-    Lem's own `destroy` left the shell running, and failed if the
-    reading thread had already ended.
-  - A shell that exits ends the reading thread (it would otherwise wake
-    on the closed pty forever). The exit is told by `waitpid`, not by an
-    empty read: SBCL's GC signals wake the thread's `select` too.
-- **Keys:**
-  - `C-c` is the program's at once; everywhere else in Lem it begins
-    keys like `C-c C-a`, and Lem would wait for the next key.
-  - `C-x C-a` asks about the terminal: its last lines go to the prompt.
-  - Lem's window and buffer commands (`C-x o`, `C-x k`, `M-x`) still
-    work. The keymap object (Alt-H) lists these keys.
-- **In the UI:**
-  - `/term [dir]` opens a terminal, and so does **Terminal** in the Code
-    tab's editor bar and in a directory's menu.
-  - `/run [@file]` saves a file and runs it in a terminal in its
-    directory, by its type (`*terminal-run-commands*`: C, C++, Rust, Go,
-    Python, Ruby, Racket, JS, Lisp, shell…). The same action is the
-    **Run** button and a file's **Run in the terminal** menu item.
-  - **Ask** in the editor bar, while a terminal is shown, does what
-    `C-x C-a` does.
-- **The agent** reads a terminal with the `terminal-output` tool and
-  never types into it.
-- **Without libvterm**, `/term` says how to install it, and `doctor`
-  reports it. The fallback to a 6a shell buffer is not built yet.
+A terminal was wanted soon, so 6b was built first, in the iframe view, on
+Lem's own `lem-terminal` over libvterm. It has since been replaced by
+[slt](https://github.com/echawk/slt), a terminal emulator in Common Lisp,
+in a **Terminal tab of its own**: a separate frontend, not a Lem buffer
+(`src/terminal.lisp`, `static/terminal.js`, tests in
+`t/test-terminal.lisp`).
+- slt runs in cl-agent's image with its pure-Lisp `lispvt` engine, so no
+  native build is needed. Its web frontend is subclassed so that every
+  terminal shares one socket server (127.0.0.1, a random token per
+  terminal, local pages only). Its browser client (`slt-terminal.js`)
+  draws each terminal in the page's theme and font.
+- slt is a git submodule, `third-party/slt`, pinned to one commit.
+- `/term`, `/run`, Ask (Ctrl-Shift-A) and the agent's `terminal-output`
+  work as they did. In a terminal every key is the program's: the page's
+  Alt- keys step aside.
+- What standalone slt does not need, cl-agent does:
+  - It reaps a closed terminal's shell. slt sends SIGTERM, which an
+    interactive shell ignores, and then quits; cl-agent lives on.
+  - It starts a shell at the page's size, so that `/run`'s first output
+    is not wrapped at 80 columns.
+  - It keeps an exited terminal's last screen to read and ask about.
+- Lem's `M-x terminal` is gone from the hosted Lem: the libvterm shim, its
+  patches and its build are removed.
 
 Still open from 6:
-- 6a's `shell-mode` fallback for machines without libvterm.
 - The *run object*: a run's command, exit status and output as a
-  presentation.
-- The key-ownership rule for the page-native renderer (Stage 2). The
-  iframe already owns its keys.
+  presentation. slt's prompt marks (OSC 133) could supply the boundaries
+  once the shell emits them.
+- 6a, Lem's `shell-mode`, is no longer needed for running files.
 
 **Testing notes**
 - *6a, shell:*
@@ -381,19 +360,16 @@ Still open from 6:
   - A long-running command (`sleep 5; echo done`) does not block Lem's
     editor thread: other buffers stay editable meanwhile.
   - Killing the buffer kills the process.
-- *6b, terminal:*
-  - With `terminal.so` built: `M-x terminal`, type `echo $TERM` RET, read
-    the screen through the Stage 1 model.
-  - Run a full-screen program (`top -l 1`, or `vi` then `:q`) and check it
-    redraws and exits cleanly.
-  - Resize the pane; the terminal's rows and columns follow
-    (`terminal-resize`).
-  - Ctrl-C reaches the program, not cl-agent: `sleep 10` then Ctrl-C
-    returns to the prompt within 1 s, and cl-agent is unaffected. This
-    ties into the Ctrl-C fix from earlier.
-  - Without `terminal.so`, **Terminal** opens a shell buffer and the
-    who-line says why. `doctor` shows the hint.
-  - Build `make terminal` on macOS arm64 and on Linux in CI.
+- *6b, terminal (slt; `t/test-terminal.lisp` covers each):*
+  - Open one in a directory whose name needs quoting; `pwd` shows it.
+  - `sleep 30`, then Ctrl-C as the client sends it: the prompt is back
+    within 3 s, even right after a full GC.
+  - `/run` on a C file: compiled, run, and `$?` is the program's.
+  - Closing hangs up and reaps the shell; an exited shell keeps its last
+    screen.
+  - The socket refuses a wrong token and a page from elsewhere.
+  - In a browser: keys typed, Alt-L staying in the terminal, Ctrl-Shift-A
+    asking, the size filling the pane, theme switches.
 - *Tests must never touch the user's shell configuration:* run shells
   with `HOME` and `ZDOTDIR` pointed at the test's config directory.
 
@@ -425,7 +401,7 @@ Still open from 6:
 | 4 presentations in buffers | inspect and ask from inside the editor | 2 (3) | M |
 | 5 one prompt | the editor's prompts are the listener's | 3 | L |
 | 6a shell + Run this file | compile and run scratch files | 3 (works with 2) | M |
-| 6b terminal | full-screen programs, a real shell | — (done, in the iframe) | M |
+| 6b terminal | full-screen programs, a real shell | — (done: slt, the Terminal tab) | M |
 
 6a can go before 2 if a shell is wanted sooner: it is an ordinary buffer
 and works in today's iframe view too. 6b depends on the key-ownership
