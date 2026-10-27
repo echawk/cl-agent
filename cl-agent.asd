@@ -157,6 +157,7 @@
            (:static-file "forms.js")
            (:static-file "objects.js")
            (:static-file "terminal.js")
+           (:static-file "emacs-view.js")
            (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"
@@ -215,6 +216,8 @@
      (:file "lem/lisp-scratch")
      (:file "lem/listener")
      (:file "terminal")
+     (:static-file "emacs/cl-agent.el")
+     (:file "emacs")
      (:file "tools/lisp-scratch-tool")
      (:file "tools/scratch-tool")
      (:file "tools/source-tool")
@@ -275,6 +278,7 @@
    (:file "test-systems")
    (:file "test-lem-commands")
    (:file "test-terminal")
+   (:file "test-emacs")
    (:file "test-copilot")
    (:file "test-syntax-tree")
    (:file "test-logic")

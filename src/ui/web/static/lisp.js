@@ -34,6 +34,7 @@ import { insert as insertInComposer } from './composer.js';
 import { showView, activeView } from './views.js';
 import { copilotBox, copilotOptions } from './copilot.js';
 import { createLemView } from './lem-view.js';
+import { createEmacsView, emacsAvailable } from './emacs-view.js';
 import { lispPresentation, inspectLisp } from './objects.js';
 
 const toast = (text, color) => window.CLAgent?.toast(text, color);
@@ -41,7 +42,9 @@ const client = Math.random().toString(36).slice(2);
 
 const lisp = {
   mounted: false,
-  lemMode: storage('lisp-lem', false),   // the scratch buffer is edited in Lem
+  mode: storage('lisp-editor', storage('lisp-lem', false) ? 'lem' : 'simple'),   // the scratch buffer's editor: simple, lem or emacs
+  get lemMode() { return this.mode === 'lem'; },
+  get emacsMode() { return this.mode === 'emacs'; },
   package: 'CL-AGENT',
   busy: false,
   entries: new Map(),          // id -> entry, in order
@@ -530,15 +533,18 @@ function mount(container) {
 
   const scratchHost = el('div', { class: 'scratch-host' });
   const lemHost = el('div', { class: 'code-lem-host scratch-lem-host', hidden: true });
+  const emacsHost = el('div', { class: 'emacs-host scratch-emacs-host', hidden: true });
   const simpleButtons = el('span', { class: 'scratch-simple-buttons' });
   const lemKeys = el('span', { class: 'subpane-info scratch-lem-keys', hidden: true,
-                               'data-doc': 'In Lem: C-c C-c compiles the form at point, C-x C-e evaluates the form before it, C-c C-k loads the buffer -- here' },
+                               'data-doc': 'In Lem or Emacs: C-c C-c compiles the form at point, C-x C-e evaluates the form before it, C-c C-k loads the buffer -- here' },
     'C-c C-c compile · C-x C-e eval · C-c C-k load');
   const modeSwitch = el('span', { class: 'code-editor-switch', role: 'group', 'aria-label': 'Scratch editor' },
     el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'lem', 'data-doc': 'Edit the scratch buffer in Lem itself: your keys, its lisp-mode, evaluation here',
                    onclick: () => setLemMode(true) }, 'Lem'),
     el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'simple', 'data-doc': 'Edit it in the lightweight editor',
-                   onclick: () => setLemMode(false) }, 'Simple'));
+                   onclick: () => setLemMode(false) }, 'Simple'),
+    el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'emacs', 'data-doc': 'Edit the scratch buffer in Emacs, with your init file: its keys evaluate here',
+                   onclick: () => setScratchMode('emacs') }, 'Emacs'));
   const replHost = el('div', { class: 'repl-input-host' });
   container.append(el('div', { class: 'lisp-split' },
     el('section', { class: 'subpane scratch-pane', 'aria-label': 'Scratch buffer' },
@@ -546,13 +552,13 @@ function mount(container) {
         el('span', { class: 'spacer' }), lemKeys, modeSwitch,
         simpleButtons,
         button('Ask', 'Ask the agent to review this buffer (or the selected lines)', () => {
-          if (lisp.lemMode) { insertInComposer('Review the code in my Lisp scratch buffer.'); return; }
+          if (lisp.mode !== 'simple') { insertInComposer('Review the code in my Lisp scratch buffer.'); return; }
           const { start, end, text } = ui.scratch.selection;
           insertInComposer(text.trim()
             ? `Review lines ${ui.scratch.lineOf(start)}–${ui.scratch.lineOf(end)} of my Lisp scratch buffer.`
             : 'Review the code in my Lisp scratch buffer.');
         }, 'btn-ask')),
-      conflict, scratchHost, lemHost),
+      conflict, scratchHost, lemHost, emacsHost),
     el('section', { class: 'subpane repl-pane', 'aria-label': 'REPL' },
       el('div', { class: 'subpane-title' }, el('span', { class: 'subpane-name' }, 'REPL'), replStatus,
         el('span', { class: 'spacer' }), interruptButton,
@@ -569,8 +575,15 @@ function mount(container) {
     copilotBox(() => ui.scratch.focus()));
 
   ui = { container, transcript, prompt, echo, conflict, replStatus, saveState, scratchInfo, interruptButton, dirty: false, saved: lisp.scratch.text,
-         scratchHost, lemHost, simpleButtons, lemKeys, modeSwitch };
+         scratchHost, lemHost, emacsHost, simpleButtons, lemKeys, modeSwitch };
   ui.lem = createLemView(lemHost, { wanted: () => lisp.lemMode && activeView() === 'lisp', message: text => message(text, 4000) });
+  ui.emacs = createEmacsView(emacsHost, { role: 'lisp', message: text => message(text, 6000),
+                                          onOpen: () => api('/api/emacs/lisp-scratch', { method: 'POST' }) });
+  emacsAvailable().then(available => {
+    const emacsButton = modeSwitch.querySelector('[data-mode="emacs"]');
+    if (emacsButton && !available) { emacsButton.disabled = true; emacsButton.dataset.doc = 'Emacs is not installed (brew install emacs)'; }
+    if (!available && lisp.emacsMode) setScratchMode('simple');
+  });
 
   ui.scratch = createLispEditor(scratchHost, {
     className: 'scratch-editor',
@@ -683,12 +696,13 @@ const inspect = id => inspectLisp(id);
 
 function renderLemMode() {
   if (!ui) return;
-  ui.scratchHost.hidden = lisp.lemMode;
+  ui.scratchHost.hidden = lisp.mode !== 'simple';
   ui.lemHost.hidden = !lisp.lemMode;
-  ui.simpleButtons.hidden = lisp.lemMode;
-  ui.lemKeys.hidden = !lisp.lemMode;
+  ui.emacsHost.hidden = !lisp.emacsMode;
+  ui.simpleButtons.hidden = lisp.mode !== 'simple';
+  ui.lemKeys.hidden = lisp.mode === 'simple';
   for (const b of ui.modeSwitch.querySelectorAll('button')) {
-    const active = (b.dataset.mode === 'lem') === lisp.lemMode;
+    const active = b.dataset.mode === lisp.mode;
     b.classList.toggle('active', active);
     b.setAttribute('aria-pressed', String(active));
   }
@@ -703,15 +717,30 @@ async function showScratchInLem() {
   ui.lem.focus();
 }
 
-async function setLemMode(on) {
-  if (!ui || on === lisp.lemMode) return;
+/** Emacs's "lisp" frame shows the scratch buffer, its keys evaluating here (emacs.lisp). */
+async function showScratchInEmacs() {
+  try {
+    const opened = ui.emacs.opened;
+    await ui.emacs.ensure();      // a new frame visits the scratch buffer itself (onOpen)
+    if (!lisp.emacsMode) return;
+    if (opened) await api('/api/emacs/lisp-scratch', { method: 'POST' });
+    if (activeView() === 'lisp') ui.emacs.focus();
+  } catch (err) { message(err.message, 4000); }
+}
+
+const setLemMode = on => setScratchMode(on ? 'lem' : 'simple');
+
+/** The scratch buffer's editor: simple, lem or emacs. */
+async function setScratchMode(mode) {
+  if (!ui || mode === lisp.mode) return;
   // What one editor has, the other reads: the simple editor's text is
-  // saved first; Lem saves as it goes ("lisp-scratch" brings it back).
-  if (on && ui.dirty) await saveScratch(true);
-  lisp.lemMode = on;
-  store('lisp-lem', on);
+  // saved first; Lem and Emacs save as they go ("lisp-scratch" brings it back).
+  if (mode !== 'simple' && ui.dirty) await saveScratch(true);
+  lisp.mode = mode;
+  store('lisp-editor', mode);
   renderLemMode();
-  if (on) showScratchInLem();
+  if (mode === 'lem') showScratchInLem();
+  else if (mode === 'emacs') showScratchInEmacs();
   else setTimeout(() => ui.scratch.focus(), 0);
 }
 
@@ -726,6 +755,7 @@ registerView({
   show: () => {
     lisp.agentEdited = false;
     if (lisp.lemMode) showScratchInLem();
+    else if (lisp.emacsMode) showScratchInEmacs();
     else setTimeout(() => ui?.repl.focus(), 0);
   },
 });

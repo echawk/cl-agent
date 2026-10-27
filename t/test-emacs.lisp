@@ -1,0 +1,175 @@
+;;;; t/test-emacs.lisp -- Emacs as the editor (emacs.lisp, emacs/cl-agent.el):
+;;;; cl-agent's own daemon, its frames, what it tells cl-agent and what the
+;;;; agent runs in it.  The daemon runs with -Q and HOME in the test's own
+;;;; directory: never the person's Emacs configuration.  Skipped where Emacs
+;;;; is not installed.
+
+(in-package :cl-agent)
+
+(defun call-with-test-emacs (function)
+  (if (not (and (emacs-program) (emacsclient-program)))
+      (check t "skipped: Emacs is not installed")
+      (let ((home (merge-pathnames "emacs-home/" *config-directory*))
+            (shell (uiop:getenv "SHELL")))
+        (ensure-directories-exist home)
+        (setf *emacs-load-init* nil
+              *emacs-environment* (list (format nil "HOME=~a" (uiop:native-namestring home))))
+        (sb-posix:setenv "SHELL" "/bin/sh" 1)
+        (unwind-protect (funcall function)
+          (emacs-stop)
+          (mapc (lambda (terminal) (ignore-errors (close-terminal terminal))) (list-terminals :kind :all))
+          (if shell (sb-posix:setenv "SHELL" shell 1) (sb-posix:unsetenv "SHELL"))
+          (setf *emacs-load-init* t *emacs-environment* '())))))
+
+(defmacro with-test-emacs (() &body body)
+  `(call-with-test-emacs (lambda () ,@body)))
+
+(defun emacs-test-file (name text)
+  (let ((path (merge-pathnames name *config-directory*)))
+    (ensure-directories-exist path)
+    (with-open-file (out path :direction :output :if-exists :supersede) (write-string text out))
+    (uiop:native-namestring (probe-file path))))
+
+(defun emacs-test-text (path)
+  (jget (emacs-file-buffer path) "text"))
+
+(deftest emacs-runs-as-cl-agents-own-daemon ()
+  (with-test-emacs ()
+    (emacs-start)
+    (check (emacs-running-p))
+    (check-equal (emacs-eval "(+ 1 2)") 3 "it evaluates what cl-agent sends")
+    (check-equal (emacs-eval "(getenv \"HOME\")") (car (last (uiop:split-string (first *emacs-environment*) :separator "=")))
+                 "with the environment cl-agent gives it")
+    (check (member 'emacs-stop sb-ext:*exit-hooks*) "cl-agent's exit stops it")
+    (let ((process *emacs-process*))
+      (emacs-stop)
+      (check (not (sb-ext:process-alive-p process)) "stopped")
+      (check-equal *emacs-state* :stopped))))
+
+(deftest emacs-ends-when-cl-agent-does-however-it-ends ()
+  ;; cl-agent.el's watchdog, under a stand-in parent killed with SIGKILL.
+  (with-test-emacs ()
+    (let* ((name (format nil "cl-agent-watchdog-~36r" (random (expt 36 6))))
+           (parent (uiop:launch-program
+                    (list "/bin/sh" "-c"
+                          (format nil "HOME=~a ~a --fg-daemon=~a -Q --eval \"(setq cl-agent-parent-pid $$)\" -l ~a -f cl-agent-start 2>/dev/null & wait"
+                                  (shell-quote (subseq (first *emacs-environment*) 5)) (shell-quote (emacs-program))
+                                  name (shell-quote (emacs-elisp-file))))))
+           (emacs nil))
+      (unwind-protect
+           (progn
+             (setf emacs (scratch-wait-until
+                          (lambda () (let ((pids (uiop:run-program (list "pgrep" "-f" (format nil "fg-daemon=~a" name))
+                                                                   :output :string :ignore-error-status t)))
+                                       (and (plusp (length pids)) (parse-integer pids :junk-allowed t))))
+                          :tries 300))
+             (check emacs "the daemon started")
+             (sleep 1)
+             (uiop:run-program (list "kill" "-9" (princ-to-string (uiop:process-info-pid parent))) :ignore-error-status t)
+             (check (scratch-wait-until (lambda () (/= 0 (cffi:foreign-funcall "kill" :int emacs :int 0 :int))) :tries 400)
+                    "it exits once its parent is gone"))
+        (when emacs (ignore-errors (uiop:run-program (list "kill" "-9" (princ-to-string emacs)) :ignore-error-status t)))))))
+
+(deftest emacs-starts-again-after-it-crashes ()
+  (with-test-emacs ()
+    (emacs-start)
+    (let ((process *emacs-process*))
+      (sb-ext:process-kill process 9)
+      (check (scratch-wait-until (lambda () (eq *emacs-state* :stopped)) :tries 300) "cl-agent notices")
+      (check (search "exited" *emacs-problem*) "and says so")
+      (emacs-start)
+      (check (and (emacs-running-p) (not (eq *emacs-process* process))) "the next use starts it again"))))
+
+(deftest emacs-frames-show-what-cl-agent-visits ()
+  (with-test-emacs ()
+    (let* ((file (emacs-test-file "visit.txt" (format nil "one~%two~%three~%")))
+           (terminal (emacs-frame "code" :size '(:rows 20 :columns 80))))
+      (check (eq (terminal-kind terminal) :editor) "a frame is an editor's terminal")
+      (check (not (member terminal (list-terminals))) "not one of the Terminal tab's")
+      (check (gethash "code" *emacs-shown*) "Emacs reports the frame")
+      (check-equal (jget (emacs-visit file :line 2) "path") file)
+      (check (scratch-wait-until (lambda () (equal (jget (gethash "code" *emacs-shown*) "path") file)))
+             "and what it now shows")
+      (check (find file *emacs-buffers* :key (lambda (b) (jget b "path")) :test #'equal) "and the open files")
+      (check (search "visit.txt (Text, in Emacs)" (call-tool "editor-files" (jobj))) "the agent sees it open")
+      (check-equal (emacs-frame "code") terminal "the frame is reused"))))
+
+(deftest emacs-runs-commands-for-the-agent ()
+  (with-test-emacs ()
+    (let ((file (emacs-test-file "replace.txt" (format nil "one beta two beta~%beta three~%"))))
+      (emacs-start)
+      (let ((result (run-emacs-command "query-replace" :path file :line 1 :answers '("beta" "BETA" "y" "n" "y"))))
+        (check (null (getf result :error)) (getf result :error))
+        (check-equal (emacs-test-text file) (format nil "one BETA two beta~%BETA three~%") "y, n, y: one answer per match")
+        (check-equal (length (getf result :asked)) 5)
+        (check (search "Lines 1-2 changed" (getf result :changes)))
+        (check (getf result :modified) "changed in Emacs, not saved")
+        (check-equal (uiop:read-file-string file) (format nil "one beta two beta~%beta three~%")))
+      (let ((result (run-emacs-command "query-replace" :path file :answers '("three"))))
+        (check (search "no answer was left" (getf result :error)) "an unanswered prompt stops the command")
+        (check-equal (emacs-eval "(minibufferp)") nil "and leaves no prompt behind"))
+      (check-equal (getf (run-emacs-command nil :keys "C-e" :path file :line 2) :point) '(2 11) "keys run from the given place")
+      (check (search "no command named" (getf (run-emacs-command "no-such-command-xyz" :path file) :error)))
+      (check (search "Ran upcase-region" (call-tool "emacs-command" (jobj "command" "upcase-region" "path" file "line" 1 "end_line" 1 "end_column" 4 "save" t))))
+      (check (search "ONE" (uiop:read-file-string file)) "saved through Emacs"))))
+
+(deftest emacs-buffers-follow-files-written-outside-it ()
+  (with-test-emacs ()
+    (let ((file (emacs-test-file "written.txt" "before")))
+      (emacs-start)
+      (emacs-visit file)
+      (with-open-file (out file :direction :output :if-exists :supersede) (write-string "after the agent" out))
+      (run-hook :file-written file "agent")
+      (check-equal (emacs-test-text file) "after the agent" "an unmodified buffer reads it again"))))
+
+(deftest c-c-c-a-in-emacs-asks-the-agent ()
+  (with-test-emacs ()
+    (let ((file (emacs-test-file "ask.lisp" (format nil "(defun answer ()~%  42)~%")))
+          (sent nil) (lock (bt:make-lock)))
+      (emacs-start)
+      (sb-int:encapsulate 'web-ui-command 'emacs-test
+                          (lambda (function &rest arguments)
+                            (declare (ignore function))
+                            (bt:with-lock-held (lock) (push arguments sent))))
+      (unwind-protect
+           (progn
+             (emacs-eval (format nil "(with-current-buffer (find-file-noselect ~a) (lisp-mode) (goto-char (point-min)) (forward-line 1) (cl-agent-ask))"
+                                 (elisp-string file)))
+             (let ((insert (scratch-wait-until (lambda () (bt:with-lock-held (lock) (assoc "insert" sent :test #'equal))))))
+               (check insert "the prompt gets it")
+               (let ((text (and insert (jget (second insert) "text"))))
+                 (check (search "About lines 1–2 of" text) "the form at point, with its lines")
+                 (check (search "(defun answer ()" text))
+                 (check (search "(open in Emacs)" text)))))
+        (sb-int:unencapsulate 'web-ui-command 'emacs-test)))))
+
+(deftest the-scratch-buffer-in-emacs-evaluates-here-and-saves-itself ()
+  (with-test-emacs ()
+    (let ((saved *lisp-repl*)
+          (path (uiop:native-namestring (lisp-scratch-pathname))))
+      (setf *lisp-repl* (make-lisp-repl))
+      (unwind-protect
+           (progn
+             (lisp-scratch-save (format nil "(+ 1 2)~%") :by "user")
+             (emacs-start)
+             (emacs-call-json "cl-agent-visit-scratch" "lisp" path)
+             (emacs-eval (format nil "(with-current-buffer (find-buffer-visiting ~a) (goto-char (point-max)) (insert \"(* 6 7)\") (cl-agent-scratch-eval-last))"
+                                 (elisp-string path)))
+             (let ((entry (scratch-wait-until (lambda () (find "emacs" (lisp-repl-entries *lisp-repl*)
+                                                               :key #'lisp-entry-source :test #'equal))
+                                              :tries 500)))
+               (check entry "C-x C-e evaluates in cl-agent's image")
+               (check (and entry (search "(* 6 7)" (lisp-entry-input entry)))))
+             (check (scratch-wait-until (lambda () (search "(* 6 7)" (uiop:read-file-string path))) :tries 300)
+                    "the edit is saved, so the agent and the other editors see it"))
+        (setf *lisp-repl* saved)))))
+
+(deftest emacs-keeps-characters-beyond-ascii-both-ways ()
+  (with-test-emacs ()
+    (let ((file (emacs-test-file "naïve–ünïcode.txt" (format nil "café ✓ 😀~%"))))
+      (emacs-start)
+      (check-equal (jget (emacs-visit file) "path") file "a file name, there and back")
+      (check-equal (emacs-test-text file) (format nil "café ✓ 😀~%") "its text, back")
+      (let ((result (run-emacs-command "query-replace" :path file :line 1 :answers '("café" "thé" "!"))))
+        (check (null (getf result :error)) (getf result :error))
+        (check-equal (emacs-test-text file) (format nil "thé ✓ 😀~%") "answers, there")))))

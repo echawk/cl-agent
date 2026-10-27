@@ -68,20 +68,27 @@ directory the shell, file and language-server tools use; /cd alone shows it."
                                           "path" (jobj "type" "string"))))
   (if (equal (jget args "action") "read")
       (let* ((path (or (jget args "path") (error "Give the path to read.")))
-             (json (lem-call (lambda ()
-                               (let ((buffer (or (editor-find-buffer path)
-                                                 (error "~a is not open in the editor." path))))
-                                 (editor-buffer-json buffer :text t))))))
+             ;; In Emacs when it is open there (emacs.lisp), else in Lem.
+             (json (or (ignore-errors (emacs-file-buffer path))
+                       (lem-call (lambda ()
+                                   (let ((buffer (or (editor-find-buffer path)
+                                                     (error "~a is not open in the editor." path))))
+                                     (editor-buffer-json buffer :text t)))))))
         (format nil "~a (~a~:[~;, unsaved changes~]):~%~a"
                 (gethash "path" json) (or (gethash "mode" json) "text") (gethash "modified" json)
                 (numbered-lines (gethash "text" json))))
-      (let ((buffers (editor-buffers)))
+      (let ((buffers (append (editor-buffers)
+                             ;; The Emacs the user may edit in (emacs.lisp).
+                             (mapcar (lambda (json) (let ((copy (alexandria:copy-hash-table json)))
+                                                      (setf (gethash "in" copy) "Emacs")
+                                                      copy))
+                                     (emacs-open-buffers)))))
         (if buffers
             (format nil "~{~a~^~%~}"
                     (mapcar (lambda (json)
-                              (format nil "~a (~a)~:[~;, unsaved changes~]~:[~;, changed on disk~]"
-                                      (gethash "path" json) (or (gethash "mode" json) "text")
-                                      (gethash "modified" json) (gethash "changedOnDisk" json)))
+                              (format nil "~a (~a~@[, in ~a~])~:[~;, unsaved changes~]~:[~;, changed on disk~]"
+                                      (gethash "path" json) (or (gethash "mode" json) "text") (gethash "in" json)
+                                      (eq (gethash "modified" json) t) (gethash "changedOnDisk" json)))
                             buffers))
             (format nil "No files are open in the editor. Working directory: ~a"
                     (uiop:native-namestring (current-directory)))))))

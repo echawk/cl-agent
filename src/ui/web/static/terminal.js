@@ -50,9 +50,22 @@ function pageTheme() {
   };
 }
 
+// Every terminal on the page, the Terminal tab's and the editors' (emacs-view.js).
+const mounted = new Set();
+
 function restyle() {
   const theme = pageTheme();
-  for (const { terminal } of view.shown.values()) terminal.setTheme(theme);
+  for (const terminal of mounted) terminal.setTheme(theme);
+}
+
+/** slt's client in NODE, connected to URL, in the page's theme. */
+export async function mountTerminal(node, url) {
+  const { SltTerminal } = await loadClient();
+  const terminal = new SltTerminal(node, { url, theme: pageTheme() });
+  mounted.add(terminal);
+  const dispose = terminal.dispose.bind(terminal);
+  terminal.dispose = () => { mounted.delete(terminal); dispose(); };
+  return terminal;
 }
 
 // ---------- the terminals ----------
@@ -72,18 +85,21 @@ function setList(list) {
   render();
 }
 
+const mounting = new Set();   // ids whose client is being made: once each
+
 async function ensureShown(entry) {
-  if (view.shown.has(entry.id) || !entry.url) return view.shown.get(entry.id);
-  const { SltTerminal } = await loadClient();
-  if (view.shown.has(entry.id)) return view.shown.get(entry.id);
-  const node = el('div', { class: 'term-screen', dataset: { id: entry.id }, hidden: entry.id !== view.active });
-  $('.term-host').append(node);
-  const terminal = new SltTerminal(node, { url: entry.url, theme: pageTheme() });
-  terminal.addEventListener('title', () => renderTabs());
-  terminal.addEventListener('exit', () => load());
-  const shown = { terminal, node };
-  view.shown.set(entry.id, shown);
-  return shown;
+  if (view.shown.has(entry.id) || mounting.has(entry.id) || !entry.url) return view.shown.get(entry.id);
+  mounting.add(entry.id);
+  try {
+    const node = el('div', { class: 'term-screen', dataset: { id: entry.id }, hidden: entry.id !== view.active });
+    $('.term-host').append(node);
+    const terminal = await mountTerminal(node, entry.url);
+    terminal.addEventListener('title', () => renderTabs());
+    terminal.addEventListener('exit', () => load());
+    const shown = { terminal, node };
+    view.shown.set(entry.id, shown);
+    return shown;
+  } finally { mounting.delete(entry.id); }
 }
 
 function render() {
@@ -129,8 +145,11 @@ function focusActive() {
 
 /** The rows and columns a new terminal fills: its shell starts that size,
  *  so what runs first is not wrapped at 80 columns. */
-function hostSize() {
-  const host = $('.term-host');
+const hostSize = () => sizeFor($('.term-host'));
+
+/** The rows, columns and cell size a terminal filling HOST would have (less
+ *  the 6px by 8px inset terminals sit in). */
+export function sizeFor(host) {
   if (!host?.clientWidth) return {};
   const theme = pageTheme();
   const probe = el('span', { style: { position: 'absolute', visibility: 'hidden', whiteSpace: 'pre', font: `${theme.fontSize} ${theme.fontFamily}` } }, 'M'.repeat(20));

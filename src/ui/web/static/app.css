@@ -923,11 +923,11 @@ a { color: var(--blue); text-underline-offset: 2px; }
 
 .code-view { container-type: inline-size; }
 .code-split { grid-template-rows: auto minmax(0, 1fr); }
-.code-split .code-list { max-height: 28vh; }
+.code-split :is(.code-list, .code-files) { max-height: 28vh; }
 .code-toolbar .subpane-name { color: var(--orange); }
 @container (min-width: 860px) {
   .code-split { grid-template-rows: none; grid-template-columns: minmax(200px, 0.3fr) minmax(0, 1fr); }
-  .code-split .code-list { max-height: none; }
+  .code-split :is(.code-list, .code-files) { max-height: none; }
 }
 .code-split .code-editor-pane { border-top: var(--border) solid var(--rule); }
 @container (min-width: 860px) {
@@ -1052,7 +1052,7 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .term-empty p { margin: 0 0 10px; }
 
 /* The Lem view: Lem's own web frontend in the Code tab's editor pane. */
-.code-editor-pane > .code-lem, .code-editor-pane > .code-simple { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.code-editor-pane > .code-lem, .code-editor-pane > .code-simple, .code-editor-pane > .code-emacs { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .code-editor-pane > [hidden] { display: none; }
 .code-lem-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px; border-bottom: var(--rule-mid) solid var(--rule-soft); background: var(--paper-2); }
 .code-lem-head > * { flex-shrink: 0; }
@@ -1070,6 +1070,14 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .code-lem-host.starting::after { content: "Starting Lem…"; position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
 /* The Lisp tab's scratch buffer in Lem (lisp.js). */
 .scratch-lem-host { flex: 1; min-height: 0; }
+
+/* An Emacs frame (emacs-view.js): emacsclient -t in slt's client. */
+.emacs-host { flex: 1; min-height: 0; position: relative; background: var(--paper); }
+.emacs-host[hidden] { display: none; }
+.emacs-screen { position: absolute; inset: 6px 8px; }
+.emacs-note { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; color: var(--ink-2); background: var(--paper); }
+.emacs-note[hidden] { display: none; }
+.emacs-note p { margin: 0; }
 .scratch-lem-keys { white-space: nowrap; }
 .scratch-simple-buttons { display: inline-flex; gap: 6px; align-items: center; }
 .scratch-simple-buttons[hidden] { display: none; }

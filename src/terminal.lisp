@@ -41,12 +41,16 @@
   (state :starting)              ; :starting, :running, :exited
   problem                        ; why it could not start
   final-text                     ; the transcript, kept when the shell exits
-  (used (get-universal-time)))   ; opened, run in or asked about
+  (used (get-universal-time))    ; opened, run in or asked about
+  (kind :shell)                  ; :shell (the Terminal tab's) or :editor (emacs.lisp's frames)
+  program)                       ; what it runs, if not the person's $SHELL
 
 (defvar *terminals* '() "The open terminals, oldest first.")
 (defvar *terminal-counter* 0)
 (defvar *terminals-lock* (bt:make-recursive-lock "terminals"))
 (defvar *terminal-acceptor* nil "The socket server every terminal's client connects to.")
+(defvar *terminal-exit-functions* '()
+  "Called with a terminal whose program has ended (emacs.lisp: an editor frame).")
 
 (defparameter *terminal-engine* :lispvt
   "slt's engine for cl-agent's terminals: lispvt is pure Lisp, needing no
@@ -58,8 +62,12 @@ native build.")
 
 (pushnew 'terminals-forget sb-ext:*init-hooks*)
 
-(defun list-terminals ()
-  (bt:with-recursive-lock-held (*terminals-lock*) (copy-list *terminals*)))
+(defun list-terminals (&key (kind :shell))
+  "The terminals of KIND (:shell, the Terminal tab's; :editor; or :all)."
+  (bt:with-recursive-lock-held (*terminals-lock*)
+    (if (eq kind :all)
+        (copy-list *terminals*)
+        (remove kind *terminals* :key #'terminal-kind :test-not #'eq))))
 
 (defun find-terminal (id)
   "The terminal ID (an integer or its digits), or with ID NIL the one most
@@ -122,7 +130,7 @@ carries, on the terminal server, from a local page."
        (string= (hunchentoot:script-name request) "/ws")
        (local-origin-p (hunchentoot:header-in :origin request))
        (let* ((token (hunchentoot:get-parameter "token" request))
-              (terminal (and token (find token (list-terminals) :key #'terminal-token :test #'equal))))
+              (terminal (and token (find token (list-terminals :kind :all) :key #'terminal-token :test #'equal))))
          (and terminal (terminal-running-p terminal)
               (slt::web-frontend-resource (terminal-frontend terminal))))))
 
@@ -193,18 +201,23 @@ system's are used.")
 it is closed."
   (unwind-protect
        (handler-case
-           (slt:launch-terminal :frontend (terminal-frontend terminal)
+           (apply #'slt:launch-terminal
+                  :frontend (terminal-frontend terminal)
                                 :engine *terminal-engine*
                                 :rows (getf size :rows 24)
                                 :columns (getf size :columns 80)
                                 :directory (terminal-directory terminal)
                                 :login-shell nil
                                 :load-config nil
-                                :title "")
+                                :title ""
+                                ;; slt runs it as PROGRAM -i: an executable that ignores its arguments.
+                                (and (terminal-program terminal) (list :shell (terminal-program terminal))))
          (error (condition)
            (setf (terminal-problem terminal) (princ-to-string condition))))
     (setf (terminal-state terminal) :exited)
-    (ignore-errors (publish-terminals))))
+    (ignore-errors (publish-terminals))
+    (dolist (function *terminal-exit-functions*)
+      (ignore-errors (funcall function terminal)))))
 
 (defun terminal-directory-for (directory)
   "DIRECTORY (relative to the working directory), or the working directory,
@@ -249,12 +262,13 @@ prints is laid out in these (slt assumes 8x16 cells otherwise)."
       (append (and rows columns (list :rows rows :columns columns))
               (and cell-width cell-height (list :cell-width cell-width :cell-height cell-height))))))
 
-(defun start-terminal (directory &key size (timeout 10))
+(defun start-terminal (directory &key size (timeout 10) (kind :shell) program)
   (ensure-terminal-server)
   (let* ((terminal (bt:with-recursive-lock-held (*terminals-lock*)
                      (let ((terminal (make-agent-terminal :id (incf *terminal-counter*)
                                                           :directory directory
-                                                          :token (slt::random-token))))
+                                                          :token (slt::random-token)
+                                                          :kind kind :program program)))
                        (setf *terminals* (append *terminals* (list terminal)))
                        terminal))))
     (setf (terminal-frontend terminal)

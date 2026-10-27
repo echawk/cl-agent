@@ -391,7 +391,7 @@ export function keymapObject() {
         ['C-x C-e', 'evaluate the form before point'], ['C-c C-k', 'compile and load the scratch buffer'],
         ['M-.', 'find a definition'], ['C-c C-d d', 'describe'], ['C-c I', 'inspect'],
         ['C-c C-z', 'scratch ⇄ REPL'], ['0–9 q c', 'in the debugger: a restart, abort, continue']]),
-      ...group('Lem (the Code tab, and the scratch buffer in Lem)', [
+      ...group('Lem or Emacs (the Code tab, and the Lisp tab\'s scratch buffer in either)', [
         ['C-x C-f', 'visit a file'], ['M-x', 'run a command'], ['C-c C-a', 'put the region or form at the prompt, to ask about it']]),
       ...group('The Terminal tab (/term, /shell)', [
         ['any key', 'the program\'s: Ctrl-C interrupts it, Alt is Meta'], ['Ctrl-Shift-A', 'put its last lines at the prompt, to ask about them'],

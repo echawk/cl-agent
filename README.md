@@ -1016,6 +1016,47 @@ anything. Mutating requests require an `X-CL-Agent` header and a loopback
 `Host`, so other web pages cannot drive the agent through your browser.
 
 
+### Emacs as the editor
+
+The Code tab's **Lem | Simple | Emacs** switch, and the Lisp tab's scratch
+switch, can make Emacs the editor. cl-agent then runs an Emacs daemon of its
+own, with your init file, and shows its frames (`emacsclient -t`) in those
+panes, drawn by slt like the Terminal tab. Lem stays: it still highlights
+code in the conversation and serves the agent's `lem-command`.
+
+What works in Emacs as it does in Lem:
+- **Visiting:** a file picked in the Files pane, `/edit`, or the agent's
+  `open-in-editor` shows in Emacs's frame. The header follows what Emacs
+  shows, and the Open list follows its file buffers and unsaved changes.
+- **Commands:** `/mx` runs `M-x` in the frame, and Tab completes Emacs's
+  command names. **Find file** and **Buffers** run `find-file` and
+  `switch-to-buffer`.
+- **Asking:** `C-c C-a` puts the region, or the Lisp form at point, at the
+  prompt. It is bound by a global minor mode, so major modes' own `C-c C-a`
+  don't hide it.
+- **The agent** sees Emacs's open buffers and their unsaved text
+  (`editor-files`). It runs Emacs commands with `emacs-command`, its
+  prompts answered as with `lem-command`. Its file writes reload buffers
+  that have no unsaved changes.
+- **The Lisp scratch buffer:** opened in Emacs, it is in Lisp mode with
+  `cl-agent-scratch-mode`. `C-c C-c`, `C-x C-e` and `C-c C-k` evaluate in
+  cl-agent's image, and it saves itself as you type.
+- Emacs's faces follow the page's light or dark theme, and its colours
+  come from the page's palette.
+
+The daemon is started the first time a page shows Emacs. It stops with
+cl-agent, whichever way cl-agent ends:
+- A normal exit stops it with SIGTERM, so Emacs auto-saves.
+- If cl-agent is killed or crashes, a watchdog in `src/emacs/cl-agent.el`
+  notices Emacs's parent is gone and exits within about a second.
+- If Emacs dies first, its panes say so and offer **Reopen**, and the next
+  use starts it again. Closing a frame in Emacs (`C-x 5 0`) leaves the same
+  note.
+
+cl-agent finds Emacs on `$PATH`, in Homebrew's or MacPorts' bin, or in
+`/Applications/Emacs.app`. Set `CL_AGENT_EMACS` and `CL_AGENT_EMACSCLIENT`
+to use others. `doctor` reports what it found.
+
 ### The Terminal tab
 
 The Terminal tab holds shells next to your files, so you can run programs

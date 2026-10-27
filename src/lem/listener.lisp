@@ -41,13 +41,16 @@ region if marked, the top-level form at point in a Lisp buffer, else NIL."
 
 (lem:define-key lem:*global-keymap* "C-c C-a" 'cl-agent-ask)
 
-;;; /mx's argument completes from Lem's own commands (the page's /mx runs
-;;; one in the Code tab): names starting with what you typed, or, failing
-;;; that, containing it -- each with its documentation's first line.
+;;; /mx's argument completes from the editor's own commands (the page's /mx
+;;; runs one in the Code tab): names starting with what you typed, or,
+;;; failing that, containing it -- each with its documentation's first line.
 (define-command-completer "mx" (context)
   (when (eql (getf context :arg-index) 0)
     (let* ((token (getf context :token))
-           (all (ignore-errors (second (lem-command-names "" :limit 5000))))
+           ;; Emacs's commands when the Code tab's editor is Emacs (emacs.lisp).
+           (all (ignore-errors (if (emacs-is-the-editor-p)
+                                   (emacs-command-names token :limit 200)
+                                   (second (lem-command-names "" :limit 5000)))))
            (prefixed (completions-matching token all :key #'car :doc #'cdr :kind "lem-command")))
       (or prefixed
           (loop for (name . doc) in all

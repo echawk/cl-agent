@@ -37,6 +37,7 @@ import { copilotBox, copilotOptions } from './copilot.js';
 import { createLemView } from './lem-view.js';
 import { present, fileObject } from './objects.js';
 import { openTerminal, runFile } from './terminal.js';
+import { createEmacsView, emacsAvailable } from './emacs-view.js';
 
 const client = `code-${Math.random().toString(36).slice(2)}`;
 const toast = (text, color) => window.CLAgent?.toast(text, color);
@@ -68,7 +69,10 @@ const view = {
   diagnostics: null,
   triggers: [],
   stale: true,
-  lemMode: storage('code-lem', true),   // the editor is Lem itself
+  mode: storage('code-editor', storage('code-lem', true) ? 'lem' : 'simple'),   // lem | simple | emacs
+  get lemMode() { return this.mode === 'lem'; },        // the editor is Lem itself
+  get emacsMode() { return this.mode === 'emacs'; },    // ... or Emacs, cl-agent's daemon (emacs-view.js)
+  emacsFile: null,        // what Emacs's code frame shows: {path, name, mode, modified}
   lemShown: 0,            // "lem-buffer" events seen: a visit's late answer is stale after one
   lemFile: null,          // what Lem's window shows: {path, name, mode, modified} (path null: not a file)
 };
@@ -123,7 +127,7 @@ async function loadDir(dir = view.dir) {
 }
 
 async function loadOpenFiles() {
-  try { view.openFiles = (await api('/api/files/buffers')).buffers; } catch (err) { view.openFiles = []; }
+  try { view.openFiles = (await api(view.emacsMode ? '/api/emacs/buffers' : '/api/files/buffers')).buffers; } catch (err) { view.openFiles = []; }
   renderSide();
 }
 
@@ -175,26 +179,91 @@ async function lemRun(command) {
   try { await api('/api/lem/run', { method: 'POST', body: { command } }); focusLem(); } catch (err) { message(err.message); }
 }
 
-async function setLemMode(on) {
-  if (on === view.lemMode) return;
+const setLemMode = on => setEditorMode(on ? 'lem' : 'simple');
+
+/** Change the editor: MODE is lem, simple or emacs. */
+async function setEditorMode(mode) {
+  if (mode === view.mode) return;
   // Into Lem, what the simple editor holds goes too: a file's text is in its
   // Lem buffer already (synced as you type) once the last edit is; a
   // scratch buffer is saved, so Lem reads it as it is.  Out of Lem, its
-  // current file (view.current, kept by "lem-buffer") opens here.
-  if (on && view.doc?.kind === 'scratch' && view.dirty) await saveScratch(true);
-  else if (on && isFile()) await syncFile();
-  if (on) view.editor = null;
-  view.lemMode = on;
-  store('code-lem', on);
+  // current file (view.current, kept by "lem-buffer") opens here.  Emacs
+  // reads files from the disk: unsaved edits elsewhere stay where they are.
+  const from = view.mode;
+  if (mode !== 'simple' && view.doc?.kind === 'scratch' && view.dirty) await saveScratch(true);
+  else if (mode !== 'simple' && isFile()) await syncFile();
+  if (mode === 'emacs' && (view.dirty || (from === 'lem' && view.lemFile?.modified))) {
+    message('Unsaved changes stay in the editor they were made in: save them (C-x C-s) for Emacs to read them.', 6000);
+  }
+  if (mode !== 'simple') view.editor = null;
+  view.mode = mode;
+  store('code-editor', mode);
+  api('/api/emacs/editor', { method: 'POST', body: { editor: mode } }).catch(() => {});
   renderEditor();
   renderToolbar();
+  loadOpenFiles();
   if (view.current) await openDoc(view.current.kind, view.current.key);
-  else if (on) { await ensureLemFrame(); focusLem(); }
+  else if (mode === 'lem') { await ensureLemFrame(); focusLem(); }
+  else if (mode === 'emacs') { await ensureEmacs().catch(() => {}); emacsView?.focus(); }
+}
+
+// ---------- the Emacs view (emacs-view.js, emacs.lisp) ----------
+
+let emacsView = null;
+const ensureEmacs = () => (emacsView ? emacsView.ensure() : Promise.resolve(null));
+
+async function emacsVisit(path, line) {
+  try {
+    await ensureEmacs();
+    noteEmacsShown(await api('/api/emacs/visit', { method: 'POST', body: { path, line: line || undefined } }));
+    loadOpenFiles();
+    if (activeView() === 'code') emacsView.focus();
+  } catch (err) { message(err.message); }
+}
+
+/** M-x COMMAND in Emacs (with none, M-x waits there for one). */
+async function emacsMx(command) {
+  try {
+    await ensureEmacs();
+    await api('/api/emacs/mx', { method: 'POST', body: { command: command || undefined } });
+    emacsView.focus();
+  } catch (err) { message(err.message); }
+}
+
+/** Emacs's code frame shows JSON's buffer: it is the current one here. */
+function noteEmacsShown(json) {
+  view.emacsFile = json;
+  if (json?.path) {
+    const scratch = view.buffers.find(b => b.path === json.path);
+    view.doc = scratch ? { ...json, kind: 'scratch', key: scratch.name } : { ...json, kind: 'file', key: json.path };
+    view.current = { kind: view.doc.kind, key: view.doc.key };
+    store('code-current', view.current);
+  }
+  renderEmacsHead();
+  renderSide();
+}
+
+function renderEmacsHead() {
+  const head = $('.code-emacs-head');
+  if (!head) return;
+  const f = view.emacsFile;
+  head.replaceChildren(
+    el('span', { class: 'chip code-lang' }, 'Emacs'),
+    el('span', { class: 'code-lem-file', title: f?.path || '' },
+      f ? `\u200e${f.path ? short(f.path) : f.name}\u200e${f.modified ? ' ●' : ''}` : 'C-x C-f visits a file · M-x runs a command · C-c C-a asks the agent'),
+    el('span', { class: 'spacer' }),
+    el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Run an Emacs command (M-x)', onclick: () => emacsMx() }, 'M-x'),
+    f?.path ? el('button', { class: 'btn btn-small', type: 'button', 'data-doc': `Save ${f.name || 'this file'} and run it in the Terminal tab (/shell)`, onclick: () => runFile(f.path).catch(err => message(err.message)) }, 'Run') : '',
+    el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'A terminal in this file\'s directory, in the Terminal tab (/term)', onclick: () => openTerminal({ directory: f?.path ? f.path.replace(/[^/]*$/, '') : undefined }).catch(err => message(err.message)) }, 'Terminal'),
+    el('button', {
+      class: 'btn btn-small btn-ask', type: 'button', 'data-doc': 'Ask the agent about this file (C-c C-a in Emacs asks about the region or form)', 'aria-label': 'Ask the agent about this file',
+      onclick: () => insertInComposer(f?.path ? `Help me with ${short(f.path)} (open in Emacs).` : 'Help me with the file open in Emacs.'),
+    }, 'Ask'));
 }
 
 function renderToolbar() {
   for (const button of view.node?.querySelectorAll('.code-editor-switch button') || []) {
-    const active = (button.dataset.mode === 'lem') === view.lemMode;
+    const active = button.dataset.mode === view.mode;
     button.classList.toggle('active', active);
     button.setAttribute('aria-pressed', String(active));
   }
@@ -221,9 +290,15 @@ function renderLemHead() {
     copilotBox(focusEditor));
 }
 
-function focusEditor() { if (view.lemMode) focusLem(); else view.editor?.focus(); }
+function focusEditor() { if (view.lemMode) focusLem(); else if (view.emacsMode) emacsView?.focus(); else view.editor?.focus(); }
 
 async function openDoc(kind, key, { line } = {}) {
+  if (view.emacsMode) {
+    // Emacs's code frame is this tab's own: a visit lands there, shown or not.
+    if (kind === 'file') return emacsVisit(key, line);
+    const scratch = view.buffers.find(b => b.name === key);
+    if (scratch) return emacsVisit(scratch.path, line);
+  }
   if (view.lemMode) {
     // Hidden, it is the file this tab opens when shown (Lem is shared).
     if (activeView() !== 'code') { view.current = { kind, key }; store('code-current', view.current); return; }
@@ -889,10 +964,13 @@ function renderChrome() {
 function renderEditor() {
   const lem = $('.code-lem');
   if (lem) lem.hidden = !view.lemMode;
+  const emacs = $('.code-emacs');
+  if (emacs) emacs.hidden = !view.emacsMode;
   const pane = $('.code-simple');
   if (!pane) return;
-  pane.hidden = view.lemMode;
+  pane.hidden = view.mode !== 'simple';
   if (view.lemMode) { renderLemHead(); return; }
+  if (view.emacsMode) { renderEmacsHead(); return; }
   // A document known only by name (what Lem showed) has no text here yet:
   // an editor made now would hold "" -- and sync it.  OPENDOC reads it.
   if (view.doc && typeof view.doc.text !== 'string') {
@@ -1024,9 +1102,11 @@ function mount(node) {
         el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'lem', 'data-doc': 'Edit in Lem itself: its keys, modes, M-x, windows and your init file',
                        onclick: () => setLemMode(true) }, 'Lem'),
         el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'simple', 'data-doc': 'Edit in the lightweight editor instead',
-                       onclick: () => setLemMode(false) }, 'Simple')),
-      el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Visit a file (C-x C-f)', onclick: () => (view.lemMode ? lemRun('find-file') : prompt('find-file')) }, 'Find file'),
-      el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Switch to an open buffer (C-x b)', onclick: () => (view.lemMode ? lemRun('select-buffer') : prompt('switch-buffer')) }, 'Buffers'),
+                       onclick: () => setLemMode(false) }, 'Simple'),
+        el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'emacs', 'data-doc': 'Edit in Emacs, with your own init file: cl-agent runs an Emacs daemon of its own',
+                       onclick: () => setEditorMode('emacs') }, 'Emacs')),
+      el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Visit a file (C-x C-f)', onclick: () => (view.lemMode ? lemRun('find-file') : view.emacsMode ? emacsMx('find-file') : prompt('find-file')) }, 'Find file'),
+      el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Switch to an open buffer (C-x b)', onclick: () => (view.lemMode ? lemRun('select-buffer') : view.emacsMode ? emacsMx('switch-to-buffer') : prompt('switch-buffer')) }, 'Buffers'),
       el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Change the working directory (M-x cd)', onclick: () => prompt('cd') }, 'cd')),
     el('div', { class: 'sessions-split code-split' },
       el('div', { class: 'subpane code-list-pane' },
@@ -1039,6 +1119,9 @@ function mount(node) {
         el('div', { class: 'code-lem', hidden: true },
           el('div', { class: 'code-lem-head' }),
           el('div', { class: 'code-lem-host' })),
+        el('div', { class: 'code-emacs', hidden: true },
+          el('div', { class: 'code-lem-head code-emacs-head' }),
+          el('div', { class: 'code-emacs-host emacs-host' })),
         el('div', { class: 'code-simple' }))),
     el('div', { class: 'code-minibuffer', hidden: true },
       menuNode,
@@ -1053,6 +1136,8 @@ function mount(node) {
       pendingX = false;
       const action = view.lemMode
         ? { KeyF: ctrl && (() => lemRun('find-file')), KeyD: () => lemRun('filer'), KeyB: () => lemRun('select-buffer') }[e.code]
+        : view.emacsMode
+        ? { KeyF: ctrl && (() => emacsMx('find-file')), KeyD: () => emacsMx('dired'), KeyB: () => emacsMx('switch-to-buffer') }[e.code]
         : { KeyF: ctrl && (() => prompt('find-file')), KeyD: () => prompt('dired'), KeyB: () => prompt('switch-buffer'), KeyS: ctrl && (() => saveFile()) }[e.code];
       if (action) { e.preventDefault(); action(); }
       return;
@@ -1066,13 +1151,26 @@ function mount(node) {
   loadScratch();
   loadOpenFiles();
   lemView = createLemView($('.code-lem-host'), { wanted: () => view.lemMode && !!view.node, message });
+  emacsView = createEmacsView($('.code-emacs-host'), {
+    role: 'code', message: text => message(text, 6000),
+    // A new frame (the first, or one reopened) shows this tab's file.
+    onOpen: () => view.current?.kind === 'file' && api('/api/emacs/visit', { method: 'POST', body: { path: view.current.key } }).then(noteEmacsShown),
+  });
+  api('/api/emacs/editor', { method: 'POST', body: { editor: view.mode } }).catch(() => {});
+  // Without Emacs installed, its button says so, and the editor is Lem.
+  emacsAvailable().then(available => {
+    const button = view.node.querySelector('.code-editor-switch [data-mode="emacs"]');
+    if (button && !available) { button.disabled = true; button.dataset.doc = 'Emacs is not installed (brew install emacs)'; }
+    if (!available && view.emacsMode) setEditorMode('lem');
+  });
   if (view.lemMode) ensureLemFrame();
+  if (view.emacsMode) ensureEmacs().catch(() => {});
   if (view.current) openDoc(view.current.kind, view.current.key);
 }
 
 registerView({
   id: 'code', title: 'Code', color: 'orange', order: 15,
-  doc: 'Your files, edited through Lem (C-x C-f), and scratch buffers in any language, shared with the agent (Alt-C)',
+  doc: 'Your files, edited in Lem or Emacs (C-x C-f), and scratch buffers in any language, shared with the agent (Alt-C)',
   mount,
   show: () => {
     if (view.stale) loadScratch();
@@ -1081,6 +1179,7 @@ registerView({
       ensureLemFrame().then(() => { lemRemeasure(); focusLem(); });
       if (view.current) openDoc(view.current.kind, view.current.key);
     }
+    else if (view.emacsMode) ensureEmacs().then(() => emacsView.focus()).catch(() => {});
     else setTimeout(() => (view.editor?.input || $('.code-files'))?.focus(), 0);
   },
 });
@@ -1095,6 +1194,18 @@ on('lem-buffer', ev => {
   // Only while this tab is the one in front: the Lisp tab shows its scratch
   // buffer in the same Lem.
   if (view.lemMode && view.node && activeView() === 'code') noteLemShown(ev);
+});
+
+// What Emacs's code frame shows, and which files it has open (emacs.lisp).
+on('emacs-buffer', ev => {
+  if (ev.role !== 'code' || !view.emacsMode || !view.node) return;
+  noteEmacsShown(ev);
+});
+
+on('emacs-buffers', ev => {
+  if (!view.emacsMode) return;
+  view.openFiles = ev.buffers;
+  renderSide();
 });
 
 // ---------- what other pages and the agent change ----------
@@ -1157,12 +1268,13 @@ registerCommand('edit', arg => {
 
 /** The file the Code tab shows, for /shell with no argument. */
 export function currentFile() {
-  return view.lemFile?.path || (view.doc && !view.lemMode ? view.doc.path : null);
+  return (view.emacsMode ? view.emacsFile?.path : view.lemFile?.path) || (view.doc && view.mode === 'simple' ? view.doc.path : null);
 }
 
 // /mx at the main prompt: Lem's M-x, in the Code tab (its prompts ask there).
 registerCommand('mx', async arg => {
   showView('code');
+  if (view.emacsMode) return emacsMx(arg.trim());
   if (!view.lemMode) await setLemMode(true);
   return lemRun(arg.trim() || 'execute-command');
-}, 'Run a Lem command in the Code tab: /mx [command] (M-x)');
+}, 'Run an editor command in the Code tab: /mx [command] (M-x, in Lem or Emacs)');
