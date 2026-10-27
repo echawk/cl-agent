@@ -35,6 +35,7 @@ import { showView, activeView } from './views.js';
 import { copilotBox, copilotOptions } from './copilot.js';
 import { createLemView } from './lem-view.js';
 import { createEmacsView, emacsAvailable } from './emacs-view.js';
+import { makeSplitter } from './layout.js';
 import { lispPresentation, inspectLisp } from './objects.js';
 
 const toast = (text, color) => window.CLAgent?.toast(text, color);
@@ -559,6 +560,7 @@ function mount(container) {
             : 'Review the code in my Lisp scratch buffer.');
         }, 'btn-ask')),
       conflict, scratchHost, lemHost, emacsHost),
+    el('div', { class: 'part-splitter lisp-splitter', 'data-doc': 'Drag: share the tab between the scratch buffer and the REPL · double-click: halves' }),
     el('section', { class: 'subpane repl-pane', 'aria-label': 'REPL' },
       el('div', { class: 'subpane-title' }, el('span', { class: 'subpane-name' }, 'REPL'), replStatus,
         el('span', { class: 'spacer' }), interruptButton,
@@ -574,6 +576,14 @@ function mount(container) {
     button('Load buffer', 'Compile and load the whole buffer (C-c C-k)', () => actions.compileBuffer()),
     copilotBox(() => ui.scratch.focus()));
 
+  const split = container.querySelector('.lisp-split');
+  makeSplitter(container.querySelector('.lisp-splitter'), {
+    container: split, key: 'lisp-split', min: 0.12, max: 0.88,
+    set: fraction => {
+      split.style.setProperty('--lisp-a', fraction == null ? '' : `${fraction}fr`);
+      split.style.setProperty('--lisp-b', fraction == null ? '' : `${1 - fraction}fr`);
+    },
+  });
   ui = { container, transcript, prompt, echo, conflict, replStatus, saveState, scratchInfo, interruptButton, dirty: false, saved: lisp.scratch.text,
          scratchHost, lemHost, emacsHost, simpleButtons, lemKeys, modeSwitch };
   ui.lem = createLemView(lemHost, { wanted: () => lisp.lemMode && activeView() === 'lisp', message: text => message(text, 4000) });

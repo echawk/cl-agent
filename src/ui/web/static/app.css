@@ -133,6 +133,27 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .desk.side-hidden { grid-template-columns: minmax(0, 1fr); }
 .desk.side-hidden .side-pane, .desk.side-hidden .splitter { display: none; }
 
+/* ---------- the layout (layout.js): regions hidden, zoom ---------- */
+
+.frame.hide-wholine > .wholine { display: none; }
+.frame.hide-composer:not(.zoom-peek) > :is(.composer, .queue) { display: none; }
+.frame.hide-rail .live-rail { display: none; }
+.frame.hide-rail .desk.with-rail { grid-template-columns: minmax(0, 1fr) 6px var(--side-width); }
+.frame.hide-rail .desk.with-rail.side-hidden { grid-template-columns: minmax(0, 1fr); }
+/* Zoom: the tab in front, edge to edge; the prompt only when something was put there. */
+.frame.zoomed { padding: 4px; gap: 4px; }
+.frame.zoomed > :is(.titlebar, .wholine) { display: none; }
+.frame.zoomed:not(.zoom-peek) > :is(.composer, .queue) { display: none; }
+.frame.zoomed .desk :is(.live-rail, .side-pane, .splitter) { display: none; }
+.frame.zoomed .desk.desk.desk.desk.desk { grid-template-columns: minmax(0, 1fr); }
+.unzoom { position: fixed; top: 6px; right: 10px; z-index: 50; opacity: .55; background: var(--paper); }
+.unzoom:hover, .unzoom:focus-visible { opacity: 1; }
+.unzoom[hidden] { display: none; }
+/* Splitters inside tabs (makeSplitter): a column between side-by-side parts,
+   a row between stacked ones; the cursor says which. */
+.part-splitter { background: var(--rule-soft); cursor: row-resize; min-height: 6px; touch-action: none; }
+.part-splitter:hover, .part-splitter.dragging { background: var(--blue); }
+
 /* ---------- live sessions (live.js): vertical tabs down the left edge ---------- */
 
 .desk.with-rail { grid-template-columns: auto minmax(0, 1fr) 6px var(--side-width); }
@@ -614,14 +635,15 @@ a { color: var(--blue); text-underline-offset: 2px; }
 .lisp-view { container-type: inline-size; }
 .lisp-split {
   flex: 1; min-height: 0;
-  display: grid; grid-template-rows: minmax(0, 1fr) minmax(0, 1.2fr);
+  display: grid; grid-template-rows: minmax(0, var(--lisp-a, 1fr)) 6px minmax(0, var(--lisp-b, 1.2fr));
 }
 @container (min-width: 860px) {
-  .lisp-split { grid-template-rows: none; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
-  .lisp-split .repl-pane { border-top: 0; border-left: var(--border) solid var(--rule); }
+  .lisp-split { grid-template-rows: none; grid-template-columns: minmax(0, var(--lisp-a, 1fr)) 6px minmax(0, var(--lisp-b, 1fr)); }
+  .lisp-split .repl-pane { border-left: var(--border) solid var(--rule); }
+  .lisp-split > .part-splitter { cursor: col-resize; min-height: 0; }
 }
 .subpane { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
-.repl-pane { border-top: var(--border) solid var(--rule); }
+.repl-pane { border-top: 0; }
 .subpane-title {
   display: flex; align-items: center; gap: 6px;
   padding: 2px 6px;
@@ -923,16 +945,18 @@ a { color: var(--blue); text-underline-offset: 2px; }
 
 .code-view { container-type: inline-size; }
 .code-split { grid-template-rows: auto minmax(0, 1fr); }
+.code-split > .part-splitter { display: none; }   /* stacked: the list keeps its cap */
 .code-split :is(.code-list, .code-files) { max-height: 28vh; }
 .code-toolbar .subpane-name { color: var(--orange); }
 @container (min-width: 860px) {
-  .code-split { grid-template-rows: none; grid-template-columns: minmax(200px, 0.3fr) minmax(0, 1fr); }
+  .code-split { grid-template-rows: none; grid-template-columns: var(--code-files, minmax(200px, 0.3fr)) 6px minmax(0, 1fr); }
   .code-split :is(.code-list, .code-files) { max-height: none; }
+  .code-split > .part-splitter { display: block; cursor: col-resize; min-height: 0; }
+  .code-split .code-editor-pane { border-left: var(--border) solid var(--rule); }
 }
-.code-split .code-editor-pane { border-top: var(--border) solid var(--rule); }
-@container (min-width: 860px) {
-  .code-split .code-editor-pane { border-top: 0; border-left: var(--border) solid var(--rule); }
-}
+/* The file list hidden (layout.js): the editor has the tab. */
+.frame.hide-files .code-split.code-split { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); }
+.frame.hide-files .code-split > :is(.code-list-pane, .part-splitter) { display: none; }
 .code-new { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 8px; border-bottom: var(--rule-mid) solid var(--rule-soft); }
 .code-new input { flex: 1 1 10ch; min-width: 0; }
 .code-new select { flex: 1 1 14ch; min-width: 0; }

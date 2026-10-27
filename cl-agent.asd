@@ -158,6 +158,7 @@
            (:static-file "objects.js")
            (:static-file "terminal.js")
            (:static-file "emacs-view.js")
+           (:static-file "layout.js")
            (:static-file "EXTENDING.md")))))))
      (:module "tools-builtin"
      :pathname "tools"

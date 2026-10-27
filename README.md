@@ -722,6 +722,18 @@ default. The theme button and `Alt-T` cycle through light, dark and **mono**,
 a 1-bit Lisp-machine screen where state is shown by inversion and hatching
 instead of colour. `/theme NAME` picks one directly.
 
+- **The layout is yours to change.** The title bar's **Layout** menu
+  shows or hides each part of the page: the side panes (`Ctrl-\`), the
+  live-session rail, the prompt, the who-line, and the Code tab's file list
+  (also its **Files** button).
+  - **Zoom** (`Alt-Z`) leaves only the tab in front, edge to edge. Press
+    `Alt-Z` again, or **Unzoom**, to bring the rest back.
+  - Drag the splitters to resize: side panes against the main pane, the
+    Code tab's file list against its editor, and the Lisp tab's scratch
+    buffer against its REPL. Double-click a splitter to put it back.
+  - A hidden prompt comes back when something is put there (C-c C-a in an
+    editor, an Ask button) or when you press `/`.
+  - The browser remembers your layout; **Reset the layout** undoes it all.
 - **Everything on the screen is an object**, as on a Lisp machine. Each of
   these is a *presentation* of something you can examine:
   - a printed Lisp value;

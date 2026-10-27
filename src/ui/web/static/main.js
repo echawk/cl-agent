@@ -20,6 +20,7 @@ import './live.js';
 import { lispApi } from './lisp.js';
 import { lispState } from './forms.js';
 import { presentationDoc, present, inspect, keymapObject, sessionObject } from './objects.js';
+import * as layout from './layout.js';
 
 const { state, on, el, boot } = core;
 const $ = id => document.getElementById(id);
@@ -118,15 +119,18 @@ function updateThemeButton() {
   $('theme-toggle').textContent = `${icon} ${next[0].toUpperCase()}${next.slice(1)}`;
 }
 
-function togglePanes(force) {
-  const hidden = $('desk').classList.toggle('side-hidden', force);
-  core.store('side-hidden', hidden);
-}
+// The side panes are one of layout.js's regions.
+const togglePanes = force => layout.setShown('side', force === undefined ? !layout.isShown('side') : !force);
 
 function installSplitter() {
   const width = core.storage('side-width', null);
   if (width) document.documentElement.style.setProperty('--side-width', `${width}px`);
   const splitter = $('splitter');
+  // Double-click: back to the width it started with.
+  splitter.addEventListener('dblclick', () => {
+    document.documentElement.style.removeProperty('--side-width');
+    core.store('side-width', null);
+  });
   splitter.addEventListener('pointerdown', e => {
     e.preventDefault();
     splitter.classList.add('dragging');
@@ -177,9 +181,11 @@ function installKeys() {
       return;
     }
     if (e.ctrlKey && e.key === '\\') { e.preventDefault(); togglePanes(); return; }
+    if (e.altKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyZ') { e.preventDefault(); layout.toggleZoom(); return; }
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName);
     if (!typing && e.key === '/' && !e.ctrlKey && !e.metaKey && !e.altKey) {
       e.preventDefault();
+      layout.reveal('composer');
       if ($('input').value) $('input').focus(); else composer.insert('/');
     }
   });
@@ -275,10 +281,14 @@ session.install();
 installMousedoc();
 installKeys();
 installSplitter();
-if (core.storage('side-hidden', false)) togglePanes(true);
+layout.apply();
 
 $('theme-toggle').addEventListener('click', () => core.setTheme('toggle'));
-$('pane-toggle').addEventListener('click', () => togglePanes());
+// The title bar's Layout button: every region, zoom, and a reset.
+$('pane-toggle').addEventListener('click', e => {
+  const box = e.currentTarget.getBoundingClientRect();
+  layout.openLayoutMenu(box.left, box.bottom + 4);
+});
 $('custom-flag').addEventListener('click', () => panels.showPanel('ui'));
 $('safe-banner').hidden = !boot.safe;
 // Sent here because the customised client did not start (index.html).

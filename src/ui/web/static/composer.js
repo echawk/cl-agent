@@ -14,7 +14,7 @@
 // selection accepts, Esc closes.  Typing "/" opens the command menu live.
 
 import {
-  state, on, el, api, send, interrupt, clientCommands, completers, storage, store,
+  state, on, emit, el, api, send, interrupt, clientCommands, completers, storage, store,
 } from './core.js';
 import { createMenu, commonPrefix, menuStep, menuCancel } from './menu.js';
 import { classify, evaluate as evaluateForm, interruptForm, lispState } from './forms.js';
@@ -113,6 +113,7 @@ function setInput(text, caret = text.length) {
 /** Put TEXT in the input (replacing it), focused; used by panels and plugins. */
 export function insert(text) {
   hideMenu();
+  emit('reveal', 'composer');   // hidden or zoomed away (layout.js): it comes back
   setInput(text);
   input.focus();
 }

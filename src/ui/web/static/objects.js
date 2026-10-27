@@ -393,6 +393,9 @@ export function keymapObject() {
         ['C-c C-z', 'scratch ⇄ REPL'], ['0–9 q c', 'in the debugger: a restart, abort, continue']]),
       ...group('Lem or Emacs (the Code tab, and the Lisp tab\'s scratch buffer in either)', [
         ['C-x C-f', 'visit a file'], ['M-x', 'run a command'], ['C-c C-a', 'put the region or form at the prompt, to ask about it']]),
+      ...group('The layout (the title bar\'s Layout menu)', [
+        ['Alt-Z', 'zoom: only the tab in front, and back'], ['Ctrl-\\', 'show or hide the side panes'],
+        ['drag a splitter', 'resize: side panes, Code\'s file list, Lisp\'s scratch and REPL'], ['double-click it', 'back to where it was']]),
       ...group('The Terminal tab (/term, /shell)', [
         ['any key', 'the program\'s: Ctrl-C interrupts it, Alt is Meta'], ['Ctrl-Shift-A', 'put its last lines at the prompt, to ask about them'],
         ['Ctrl-Shift-P', 'back to the prompt'], ['⌘C / ⌘V', 'copy the mouse\'s selection, paste'], ['wheel, Shift-PageUp', 'its history']]),

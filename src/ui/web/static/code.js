@@ -38,6 +38,7 @@ import { createLemView } from './lem-view.js';
 import { present, fileObject } from './objects.js';
 import { openTerminal, runFile } from './terminal.js';
 import { createEmacsView, emacsAvailable } from './emacs-view.js';
+import { makeSplitter, toggle as toggleLayout } from './layout.js';
 
 const client = `code-${Math.random().toString(36).slice(2)}`;
 const toast = (text, color) => window.CLAgent?.toast(text, color);
@@ -1098,6 +1099,8 @@ function mount(node) {
       el('span', { class: 'subpane-name' }, 'Code'),
       el('span', { class: 'subpane-info code-count', 'data-doc': 'The working directory (M-x cd changes it)' }, ''),
       el('span', { class: 'spacer' }),
+      el('button', { class: 'btn btn-small', type: 'button', 'data-doc': 'Show or hide the file list: the editor takes the tab (Alt-Z zooms into it)',
+                     onclick: () => toggleLayout('files') }, '◧ Files'),
       el('span', { class: 'code-editor-switch', role: 'group', 'aria-label': 'Editor' },
         el('button', { class: 'btn btn-small', type: 'button', 'data-mode': 'lem', 'data-doc': 'Edit in Lem itself: its keys, modes, M-x, windows and your init file',
                        onclick: () => setLemMode(true) }, 'Lem'),
@@ -1115,6 +1118,7 @@ function mount(node) {
           tab('open', 'Open', 'Files open in the editor'),
           tab('scratch', 'Scratch', 'Scratch buffers in any language')),
         el('div', { class: 'code-side' })),
+      el('div', { class: 'part-splitter code-splitter', 'data-doc': 'Drag: the file list\'s width · double-click: as it was' }),
       el('div', { class: 'subpane code-editor-pane' },
         el('div', { class: 'code-lem', hidden: true },
           el('div', { class: 'code-lem-head' }),
@@ -1150,6 +1154,10 @@ function mount(node) {
   showPane(view.pane);
   loadScratch();
   loadOpenFiles();
+  makeSplitter($('.code-splitter'), {
+    container: $('.code-split'), key: 'code-files-width', min: 0.12, max: 0.6,
+    set: fraction => $('.code-split').style.setProperty('--code-files', fraction == null ? '' : `${(fraction * 100).toFixed(2)}%`),
+  });
   lemView = createLemView($('.code-lem-host'), { wanted: () => view.lemMode && !!view.node, message });
   emacsView = createEmacsView($('.code-emacs-host'), {
     role: 'code', message: text => message(text, 6000),
