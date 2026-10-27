@@ -5,6 +5,9 @@
 # why this project's dependency story is just "run ocicl install".
 
 SBCL ?= sbcl
+# No ~/.sbclrc: a dependency missing from ocicl.csv must fail here, not be
+# found quietly in whatever the init file sets up (scripts/check-deps.lisp).
+SBCL_FLAGS ?= --no-userinit
 OLLAMA_TEST_MODEL ?= qwen2.5:0.5b
 # The binary's heap (it keeps the building SBCL's): room for big buffers and
 # for the agent's memory guard to stop runaway code well before it runs out.
@@ -30,13 +33,13 @@ install-deps: check-env
 	ocicl install
 
 build: install-deps
-	$(SBCL) --dynamic-space-size $(HEAP_MB) --non-interactive --load boot.lisp --eval '(asdf:make :cl-agent)'
+	$(SBCL) --dynamic-space-size $(HEAP_MB) $(SBCL_FLAGS) --non-interactive --load boot.lisp --eval '(asdf:make :cl-agent)'
 
 run: install-deps
 	$(SBCL) --script run.lisp -- $(ARGS)
 
 test: install-deps
-	$(call with-test-dir,$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:test-system "cl-agent/tests")')
+	$(call with-test-dir,$(SBCL) $(SBCL_FLAGS) --non-interactive --load boot.lisp --eval '(asdf:test-system "cl-agent/tests")')
 
 # Starts `ollama serve` if it isn't already running (same
 # PROVIDER-ENSURE-READY logic cl-agent itself uses, see
@@ -44,16 +47,16 @@ test: install-deps
 # something to talk to.
 test-ollama: install-deps
 	command -v ollama >/dev/null 2>&1 || { echo "ollama not found; install it from https://ollama.com"; exit 1; }
-	$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:load-system "cl-agent")' \
+	$(SBCL) $(SBCL_FLAGS) --non-interactive --load boot.lisp --eval '(asdf:load-system "cl-agent")' \
 		--eval '(cl-agent::provider-ensure-ready (make-instance (quote cl-agent::ollama-provider)))'
 	ollama pull $(OLLAMA_TEST_MODEL)
-	$(call with-test-dir,CL_AGENT_OLLAMA_TEST_MODEL=$(OLLAMA_TEST_MODEL) $(SBCL) --non-interactive --load boot.lisp --eval '(asdf:load-system "cl-agent/tests/ollama")')
+	$(call with-test-dir,CL_AGENT_OLLAMA_TEST_MODEL=$(OLLAMA_TEST_MODEL) $(SBCL) $(SBCL_FLAGS) --non-interactive --load boot.lisp --eval '(asdf:load-system "cl-agent/tests/ollama")')
 
 # A genuine third-party MCP interoperability suite. npx downloads the pinned
 # server automatically on its first run; no LLM provider is required.
 test-mcp-external: install-deps
 	command -v npx >/dev/null 2>&1 || { echo "npx not found; install Node.js first"; exit 1; }
-	$(call with-test-dir,$(SBCL) --non-interactive --load boot.lisp --eval '(asdf:test-system "cl-agent/tests/mcp-external")')
+	$(call with-test-dir,$(SBCL) $(SBCL_FLAGS) --non-interactive --load boot.lisp --eval '(asdf:test-system "cl-agent/tests/mcp-external")')
 
 
 # Regenerates data/cl-spec.sdoc (already committed; most people never

@@ -110,6 +110,20 @@ request-level tools can build on the owned session next.
   anywhere ocicl/Quicklisp can fetch it from; `third-party/opsis-
   conditions-stub/` is a small committed compatible stand-in -- see
   that file's header comment.
+  - **slt** (the Terminal tab) is a git submodule in `third-party/slt`;
+    `make install-deps` fetches it.
+  - Builds and tests run SBCL with `--no-userinit`, so a dependency
+    missing from `ocicl.csv` fails the build. It is not found quietly
+    through `~/.sbclrc` (nyaml, which `cl-skills` needs, was found that
+    way until it was pinned).
+  - **Updating:** `scripts/update-deps.sh` moves slt to its upstream head
+    (`slt REF` for another commit), `ocicl [SYSTEM...]` takes ocicl's
+    latest, and `all` does both. It lists upstream's new commits, flags
+    those touching what cl-agent uses, and then runs
+    `scripts/check-deps.lisp`. That script checks that everything loads
+    from inside the project, and that the slt internals and client API
+    cl-agent calls still exist. Add `--test` to run `make test` too.
+    Nothing is committed for you.
 - An API key for whichever provider you use (not needed for Ollama).
 - Optionally, [Ollama](https://ollama.com) running locally, for
   `make test-ollama` and the `:ollama` provider.

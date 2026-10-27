@@ -95,6 +95,7 @@ async function ensureShown(entry) {
     $('.term-host').append(node);
     const terminal = await mountTerminal(node, entry.url);
     terminal.addEventListener('title', () => renderTabs());
+    terminal.addEventListener('progress', () => renderTabs());   // OSC 9;4, from a build or a download
     terminal.addEventListener('exit', () => load());
     const shown = { terminal, node };
     view.shown.set(entry.id, shown);
@@ -118,13 +119,15 @@ function renderTabs() {
   const tabs = $('.term-tabs');
   if (!tabs) return;
   tabs.replaceChildren(...view.list.map(entry => {
-    const title = view.shown.get(entry.id)?.terminal.title
-      || entry.directory.replace(/\/$/, '').split('/').pop() || '/';
+    const shown = view.shown.get(entry.id)?.terminal;
+    const title = shown?.title || entry.directory.replace(/\/$/, '').split('/').pop() || '/';
+    const progress = shown?.progress;
+    const mark = !progress ? '' : ({ 1: ` ${progress.value}%`, 2: ' ✗', 3: ' …', 4: ' ‖' })[progress.state] || '';
     const tab = el('button', {
       class: `term-tab ${entry.id === view.active ? 'active' : ''} ${entry.state === 'exited' ? 'exited' : ''}`,
       type: 'button', role: 'tab', 'aria-selected': String(entry.id === view.active),
       onclick: () => select(entry.id),
-    }, `${entry.id} ${title}`);
+    }, `${entry.id} ${title}${mark}`);
     present(tab, () => terminalObject(entry), { left: 'Show' });
     return tab;
   }));
