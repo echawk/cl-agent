@@ -1055,7 +1055,9 @@ cl-agent, whichever way cl-agent ends:
 
 cl-agent finds Emacs on `$PATH`, in Homebrew's or MacPorts' bin, or in
 `/Applications/Emacs.app`. Set `CL_AGENT_EMACS` and `CL_AGENT_EMACSCLIENT`
-to use others. `doctor` reports what it found.
+to use others. `doctor` reports what it found. How it works, and what is
+next (copilot-style completion in Emacs among it), is in
+`docs/emacs-integration.md`.
 
 ### The Terminal tab
 
